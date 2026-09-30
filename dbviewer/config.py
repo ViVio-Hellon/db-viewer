@@ -70,6 +70,10 @@ DB_SUFFIX = ".sqlite3"
 # VBA と同じ場所に同じ形で残すログ(TSV)
 ACCESS_LOG_NAME = "Access.log"
 
+# 「表を持ってくる」で足した表の記録(本体 .sqlite3 の中)。python-web-tools と同じ名前。
+# VBA には無い表なので、整合性検査・マスタ管理の一覧には出さない(`settings_tables.table_names`)
+BROUGHT_REGISTRY = "ツールで足した表"
+
 
 # ------------------------------------------------------------------
 # システムプロファイル(VBA progNo と `プログラム番号チェック`)

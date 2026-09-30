@@ -13,8 +13,16 @@ async function loadTables() {
   try {
     const d = await api.post("/api/master/tables", {});
     el.msTitle.textContent = d.title;
+    const brought = new Set(d.brought || []);
     el.msTables.replaceChildren(...d.tables.map((t) => {
       const div = document.createElement("div"); div.textContent = t;
+      // 「表を持ってくる」で足した表(設定 → Access 取り込み)
+      if (brought.has(t)) {
+        const mark = document.createElement("span");
+        mark.className = "badge"; mark.textContent = "足"; mark.title = "設定の「表を持ってくる」で足した表";
+        mark.style.marginLeft = "6px";
+        div.appendChild(mark);
+      }
       div.addEventListener("click", () => selectTable(t, div));
       return div;
     }));

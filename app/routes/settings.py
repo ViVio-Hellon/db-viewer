@@ -69,6 +69,100 @@ def reset_mode():
     return jsonify({"ok": True, "message": result.message, "mode_set": settings_presenter.mode_is_set()})
 
 
+# ------------------------------------------------------------------
+# 表を持ってくる(python-web-tools の table_bring を移植)
+# ------------------------------------------------------------------
+# 本体の表を足す・入れ替えるので、VBA のいちばん上のレベル(マスタ管理で
+# 全部の表を直せる Level 5)でログインしているときだけ通す。
+# python-web-tools の「管理者パスワード」の関門にあたる
+BRING_LEVEL = 5
+
+
+def _bring_refused():
+    from dbviewer import auth
+    s = auth.current()
+    if s is None:
+        return jsonify({"error": {"code": "login", "message":
+                                  "ログインが必要です。一覧からログインしてください。"}}), 401
+    if s.level < BRING_LEVEL:
+        return jsonify({"error": {"code": "not_allowed", "message":
+                                  f"表を持ってくる・入れ替えるには Level {BRING_LEVEL} が必要です"
+                                  f"(いまは Level {s.level})。"}}), 403
+    return None
+
+
+@bp.get("/api/settings/table-bring/plan")
+def table_bring_plan():
+    """Access で作った表を持ってくる ── まず中を見る(書かない)。`?path=`"""
+    from dbviewer import table_bring
+    return jsonify(table_bring.plan_dict(table_bring.plan(request.args.get("path", ""))))
+
+
+@bp.post("/api/settings/table-bring/upload")
+def table_bring_upload():
+    """ドラッグ&ドロップされたファイルを受け取る。返すのは置いた場所。
+
+    ブラウザはファイルの**場所**を教えてくれない(中身だけ渡す)。このツールは
+    同じPCで動いているので、手元の作業フォルダへ置いて、そこから読む。
+    """
+    from dbviewer import table_bring
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        return jsonify({"error": {"code": "no_file", "message": "ファイルが届きませんでした"}}), 400
+    saved, why = table_bring.save_upload(upload.filename, upload.stream)
+    if saved is None:
+        return jsonify({"error": {"code": "bad_file", "message": why}}), 400
+    return jsonify({"path": str(saved)})
+
+
+@bp.post("/api/settings/table-bring")
+def table_bring_run():
+    """選んだ表を本体へ足す。`{"path":…, "tables":[…]}`"""
+    from dbviewer import table_bring
+    refused = _bring_refused()
+    if refused:
+        return refused
+    body = request.get_json(silent=True) or {}
+    tables = body.get("tables")
+    if not isinstance(tables, list):
+        return jsonify({"error": {"code": "bad_tables", "message": "持ってくる表の指定が正しくありません"}}), 400
+    result = table_bring.bring(str(body.get("path", "")), [str(t) for t in tables])
+    payload = {"ok": result.ok, "message": result.message,
+               "brought": [{"name": n, "rows": r} for n, r in result.brought],
+               "backup": result.backup,
+               "plan": table_bring.plan_dict(table_bring.plan(str(body.get("path", ""))))}
+    if result.ok:
+        return jsonify(payload)
+    payload["error"] = {"code": result.reason, "message": result.message}
+    status = {table_bring.REFUSE_EXISTS: 409,
+              table_bring.REFUSE_NOTHING: 400}.get(result.reason, 422)
+    return jsonify(payload), status
+
+
+@bp.post("/api/settings/table-refresh")
+def table_refresh_run():
+    """もうある表を Access の最新にする(入れ替える・作り直す)。`{"path":…, "tables":[…]}`"""
+    from dbviewer import table_bring
+    refused = _bring_refused()
+    if refused:
+        return refused
+    body = request.get_json(silent=True) or {}
+    tables = body.get("tables")
+    if not isinstance(tables, list):
+        return jsonify({"error": {"code": "bad_tables", "message": "入れ替える表の指定が正しくありません"}}), 400
+    result = table_bring.refresh(str(body.get("path", "")), [str(t) for t in tables])
+    payload = {"ok": result.ok, "message": result.message,
+               "refreshed": [{"name": n, "before": b, "after": a} for n, b, a in result.refreshed],
+               "kept_old": [{"name": n, "old": o} for n, o in result.kept_old],
+               "backup": result.backup,
+               "plan": table_bring.plan_dict(table_bring.plan(str(body.get("path", ""))))}
+    if result.ok:
+        return jsonify(payload)
+    payload["error"] = {"code": result.reason, "message": result.message}
+    status = {table_bring.REFUSE_NOTHING: 400}.get(result.reason, 422)
+    return jsonify(payload), status
+
+
 @bp.post("/api/settings/accdb-import")
 def accdb_import():
     """Access(.accdb)をいまの接続先の .sqlite3 に取り込む(長時間処理)。"""

@@ -185,6 +185,17 @@
               <button class="btn btn--commit" type="button" id="runAccess">Access から取り込む</button>
               <button class="btn btn--find" type="button" id="saveAccess">元ファイルだけ保存</button>
             </div>
+            <span class="dimline" aria-hidden="true" style="margin-top:12px"></span>
+            <div class="field" style="margin-top:12px" id="bringOpenDrop">
+              <b style="min-width:10em">Access で作った表</b>
+              <button class="btn" type="button" id="bringOpen">表を持ってくる…</button>
+              <span class="why" style="margin:0">(ファイルをここへドラッグ&ドロップしても開きます)</span>
+            </div>
+            <p class="why">
+              Access(.accdb)か、それを変換した .sqlite3 から、本体に<b>無い表だけ</b>を足します。
+              もうある表は、選んだものだけ Access の最新に入れ替えられます。
+              上の「Access から取り込む」(丸ごと差し替え)と違い、Web 版で登録した行は消えません。
+            </p>
             <div class="job" id="accessJob" hidden style="margin-top:12px">
               <div class="job__head">
                 <span class="job__label" id="accessJobLabel"></span>
@@ -219,6 +230,60 @@
   </div>
 </div>
 
+{# Access で作った表を持ってくる(`dbviewer/table_bring.py`、python-web-tools から移植)。
+   **無い表だけ**を足す。参照のダイアログ(#browser)をこの上に重ねて開く #}
+<dialog id="bringDialog" class="browser bring">
+  <form method="dialog" class="browser__head">
+    <b>Access で作った表を持ってくる</b>
+    <button class="btn btn--danger" value="cancel">閉じる</button>
+  </form>
+  <div class="dropzone" id="bringDrop" tabindex="0">
+    <b>Access(.accdb)のファイルを、ここへドラッグ&ドロップ</b>
+    <span class="why">変換した .sqlite3 でも構いません。落とすとすぐ中を読みます。</span>
+  </div>
+  <p class="why">
+    読むのはいつも <b>.sqlite3</b> です。Access を選んだときは、Access 取り込みと同じ経路
+    (cscript → ADODB → ACE)で作業フォルダに .sqlite3 を作ってから読みます。
+  </p>
+  <p class="why">
+    <b>本体に無い表</b>は、表ごと足します(「持ってくる」)。足した表はマスタ管理に
+    「足」の印で出て、そのまま直せます。
+  </p>
+  <p class="why">
+    <b>もうある表</b>は、<b>Access の最新に入れ替え</b>られます(「入れ替える」)。
+    Access で列を足していれば、その列も足します。Access で列を消した・名前を変えたときは
+    <b>作り直し</b>ます(「作り直す」)── 今の表は「表名_作り直す前_日時」の名前で残すので、
+    中身を見比べられます。ほかの表には触りません。Web 版が書き込む表(メインテーブル・H_ 履歴)と
+    ID は入れ替えません。
+  </p>
+  <div class="paths">
+    <label for="bringPath">または場所で選ぶ</label>
+    <span class="pathrow">
+      <input class="input" id="bringPath" spellcheck="false" autocomplete="off">
+      <button class="btn btn--find" type="button" data-browse="bringPath"
+              data-browse-file="1"><span class="gl">▸</span>参照…</button>
+      <button class="btn" type="button" id="bringLook">中を見る</button>
+    </span>
+  </div>
+  <p class="why" id="bringDest" hidden></p>
+  <p class="why" id="bringConverted" hidden></p>
+  <p class="status" id="bringNote" hidden></p>
+  <div class="tablewrap tablewrap--browse" id="bringList" hidden>
+    <table class="table">
+      <thead><tr><th></th><th>表</th><th class="num">行</th><th>列・入れ替えの説明</th></tr></thead>
+      <tbody id="bringRows"></tbody>
+    </table>
+  </div>
+  <div class="btn-row" style="margin-top:8px">
+    <button class="btn btn--commit" type="button" id="bringRun" disabled>選んだ表を持ってくる</button>
+    <button class="btn btn--danger" type="button" id="bringRefresh" disabled>選んだ表を入れ替える・作り直す</button>
+  </div>
+  <p class="why">
+    Level 5 でログインしている必要があります。書く前に、本体の控えを
+    この端末の <code>backup</code> フォルダへ取ります。
+  </p>
+</dialog>
+
 <dialog id="browser" class="browser">
   <form method="dialog" class="browser__head">
     <b id="browseFor"></b>
@@ -245,6 +310,15 @@
   .job__head .num { margin-left:auto; font-family:var(--mono); }
   .bar { height:8px; background:var(--raised); border-radius:var(--pill); overflow:hidden; margin:6px 0; }
   .bar__fill { height:100%; width:0; border-radius:var(--pill); background:var(--accent); transition:width .3s; }
+  /* 表を持ってくる: 落とす場所。重ねている間は色を変える */
+  .dropzone { border:2px dashed var(--rule); border-radius:var(--radius-xs);
+              padding:18px; margin:8px 0; display:flex; flex-direction:column;
+              align-items:center; gap:4px; text-align:center; }
+  .dropzone.is-over, #bringOpenDrop.is-over { border-color:var(--accent); background:var(--accent-soft); }
+  .bring { width:min(980px, 94vw); }
+  .bring #bringRows td, .bring thead th { text-align:left; }
+  .bring #bringRows td.num, .bring thead th.num { text-align:right; }
+  .bring #bringRows td:last-child { font-size:var(--fs-xs); color:var(--muted); }
 </style>
 {% endblock %}
 

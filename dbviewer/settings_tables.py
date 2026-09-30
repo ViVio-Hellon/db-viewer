@@ -34,7 +34,8 @@ def table_names(conn: sqlite3.Connection) -> list[str]:
     """VBA `GetTblDic`(ADOX の TABLE 型)に相当。SQLite の内部表は除く。"""
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
-    return [r[0] for r in rows]
+    # 「表を持ってくる」の控えの表は Web 版だけのもの(VBA の DB には無い)
+    return [r[0] for r in rows if r[0] != config.BROUGHT_REGISTRY]
 
 
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:

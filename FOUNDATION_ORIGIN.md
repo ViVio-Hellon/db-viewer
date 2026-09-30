@@ -43,3 +43,24 @@
 
 複製元の `d478462` 以降の差分を、上の「そのまま複製したファイル」に当てる。
 `packaging_tool` → `dbviewer`、`PACKAGING_TOOL_` → `DBVIEWER_` の置換を忘れずに。
+
+## 移植した機能: 表を持ってくる(2026-09-30)
+
+python-web-tools の設定画面「Access で作った表 → 表を持ってくる…」を移植した。
+
+| 元(python-web-tools) | DBビューア |
+|---|---|
+| `packaging_tool/table_bring.py` | `dbviewer/table_bring.py` |
+| `packaging_tool/import_diag.py`(`write` / `path_for` / `latest_path` だけ) | `dbviewer/import_diag.py` |
+| `app/routes/settings.py` の `/api/settings/table-bring/plan` `/upload` `/table-bring` `/table-refresh` | 同じ URL で `app/routes/settings.py` |
+| `app/templates/settings.html` の `#bringDialog` と段 | 「Access 取り込み」タブに置いた |
+| `app/static/js/views/settings.js` の `renderBring` 〜 `uploadBring` | 同じ関数名で移植 |
+
+変えたところ:
+- 書き先は梱包資材マスタ → いまの接続先の本体(`.sqlite3`)
+- **読むのはいつも .sqlite3。** Access を選んだときの変換は accdb_converter(pyodbc / access_parser)
+  → 同梱の bridge(cscript → ADODB → ACE)。変換ツールの場所の設定は無くした
+- 入れ替えない表: 発注・受払・実績など → メインテーブル・H_ 履歴・ID・控えの表
+- 関門: 管理者パスワード → Level 5 でログイン
+- PalletMaster の在庫の行を残す処理と、書いたあとの手元の取り込み直しは持ってこない(梱包資材マスタ専用)
+- 控えの表「ツールで足した表」は VBA の表一覧(整合性検査・マスタ管理)に出さない

@@ -173,6 +173,8 @@ function startBrowser() {
     if (file && browseFile && browseTarget) {
       browseTarget.value = file.dataset.file;
       browser.dialog.close();
+      // 「表を持ってくる」の欄なら、選んだらすぐ中を読む
+      if (browseTarget.id === "bringPath") lookBring();
       return;
     }
     if (file) browseTo(file.dataset.file);
@@ -227,6 +229,229 @@ async function runAccess() {
   } catch (err) { toastError(err); jobs.refresh(); }
 }
 
+/* ================================================================
+   Access で作った表を持ってくる(`dbviewer/table_bring.py`)
+   python-web-tools の設定画面から移植。
+
+   変換したファイル(または Access)の中を見て、本体に**無い表だけ**を選ばせる。
+   もうある表は「入れ替える・作り直す」だけ選べる。
+   ================================================================ */
+const bring = {};
+
+function renderBring(plan) {
+  if (bring.dest) {
+    bring.dest.hidden = !plan.dest_note;
+    bring.dest.textContent = plan.dest_note || "";
+  }
+  bring.converted.hidden = !plan.converted;
+  bring.converted.textContent = plan.converted || "";
+  bring.note.hidden = !plan.message;
+  bring.note.textContent = plan.message || "";
+  bring.note.className = `status status--${!plan.ok ? "ng" : plan.warn ? "warn" : "ok"}`;
+  const rows = (plan.tables || []).map((t) => {
+    const tr = document.createElement("tr");
+    const pick = document.createElement("td");
+    if (t.exists && t.can_refresh) {
+      // もうある表。Access の最新に入れ替える(列が変わっていれば作り直す)ことだけ選べる。
+      // 消して入れ直す操作なので、既定では選ばない
+      const rebuild = t.action === "rebuild";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = t.name;
+      box.dataset.refresh = "1";
+      box.dataset.action = t.action;
+      box.dataset.loses = (t.import_loses || []).join("・");
+      box.checked = false;
+      box.addEventListener("change", updateBringRun);
+      const label = document.createElement("label");
+      label.className = "why";
+      label.append(box, rebuild ? " 作り直す" : " 入れ替える");
+      pick.appendChild(label);
+    } else if (t.exists) {
+      pick.textContent = "もうある";
+      pick.className = "why";
+      tr.title = t.refresh_why || "本体にもう同じ名前の表があります";
+    } else {
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = t.name;
+      // 文字化けの疑いがある表は、見比べてから自分で選んでもらう
+      box.checked = !t.suspect;
+      box.addEventListener("change", updateBringRun);
+      pick.appendChild(box);
+    }
+    const name = document.createElement("td");
+    name.textContent = t.name;
+    const count = document.createElement("td");
+    count.className = "num";
+    count.textContent = t.rows.toLocaleString();
+    if (t.suspect) {
+      const warn = document.createElement("div");
+      warn.className = "why";
+      warn.textContent = `⚠ 化けの疑い ${t.suspect}行`;
+      count.appendChild(warn);
+    }
+    const cols = document.createElement("td");
+    cols.className = "why";
+    cols.textContent = t.columns.join(", ");
+    if (t.exists) {
+      const note = document.createElement("div");
+      const added = t.added_columns || [];
+      const removed = t.removed_columns || [];
+      const loses = t.import_loses || [];
+      note.textContent = t.can_refresh
+        ? `いま ${t.current_rows.toLocaleString()}行 → Access ${t.rows.toLocaleString()}行`
+          + (t.keeps ? `。${t.keeps}` : "")
+          + (added.length ? `。Access で増えた列を足します: ${added.join(", ")}` : "")
+          + (removed.length
+            ? `。Access に無い列があるので作り直します(消える列: ${removed.join(", ")})。`
+              + "今の表は「表名_作り直す前_日時」の名前で残します" : "")
+          + (loses.length
+            ? `。⚠ 設定(_設定・フィルタ)で使っている列が消えます: ${loses.join(", ")}` : "")
+        : `入れ替えられません: ${t.refresh_why}`;
+      cols.prepend(note);
+    }
+    tr.append(pick, name, count, cols);
+    // 持ってこられる表を上に、入れ替えられる表を次に、どちらもできない表を下に
+    tr.dataset.order = !t.exists ? "0" : t.can_refresh ? "1" : "2";
+    return tr;
+  }).sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
+  bring.rows.replaceChildren(...rows);
+  bring.list.hidden = rows.length === 0;
+  updateBringRun();
+}
+
+function chosenTables() {
+  return [...bring.rows.querySelectorAll("input[type=checkbox]:checked:not([data-refresh])")]
+    .map((box) => box.value);
+}
+
+function chosenRefresh() {
+  return [...bring.rows.querySelectorAll("input[type=checkbox][data-refresh]:checked")]
+    .map((box) => box.value);
+}
+
+function updateBringRun() {
+  bring.run.disabled = chosenTables().length === 0;
+  if (bring.refresh) bring.refresh.disabled = chosenRefresh().length === 0;
+}
+
+function showDone(result) {
+  renderBring(result.plan);
+  toast(result.message, "ok");
+  bring.note.hidden = false;
+  bring.note.className = "status status--ok";
+  bring.note.textContent = `${result.message}(控え: ${result.backup})`;
+  refresh();
+}
+
+async function runRefresh() {
+  const tables = chosenRefresh();
+  if (!tables.length) return;
+  const boxes = [...bring.rows.querySelectorAll("input[type=checkbox][data-refresh]:checked")];
+  const swap = boxes.filter((b) => b.dataset.action !== "rebuild").map((b) => b.value);
+  const rebuild = boxes.filter((b) => b.dataset.action === "rebuild").map((b) => b.value);
+  const loses = boxes.filter((b) => b.dataset.loses).map((b) => `${b.value}(${b.dataset.loses})`);
+  // **消して入れ直す。** 控えは取るが、押す前に何が起きるかを言う
+  if (!window.confirm(
+    (swap.length ? `中身を Access の中身に入れ替える表:\n${swap.join("、")}\n\n` : "")
+    + (rebuild.length ? `Access の定義で作り直す表(今の表は名前を変えて残します):\n`
+                        + `${rebuild.join("、")}\n\n` : "")
+    + (loses.length ? `⚠ 設定で使っている列が消えます: ${loses.join("、")}\n\n` : "")
+    + "本体にある今の行は消えます(書く前に控えを取ります)。"
+    + "ほかの端末にもすぐ見えます。よろしいですか？")) return;
+  try {
+    showDone(await api.post("/api/settings/table-refresh",
+                            { path: bring.path.value.trim(), tables }));
+  } catch (err) {
+    if (err.body && err.body.plan) renderBring(err.body.plan);
+    toastError(err);
+  }
+}
+
+async function lookBring() {
+  const path = bring.path.value.trim();
+  if (!path) { renderBring({ ok: false, message: "持ってくるファイルを選んでください。" }); return; }
+  try {
+    renderBring(await api.get(`/api/settings/table-bring/plan?path=${encodeURIComponent(path)}`));
+  } catch (err) {
+    toastError(err);
+  }
+}
+
+async function runBring() {
+  const tables = chosenTables();
+  if (!tables.length) return;
+  try {
+    showDone(await api.post("/api/settings/table-bring",
+                            { path: bring.path.value.trim(), tables }));
+  } catch (err) {
+    if (err.body && err.body.plan) renderBring(err.body.plan);
+    toastError(err);
+  }
+}
+
+/** ファイルを落とせる場所にする。落ちたら受け取って、すぐ中を読む。 */
+function acceptDrop(zone, before) {
+  if (!zone) return;
+  const over = (on) => zone.classList.toggle("is-over", on);
+  zone.addEventListener("dragover", (event) => {
+    if (![...(event.dataTransfer?.types || [])].includes("Files")) return;
+    event.preventDefault();
+    over(true);
+  });
+  zone.addEventListener("dragleave", () => over(false));
+  zone.addEventListener("drop", async (event) => {
+    event.preventDefault();
+    over(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (before) before();
+    await uploadBring(file);
+  });
+}
+
+async function uploadBring(file) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  bring.note.hidden = false;
+  bring.note.className = "status";
+  bring.note.textContent = `${file.name} を受け取っています…`;
+  try {
+    const got = await api.postForm("/api/settings/table-bring/upload", form);
+    bring.path.value = got.path;
+    await lookBring();
+  } catch (err) {
+    bring.note.className = "status status--ng";
+    bring.note.textContent = err.message;
+    toastError(err);
+  }
+}
+
+function startBring() {
+  for (const [key, id] of [["dialog", "bringDialog"], ["open", "bringOpen"],
+                           ["path", "bringPath"], ["look", "bringLook"],
+                           ["note", "bringNote"], ["list", "bringList"],
+                           ["rows", "bringRows"], ["run", "bringRun"],
+                           ["converted", "bringConverted"], ["drop", "bringDrop"],
+                           ["dest", "bringDest"], ["refresh", "bringRefresh"],
+                           ["openDrop", "bringOpenDrop"]]) {
+    bring[key] = document.getElementById(id);
+  }
+  if (!bring.dialog) return;
+  bring.open.addEventListener("click", () => bring.dialog.showModal());
+  // **落とすだけで読む。** ダイアログの中の枠にも、設定画面の段にも落とせる
+  acceptDrop(bring.drop);
+  acceptDrop(bring.openDrop, () => { if (!bring.dialog.open) bring.dialog.showModal(); });
+  bring.look.addEventListener("click", lookBring);
+  bring.path.addEventListener("change", lookBring);
+  bring.path.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); lookBring(); }
+  });
+  bring.run.addEventListener("click", runBring);
+  if (bring.refresh) bring.refresh.addEventListener("click", runRefresh);
+}
+
 export function start(state) {
   for (const id of ["statusGrid", "progNo", "online", "serverDir", "serverDirReal", "serverDirDefault",
                     "localDir", "localDirReal", "dbFile", "dbPath",
@@ -240,6 +465,7 @@ export function start(state) {
   LEVEL_LABEL = state.level_label || {};
   tabs.attachAll();
   startBrowser();
+  startBring();
 
   el.refresh.addEventListener("click", refresh);
   el.saveSource.addEventListener("click", () => save({

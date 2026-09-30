@@ -16,6 +16,7 @@ Excel VBA + Access（.accdb）で動いている「汎用システム」（現�
 | [docs/05_起動と使い方.md](docs/05_起動と使い方.md) | 配布先 PC に必要なもの、起動、Access 取り込み、画面ごとの使い方（VBA との対応）、記録の場所、困ったとき |
 | [docs/06_検証結果と意図した差異.md](docs/06_検証結果と意図した差異.md) | 実データで VBA と突き合わせた結果、意図した差異、VBA の癖を残したもの、未検証の範囲 |
 | [CHANGELOG.md](CHANGELOG.md) | 変更履歴 |
+| [FOUNDATION_ORIGIN.md](FOUNDATION_ORIGIN.md) | python-web-tools から複製・移植したもの（表を持ってくる を含む） |
 
 全体像を 1 ページにまとめたアーティファクト（解析・計画・実装結果）: https://claude.ai/artifact/Y9HQ4CCojyStfStYYxH2yj
 
@@ -30,10 +31,11 @@ Excel VBA + Access（.accdb）で動いている「汎用システム」（現�
 ```
 Start.vbs                                      # 現場 PC(ブラウザが開く)
 start.bat --check                              # 環境確認だけ
-python3 -m unittest discover -s tests -t .     # 全テスト(96 件)
+python3 -m unittest discover -s tests -t .     # 全テスト(106 件)
 ```
 
 初回は 設定 → Access 取り込み で `.accdb` を `.sqlite3` にします（Windows の cscript + ACE）。
+その後に Access で足した表は「表を持ってくる…」で表ごとに足せます（本体を丸ごと差し替えない）。
 詳しくは [docs/05_起動と使い方.md](docs/05_起動と使い方.md)。
 
 ## 構成

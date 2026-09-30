@@ -54,7 +54,10 @@ def tables():
     if err:
         return err
     lv = auth.level()
+    from dbviewer import table_bring
     return jsonify({"level": lv, "tables": master_admin.editable_tables(conn, setup, lv),
+                    # 「表を持ってくる」で足した表(一覧に「足」の印を付ける)
+                    "brought": sorted(table_bring.brought_tables(conn)),
                     "title": f"マスタメンテナンス アクセスレベル:{lv}"})
 
 
