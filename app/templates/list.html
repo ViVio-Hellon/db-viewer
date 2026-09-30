@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}一覧 — {{ display_name }}{% endblock %}
+
+{% block head %}
+<style>
+  /* フィルタ列: VBA の L(見出し) / FL(選択中) / FLL(候補) を縦に積む */
+  .flt { display:flex; gap:4px; align-items:stretch; overflow-x:auto; padding-bottom:4px; }
+  .flt__col { display:flex; flex-direction:column; min-width:4.5em; flex:1 1 0; }
+  .flt__head { background:var(--raised); color:var(--ink); font-size:var(--fs-xs); font-weight:700;
+               padding:3px 6px; border:1px solid var(--rule); border-radius:var(--radius-xs) var(--radius-xs) 0 0;
+               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; user-select:none; }
+  .flt__head--master { background:var(--accent-soft); }
+  .flt__sel { border:1px solid var(--rule); border-top:0; padding:2px 6px; min-height:1.6em;
+              color:var(--state-error); font-size:var(--fs-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .flt__list { border:1px solid var(--rule); border-top:0; height:10.5em; overflow:auto; background:var(--surface);
+               border-radius:0 0 var(--radius-xs) var(--radius-xs); font-size:var(--fs-sm); }
+  .flt__list div { padding:1px 6px; white-space:nowrap; cursor:pointer; }
+  .flt__list div:hover { background:var(--accent-soft); }
+  .flt__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+  .flt__list div:empty::before { content:"\00a0"; }
+  /* 一覧 */
+  .lst { display:grid; grid-template-columns:1fr auto; gap:12px; margin-top:10px; min-height:0; }
+  .lst__side { display:flex; flex-direction:column; gap:6px; min-width:9em; }
+  .lst__side .btn { justify-content:flex-start; }
+  .table td.c { text-align:center; } .table td.l { text-align:left; } .table td.r { text-align:right; }
+  .table th.c { text-align:center; } .table th.l { text-align:left; } .table th.r { text-align:right; }
+  .table tbody tr { cursor:pointer; }
+  .sqlbox { font-family:var(--mono); font-size:var(--fs-xs); color:var(--muted); white-space:pre-wrap;
+            word-break:break-all; border:1px dashed var(--rule); padding:4px 8px; margin-top:6px; max-height:5em; overflow:auto; }
+  .pager { display:flex; align-items:center; gap:8px; font-size:var(--fs-sm); }
+  .pager .num { font-family:var(--mono); min-width:5em; text-align:center; }
+  .modechip { font-size:var(--fs-xs); padding:2px 8px; border-radius:var(--pill); background:var(--raised); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pane">
+  <div class="pane__head">
+    <div>
+      <span class="eyebrow">Step 1</span>
+      <h2 id="listTitle">一覧</h2>
+    </div>
+    <div class="nextstep">
+      <span class="modechip" id="modeChip">選択</span>
+      <p class="why" id="listNote">見出しをダブルクリックすると集計。候補を押すと絞り込み。行をダブルクリックで修正。</p>
+    </div>
+  </div>
+
+  <span class="dimline" aria-hidden="true"></span>
+
+  <p class="status status--ng" id="listProblem" hidden></p>
+
+  <div class="flt" id="filters" aria-label="フィルタ"></div>
+
+  <div class="lst">
+    <div style="min-width:0; display:flex; flex-direction:column; gap:6px">
+      <div class="pager">
+        <button class="btn btn--find" type="button" id="pagePrev">◀</button>
+        <span class="num" id="pageLabel">1 / 1</span>
+        <button class="btn btn--find" type="button" id="pageNext">▶</button>
+        <span class="why" style="margin:0" id="rowCount"></span>
+        <label class="field" style="margin-left:auto">行/頁
+          <select class="input" id="perPage" style="width:5em">
+            <option>12</option><option selected>24</option><option>50</option><option>100</option><option>500</option>
+          </select>
+        </label>
+      </div>
+      <div class="tablewrap" style="max-height:60vh">
+        <table class="table" id="listTable"><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="sqlbox" id="sqlBox" title="VBA の SQL 欄と同じ内容"></div>
+    </div>
+    <div class="lst__side" id="sideButtons">
+      <button class="btn btn--commit" type="button" data-cmd="新規" id="btnNew">新規</button>
+      <button class="btn btn--commit" type="button" data-cmd="修正" id="btnEdit">修正</button>
+      <button class="btn btn--danger" type="button" data-cmd="削除" id="btnDelete">削除</button>
+      <button class="btn btn--find" type="button" data-cmd="参照" id="btnView">参照</button>
+      <span class="dimline" aria-hidden="true"></span>
+      <button class="btn btn--find" type="button" id="btnReport" hidden>帳票</button>
+      <button class="btn btn--find" type="button" id="btnBrowse" hidden>閲覧</button>
+      <button class="btn btn--find" type="button" id="btnSetting">設定</button>
+      <button class="btn btn--find" type="button" id="btnOutput">出力</button>
+      <button class="btn btn--find" type="button" id="btnBack" hidden>戻る</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+  import { start } from "{{ url_for('static', filename='js/views/list.js') }}";
+  start();
+</script>
+{% endblock %}

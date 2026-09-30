@@ -238,6 +238,16 @@
 </dialog>
 {% endblock %}
 
+{% block head %}
+<style>
+  .job__head { display:flex; align-items:baseline; gap:10px; }
+  .job__label { font-weight:700; }
+  .job__head .num { margin-left:auto; font-family:var(--mono); }
+  .bar { height:8px; background:var(--raised); border-radius:var(--pill); overflow:hidden; margin:6px 0; }
+  .bar__fill { height:100%; width:0; border-radius:var(--pill); background:var(--accent); transition:width .3s; }
+</style>
+{% endblock %}
+
 {% block scripts %}
 <script type="module">
   import { start } from "{{ url_for('static', filename='js/views/settings.js') }}";

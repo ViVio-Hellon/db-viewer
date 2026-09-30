@@ -131,7 +131,7 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
     ref_dir = str(user_settings.get(config.KEY_REF_DIR, "") or "")
 
     db_path = shared_db.db_path()
-    sections = [_db_section(db_path, prof, online), _terminal_section()]
+    sections = [_db_section(db_path, prof, online), _setup_section(db_path), _terminal_section()]
     return SettingsViewModel(
         sections=sections,
         prog_no=prog_no,
@@ -207,6 +207,48 @@ def _required_tables_check(section: Section, names: list[str]) -> None:
     else:
         section.checks.append(Check("必須テーブル", "そろっています", OK,
                                     "、".join(required)))
+
+
+FIX_MASTER = ("マスタ管理で直す", "master")
+
+
+def _setup_section(db_path: Path) -> Section:
+    """VBA 起動時の整合性検査(CheckColumns / MasterFileCheck / formatCheck)と同じ判定。"""
+    from .. import settings_tables
+
+    section = Section(title="設定テーブル(起動時の検査)", mark="設", action=FIX_MASTER)
+    if not db_path.is_file():
+        section.checks.append(Check("検査", "本体ファイルが無いので確かめられません", INFO))
+        return section
+    try:
+        with shared_db.connect(db_path, read_only=True) as conn:
+            setup = settings_tables.load_setup(conn)
+    except settings_tables.SetupError as exc:
+        section.checks.append(Check("必須テーブル", "足りません", NG, str(exc)))
+        return section
+    except Exception as exc:                          # noqa: BLE001
+        section.checks.append(Check("検査", "読めません", NG, str(exc)))
+        return section
+    g = setup.general
+    section.checks.append(Check("メインテーブル名", g.main_table or "(未設定)", OK if g.main_table else NG))
+    section.checks.append(Check("初期表示", g.init_view or "(空 = 行数制限なし)", INFO))
+    section.checks.append(Check("初期フィルタ", g.init_filter or "(なし)", INFO))
+    section.checks.append(Check("帳票", g.report_str or "(なし)", INFO))
+    section.checks.append(Check("テーブル閲覧", g.browse_str or "(なし)", INFO))
+    if setup.master_problem:
+        section.checks.append(Check("MasterFileCheck", "NG", NG,
+                                    setup.master_problem + " マスタファイルに修正が必要です。"))
+    else:
+        section.checks.append(Check("MasterFileCheck", "OK", OK,
+                                    f"メイン {len(setup.main_columns)} 列 = 設定 {setup.conv.count} 行、フィルタ {len(setup.active_filters)} 件"))
+    if setup.column_problems:
+        section.checks.append(Check("CheckColumns", "要確認", WARN, "\n".join(setup.column_problems)))
+    else:
+        section.checks.append(Check("CheckColumns", "OK", OK, "各表の 2 列目が表名と一致"))
+    section.checks.append(Check("formatCheck(_設定 の 11 列)", "OK" if setup.format_ok else "要確認",
+                                OK if setup.format_ok else WARN,
+                                "" if setup.format_ok else "ﾃﾞｰﾀﾃｰﾌﾞﾙのﾌｫｰﾏｯﾄに問題があります。最新の書式になっているか確認してください。"))
+    return section
 
 
 def _terminal_values() -> dict[str, str]:

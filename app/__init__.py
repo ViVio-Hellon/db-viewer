@@ -394,11 +394,11 @@ def get_db():
 # ------------------------------------------------------------------
 def _register_routes(app: Flask) -> None:
     from .routes import health, pending, settings
+    from .routes import list as list_routes
 
     app.register_blueprint(health.bp)
     app.register_blueprint(settings.bp)
-    # 業務の画面(一覧・レコード・マスタ管理・閲覧/出力・帳票)は
-    # Phase 3 以降でここに足す
+    app.register_blueprint(list_routes.bp)
 
     # レールに出ているのに中身がまだ無い画面へ、「準備中」の案内を置く
     pending.register(app)

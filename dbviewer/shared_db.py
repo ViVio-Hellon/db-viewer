@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-from . import config, user_settings
+from . import config, user_settings, vba_compat
 from .logging_utils import get_logger
 
 log = get_logger("shared_db")
@@ -42,7 +42,25 @@ def connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    register_functions(conn)
     return conn
+
+
+def register_functions(conn: sqlite3.Connection) -> None:
+    """VBA/Access の SQL をそのまま通すための関数。
+
+    - `FORMAT(x, '#,##0')` … Access の `Format`。CODESQL が「金額」列に付ける
+    - `VBADATE(text)`     … TEXT 列と日付リテラルの比較を Access と同じにする
+                            (Access は TEXT を日付に変換してから比べる)
+    """
+    conn.create_function("FORMAT", 2, _sql_format, deterministic=True)
+    conn.create_function("VBADATE", 1, vba_compat.normalize_date_text, deterministic=True)
+
+
+def _sql_format(value, fmt):
+    if fmt == "#,##0":
+        return vba_compat.format_thousands(value)
+    return "" if value is None else str(value)
 
 
 def open_current() -> sqlite3.Connection:

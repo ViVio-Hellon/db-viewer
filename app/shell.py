@@ -34,11 +34,10 @@ NAV: tuple[tuple[str, str, str, str], ...] = (
 )
 
 # もう作った画面。ここに挙がっていないものは「準備中」ページを出す
-READY_SCREENS = frozenset({"settings"})
+READY_SCREENS = frozenset({"list", "settings"})
 
 # 準備中の画面の説明。key: (作る予定, 何ができるようになるか, いま使う画面)
 PENDING_SCREENS: dict[str, tuple[str, str, str]] = {
-    "list": ("Phase 3", "一覧・フィルタ・集計・ページ送りと、レコードの登録/修正/削除", "VBA 版"),
     "master": ("Phase 5", "設定表(全般設定・_設定・フィルタ・タイプ・ID)とマスタ表の編集", "VBA 版"),
     "browse": ("Phase 5", "テーブル閲覧と xlsx/txt/csv 出力", "VBA 版"),
 }
