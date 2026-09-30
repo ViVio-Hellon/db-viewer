@@ -63,6 +63,7 @@ def api_list():
     except records.ListError as exc:
         return _refuse("list", str(exc))
     view["setup"] = _setup_dict(setup)
+    view["db_mtime"] = shared_db.probe().get("mtime")
     return jsonify(view)
 
 

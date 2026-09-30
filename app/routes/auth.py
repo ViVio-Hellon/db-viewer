@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, redirect, render_template, request
 
 from dbviewer import auth, config, session_setup, settings_tables, shared_db, user_settings
 from dbviewer.logging_utils import get_logger
+from dbviewer.presenters import settings as settings_presenter
 
 from .. import get_db
 from ..shell import shell_context
@@ -26,6 +27,9 @@ def page():
                            use_id=auth.network_id(), use_pc=auth.pc_name(),
                            last_user=user_settings.get(config.KEY_LAST_USER, "") or auth.network_id(),
                            next_url=request.args.get("next", "/list"),
+                           # VBA `初期設定値確認`: 起動モードが未設定なら先に regUF(オンライン/オフライン)
+                           mode_set=settings_presenter.mode_is_set(),
+                           reset_ask=settings_presenter.MSG_RESET_ASK,
                            **shell_context("list"))
 
 

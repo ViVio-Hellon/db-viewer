@@ -233,6 +233,7 @@ a.btn { text-decoration: none; }
 }
 .status--ng { background: var(--warn-bg); color: var(--warn-fg); border-left-color: var(--state-error); }
 .status--ok { background: var(--ok-bg);   color: var(--state-ok); border-left-color: var(--state-ok); }
+.status--warn { background: var(--warn-bg); color: var(--state-warn); border-left-color: var(--state-warn); }
 
 /* ================================================================
    入力

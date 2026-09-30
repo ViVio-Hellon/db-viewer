@@ -62,6 +62,13 @@ def save():
     return jsonify(out)
 
 
+@bp.post("/api/settings/reset-mode")
+def reset_mode():
+    """VBA Login の LOCKBT ダブルクリック(起動モード設定情報の初期化)。"""
+    result = settings_presenter.reset_mode()
+    return jsonify({"ok": True, "message": result.message, "mode_set": settings_presenter.mode_is_set()})
+
+
 @bp.post("/api/settings/accdb-import")
 def accdb_import():
     """Access(.accdb)をいまの接続先の .sqlite3 に取り込む(長時間処理)。"""

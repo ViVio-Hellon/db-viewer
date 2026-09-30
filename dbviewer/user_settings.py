@@ -61,3 +61,19 @@ def save(key: str, value: Any) -> bool:
     log.info("設定を保存しました: %s=%s", key,
              "(伏せます)" if key in HIDDEN_IN_LOG else value)
     return True
+
+
+def delete(key: str) -> bool:
+    """VBA `DeleteSetting` 相当。無ければ何もしない(True)。"""
+    data = load_all()
+    if key not in data:
+        return True
+    del data[key]
+    try:
+        config.USER_CONFIG_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        log.warning("設定ファイルに書けませんでした: %s", exc)
+        return False
+    log.info("設定を消しました: %s", key)
+    return True

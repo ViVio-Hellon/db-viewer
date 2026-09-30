@@ -91,3 +91,71 @@ class WebFlowTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OperationTest(unittest.TestCase):
+    """運用機能: 更新あり通知(db_mtime)、起動モードの初期化と選び直し(VBA regUF / LOCKBT)"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = fresh_db_path(Path(self.tmp.name))
+        user_settings.save(config.KEY_ONLINE, False)
+        user_settings.save(config.KEY_LOCAL_DIR, str(self.path.parent))
+        user_settings.save(config.KEY_DB_FILE, self.path.name)
+        auth.end()
+        self.addCleanup(auth.end)
+        self.env = {k: os.environ.get(k) for k in ("USERNAME", "COMPUTERNAME")}
+        os.environ["USERNAME"] = "Xfa-Ngyinazawa"
+        os.environ["COMPUTERNAME"] = "NLM-NGY-240638"
+        self.addCleanup(self._restore_env)
+        self.c = make_client()
+        self.h = {"X-Tool-Token": TOKEN}
+
+    def _restore_env(self):
+        for k, v in self.env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_health_and_list_carry_db_mtime(self):
+        h = self.c.get("/api/health").get_json()
+        self.assertAlmostEqual(h["db_mtime"], self.path.stat().st_mtime, places=3)
+        self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
+        d = self.c.post("/api/list", json={}, headers=self.h).get_json()
+        self.assertEqual(d["db_mtime"], h["db_mtime"])
+        # 他の端末が書いた → 心拍の db_mtime が進む(画面はこれを見て「更新されました」を出す)
+        os.utime(self.path, (self.path.stat().st_atime, self.path.stat().st_mtime + 10))
+        self.assertGreater(self.c.get("/api/health").get_json()["db_mtime"], d["db_mtime"])
+
+    def test_boot_mode_reset_and_choose(self):
+        # 設定済み → ログイン欄が出て、モード選択は隠れている
+        page = self.c.get("/login").get_data(as_text=True)
+        self.assertIn('id="modeCard" hidden', page)
+        self.assertIn('id="loginCard" >', page)
+        # VBA LOCKBT ダブルクリック: 起動モード設定情報を初期化
+        r = self.c.post("/api/settings/reset-mode", json={}, headers=self.h).get_json()
+        self.assertEqual((r["message"], r["mode_set"]), ("起動モード設定情報を初期化しました!", False))
+        self.assertIsNone(user_settings.get(config.KEY_ONLINE))
+        page = self.c.get("/login").get_data(as_text=True)
+        self.assertIn('id="modeCard" >', page)
+        self.assertIn('id="loginCard" hidden', page)
+        # regUF: オフラインを選んで「設定」
+        r = self.c.post("/api/settings/save", json={"online": False}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertIs(user_settings.get(config.KEY_ONLINE), False)
+        self.assertIn('id="modeCard" hidden', self.c.get("/login").get_data(as_text=True))
+
+    def test_access_log_written_like_vba(self):
+        from dbviewer import access_log
+        user_settings.save(config.KEY_ACCESS_LOG, True)
+        self.addCleanup(user_settings.save, config.KEY_ACCESS_LOG, False)
+        self.c.post("/api/login", json={"id": "nobody", "password": ""}, headers=self.h)
+        self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
+        log_path = self.path.parent / config.ACCESS_LOG_NAME
+        lines = log_path.read_bytes().decode("cp932").split("\r\n")
+        self.assertEqual([l.split("\t")[4] for l in lines if l], ["認証失敗", "認証成功"])
+        self.assertEqual(len(lines[0].split("\t")), 6)
+        self.assertTrue(lines[0].split("\t")[5].startswith("VER"))
+        self.assertEqual(access_log.write.__doc__.split("。")[0], "1 行追記する")

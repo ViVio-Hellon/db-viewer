@@ -20,6 +20,7 @@ const state = {
   keyCol: 0,
   selected: null,     // 選んだ行の 管理番号
   setup: {},
+  dbMtime: null,      // この一覧を読んだときの共有 DB の更新時刻
 };
 
 const STORE = "dbviewer.list";
@@ -40,6 +41,18 @@ function problem(text) {
   el.listProblem.textContent = text || "";
 }
 
+// 他の端末が共有 DB を書いた(心拍の `db_mtime` が、この一覧を読んだ時刻より新しい)。
+// VBA は次に一覧を作り直すまで古いままだった。Web 版は帯で知らせ、押したら読み直す
+function updated(on) {
+  el.listUpdated.hidden = !on;
+}
+
+function onHealth(event) {
+  const mtime = event.detail && event.detail.db_mtime;
+  if (!mtime || !state.dbMtime) return;
+  if (mtime > state.dbMtime + 0.5 && state.mode !== "集計") updated(true);
+}
+
 async function load({ eventNo = 0, pageFlag = false, reset = false } = {}) {
   try {
     const view = await api.post("/api/list", {
@@ -48,6 +61,8 @@ async function load({ eventNo = 0, pageFlag = false, reset = false } = {}) {
     });
     problem("");
     if (reset) state.filters = {};
+    state.dbMtime = view.db_mtime || null;
+    updated(false);
     render(view);
   } catch (err) {
     if (err.status === 401) { location.href = "/login?next=/list"; return; }
@@ -199,7 +214,7 @@ function command(cmd, clickType = "ButtonClick") {
 
 export function start() {
   for (const id of ["filters", "listTable", "pagePrev", "pageNext", "pageLabel", "rowCount", "perPage",
-                    "sqlBox", "modeChip", "listProblem", "sideButtons", "btnNew", "btnEdit", "btnDelete",
+                    "sqlBox", "modeChip", "listProblem", "listUpdated", "listReload", "sideButtons", "btnNew", "btnEdit", "btnDelete",
                     "btnView", "btnReport", "btnBrowse", "btnSetting", "btnOutput", "btnBack"]) {
     el[id] = document.getElementById(id);
   }
@@ -214,6 +229,8 @@ export function start() {
   el.btnOutput.addEventListener("click", () => { location.href = "/browse?from=list"; });
   el.btnReport.addEventListener("click", runReport);
   el.btnBrowse.addEventListener("click", () => { location.href = "/browse"; });
+  el.listReload.addEventListener("click", () => load({ pageFlag: true }));
+  document.addEventListener("app:health", onHealth);
   recall();
   load({ pageFlag: true });
 }

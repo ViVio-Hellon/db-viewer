@@ -348,6 +348,26 @@ _TEXT_KEYS = {
 }
 
 
+MSG_RESET_ASK = "起動モード設定情報を初期化しますか？"
+MSG_RESET_DONE = "起動モード設定情報を初期化しました!"
+MSG_MODE_SET = "設定しました。"
+
+
+def mode_is_set() -> bool:
+    """VBA `GetSetting(SysName, "起動設定", "モード", "存在なし") <> "存在なし"`。"""
+    return user_settings.get(config.KEY_ONLINE, None) is not None
+
+
+def reset_mode() -> SaveResult:
+    """VBA Login.LOCKBT_DblClick → `レジストリ削除`(起動モードだけを消す)。
+
+    消したあとは VBA と同じく、次のログイン画面で オンライン/オフライン を
+    選ばせる(`regUF`)。フォルダやパスの設定は残す(VBA も消していない)。
+    """
+    user_settings.delete(config.KEY_ONLINE)
+    return SaveResult(True, MSG_RESET_DONE)
+
+
 def save(body: dict[str, Any]) -> SaveResult:
     """本文に入っている項目だけを保存する。"""
     if "prog_no" in body:

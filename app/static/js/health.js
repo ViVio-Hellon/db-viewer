@@ -31,6 +31,8 @@ async function beat() {
     if (body && body.unsaved && typeof body.unsaved === "object") {
       unsaved.fromServer(body.unsaved);
     }
+    // 画面ごとの見張りに渡す(一覧は `db_mtime` で「他の端末で更新」を出す)
+    document.dispatchEvent(new CustomEvent("app:health", { detail: body || {} }));
   } catch {
     if (++misses === MISSES_BEFORE_OFFLINE) setOffline(true);
   }

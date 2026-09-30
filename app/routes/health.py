@@ -116,7 +116,19 @@ def health():
         # 取り込みが終わるまで待たせるので、何をどこまでやっているかを
         # 出さないと「止まっている」と受け取られる
         "job": _running_note(),
+        # 共有 DB の更新時刻。一覧はこれと自分が読んだ時刻を比べて
+        # 「他の端末で更新されました」を出す(業務データは含まない)
+        "db_mtime": _db_mtime(),
     })
+
+
+def _db_mtime() -> Optional[float]:
+    """共有 DB(.sqlite3)の更新時刻。無ければ None。"""
+    try:
+        from dbviewer import shared_db
+        return shared_db.probe().get("mtime")
+    except Exception:                                  # noqa: BLE001 - 心拍は止めない
+        return None
 
 
 def _running_note() -> Optional[dict]:
