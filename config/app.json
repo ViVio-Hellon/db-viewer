@@ -1,0 +1,23 @@
+{
+  "app_id": "nlm.db-viewer",
+  "display_name": "DBビューア",
+  "version": "0.1.0",
+  "monitor_level": 2,
+
+  "local_dir_name": "DBViewer",
+
+  "server": {
+    "host": "127.0.0.1",
+    "port_retry": 3,
+    "roles": {
+      "main": {
+        "port": 8743
+      }
+    }
+  },
+
+  "monitoring": {
+    "health_poll_seconds": 15,
+    "job_poll_ms": 300
+  }
+}

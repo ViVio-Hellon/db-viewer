@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}設定 — {{ display_name }}{% endblock %}
+
+{% macro checks(section) %}
+<section class="card">
+  <header>
+    <i class="ib ib--sm ib--{{ section.badge_tone }}" aria-hidden="true">{{ section.mark }}</i>
+    <h3>{{ section.title }}</h3>
+    <span class="lv lv--{{ section.level }}">{{ section.label() }}</span>
+  </header>
+  <div class="pad">
+    <dl class="checks">
+      {% for c in section.checks %}
+      <div class="check check--{{ c.level }}">
+        <dt>{{ c.label }}</dt>
+        <dd>
+          <span class="v">{{ c.value }}</span>
+          {% if c.detail %}<span class="why">{{ c.detail }}</span>{% endif %}
+        </dd>
+      </div>
+      {% endfor %}
+    </dl>
+    {% if section.action[0] %}
+    <div class="btn-row">
+      <button class="btn btn--find" type="button" data-goto="{{ section.action[1] }}">
+        <span class="gl">▸</span>{{ section.action[0] }}
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endmacro %}
+
+{% macro pathrow(id, label, value, real, browse=True) %}
+<label for="{{ id }}">{{ label }}</label>
+<span class="pathrow">
+  <input class="input" id="{{ id }}" value="{{ value }}" spellcheck="false" autocomplete="off">
+  {% if browse %}
+  <button class="btn btn--find" type="button" data-browse="{{ id }}"><span class="gl">▸</span>参照…</button>
+  {% endif %}
+</span>
+<small class="why real" id="{{ id }}Real" {% if not real %}hidden{% endif %}>→ {{ real }}</small>
+{% endmacro %}
+
+{% block content %}
+<div class="pane pane--tabbed">
+  <div class="pane__head">
+    <div>
+      <span class="eyebrow">Step 4</span>
+      <h2>設定</h2>
+    </div>
+    <div class="nextstep">
+      <button class="btn btn--find" type="button" id="refresh">
+        <span class="gl">⟳</span>状態を再確認
+      </button>
+      <p class="why">この端末の設定はすべてこの画面にあります。VBA 版のレジストリ(オンライン/オフライン)もここです。</p>
+    </div>
+  </div>
+
+  <span class="dimline" aria-hidden="true"></span>
+
+  <div class="tabs" data-tabs="settings" id="settingsTabs">
+    <div class="tabs__bar" role="tablist" aria-label="設定の面">
+      {% for key, label in tabs %}
+      {% set badge = tab_badges.get(key) %}
+      <button class="tab" type="button" role="tab" data-key="{{ key }}"
+              {% if key == default_tab %}data-default="1"{% endif %}
+              {% if badge %}data-level="{{ badge.level }}"{% endif %}
+              id="tab-{{ key }}" aria-controls="panel-{{ key }}" aria-selected="false">
+        <span class="tab__label">{{ label }}</span>
+        <span class="tab__badge" {% if badge %}data-level="{{ badge.level }}"{% else %}hidden{% endif %}>{{ badge.text if badge else "" }}</span>
+      </button>
+      {% endfor %}
+    </div>
+
+    <div class="tabs__panels">
+      <section class="tabpanel tabpanel--scroll" id="panel-status" role="tabpanel" aria-labelledby="tab-status" hidden>
+        <div class="statusgrid" id="statusGrid">
+          {% for section in view.sections %}{{ checks(section) }}{% endfor %}
+        </div>
+      </section>
+
+      <section class="tabpanel tabpanel--scroll" id="panel-source" role="tabpanel" aria-labelledby="tab-source" hidden>
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">接</i>
+            <h3>接続先</h3>
+            <span class="eyebrow">VBA 版の progNo・オンライン/オフライン・SrvPath</span>
+          </header>
+          <div class="pad">
+            <div class="field">
+              <label for="progNo">システム</label>
+              <select class="input" id="progNo" style="width:22em">
+                {% for p in view.profiles %}
+                <option value="{{ p.prog_no }}" {% if p.prog_no == view.prog_no %}selected{% endif %}>{{ p.prog_no }}: {{ p.sys_name }}</option>
+                {% endfor %}
+              </select>
+              <span class="why" style="margin:0">VBA の <code>progNo</code>。本体ファイル名と共有フォルダの既定が決まります。</span>
+            </div>
+            <div class="field" style="margin-top:8px">
+              <label class="checkline">
+                <input type="checkbox" id="online" {% if view.online %}checked{% endif %}>
+                オンライン(共有フォルダの本体を使う)。外すとオフライン(手元のフォルダ)
+              </label>
+            </div>
+            <div class="paths" style="margin-top:8px">
+              {{ pathrow("serverDir", "共有フォルダ(オンライン)", view.server_dir, view.server_dir_real) }}
+              <small class="why real" id="serverDirDefault">空なら既定: {{ view.server_dir_default }}</small>
+              {{ pathrow("localDir", "手元のフォルダ(オフライン)", view.local_dir, view.local_dir_real) }}
+              <label for="dbFile">本体ファイル</label>
+              <span class="pathrow">
+                <input class="input" id="dbFile" value="{{ view.db_file }}" spellcheck="false" autocomplete="off" placeholder="{{ view.db_file_default }}">
+              </span>
+              <small class="why real" id="dbPath">→ {{ view.db_path }}</small>
+            </div>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn--commit" type="button" id="saveSource">接続先を保存</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="tabpanel tabpanel--scroll" id="panel-paths" role="tabpanel" aria-labelledby="tab-paths" hidden>
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">パ</i>
+            <h3>参照・出力・帳票</h3>
+            <span class="eyebrow">空なら本体と同じフォルダ(帳票・参照)/ローカル領域(出力)</span>
+          </header>
+          <div class="pad">
+            <div class="paths">
+              {{ pathrow("refDir", "参照ファイルの起点(PDF・ICON の相対パス)", view.ref_dir, view.ref_dir_real) }}
+              {{ pathrow("reportDir", "帳票原紙の置き場所(出力原紙.xlsx)", view.report_dir, view.report_dir_real) }}
+              {{ pathrow("exportDir", "出力先(xlsx / txt / csv)", view.export_dir, view.export_dir_real) }}
+            </div>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn--commit" type="button" id="savePaths">パスを保存</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="tabpanel tabpanel--scroll" id="panel-behavior" role="tabpanel" aria-labelledby="tab-behavior" hidden>
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">動</i>
+            <h3>動作</h3>
+            <span class="eyebrow">この端末での振る舞い</span>
+          </header>
+          <div class="pad">
+            <div class="field">
+              <label class="checkline">
+                <input type="checkbox" id="accessLog" {% if view.access_log %}checked{% endif %}>
+                Access.log(VBA と同じ TSV)を本体と同じフォルダに書く
+              </label>
+            </div>
+            <div class="field" style="margin-top:8px">
+              <label for="reloginMinutes">無操作で再ログイン(分)</label>
+              <input class="input" id="reloginMinutes" type="number" min="0" step="1" style="width:6em" value="{{ view.relogin_minutes }}">
+              <span class="why" style="margin:0">0 = しない(VBA と同じく、閉じるまで有効)</span>
+            </div>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn--commit" type="button" id="saveBehavior">動作の設定を保存</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="tabpanel tabpanel--scroll" id="panel-access" role="tabpanel" aria-labelledby="tab-access" hidden>
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">Ａ</i>
+            <h3>Access 取り込み</h3>
+            <span class="eyebrow">.accdb → .sqlite3(cscript → ADODB → ACE)</span>
+          </header>
+          <div class="pad">
+            <div class="paths">
+              {{ pathrow("accdbSource", "元の .accdb", view.accdb_source, "") }}
+            </div>
+            <p class="why" id="accessNote">この面の実行部分は Phase 1 で入ります。</p>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn--commit" type="button" id="saveAccess">元ファイルを保存</button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section class="tabpanel tabpanel--scroll" id="panel-terminal" role="tabpanel" aria-labelledby="tab-terminal" hidden>
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">端</i>
+            <h3>この端末</h3>
+          </header>
+          <div class="pad">
+            <dl class="checks" id="terminalList">
+              <div class="check check--info"><dt>PC 名</dt><dd><span class="v">{{ view.terminal.pc_name }}</span></dd></div>
+              <div class="check check--info"><dt>ログイン ID(OS)</dt><dd><span class="v">{{ view.terminal.user }}</span></dd></div>
+              <div class="check check--info"><dt>版</dt><dd><span class="v">{{ view.terminal.version }}</span><span class="why">{{ view.terminal.app_root }}</span></dd></div>
+              <div class="check check--info"><dt>ローカル領域</dt><dd><span class="v">{{ view.terminal.local_root }}</span><span class="why">ログ: {{ view.terminal.log_dir }} / 設定: {{ view.terminal.config_path }}</span></dd></div>
+            </dl>
+          </div>
+        </section>
+      </section>
+    </div>
+  </div>
+</div>
+
+<dialog id="browser" class="browser">
+  <form method="dialog" class="browser__head">
+    <b id="browseFor"></b>
+    <input class="input" id="browsePath" spellcheck="false"
+           autocomplete="off" aria-label="いま見ているフォルダ">
+    <button class="btn" type="button" id="browseGo">開く</button>
+    <button class="btn" type="button" id="browseUp">上へ</button>
+    <button class="btn btn--danger" value="cancel">閉じる</button>
+  </form>
+  <p class="status status--ng" id="browseNote" hidden></p>
+  <div class="tablewrap tablewrap--browse">
+    <table class="table"><tbody id="browseRows"></tbody></table>
+  </div>
+  <div class="btn-row" style="margin-top:8px">
+    <button class="btn btn--commit" type="button" id="browsePick">このフォルダにする</button>
+  </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+  import { start } from "{{ url_for('static', filename='js/views/settings.js') }}";
+  start({{ state | tojson }});
+</script>
+{% endblock %}

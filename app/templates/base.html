@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ display_name }}{% endblock %}</title>
+<link rel="icon" href="data:image/svg+xml,{{ favicon | urlencode }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+
+<!--
+  アプリの外枠。
+
+  ・ステータスリボン … いま何が決まっているかを常時見せる(作業記憶を使わせない)
+  ・左のレール       … 4画面。並びは作業の順序。番号は装飾ではなく順序が実在するから
+  ・接続断の帯       … 基盤仕様書 2.9。黙って古い表示を出し続けない
+
+  情報の並び・作業の順序は VBA 版(MF1→MF2→MF3)から変えない。
+-->
+
+<div class="offline" id="offline" hidden role="alert">
+  <span>バックエンドに接続できません</span>
+  <button class="btn" type="button" id="reconnect">再接続</button>
+  <button class="btn" type="button" onclick="location.reload()">再読込</button>
+</div>
+
+<header class="ribbon">
+  {#
+    アプリの名前と版。**どの画面でも消えない。**
+
+    端末はフォルダごとコピーして配るので、「その端末に入っているのは
+    どれか」を電話で聞かれることがある。画面の左上を読んでもらえば
+    答えられる。版の出どころは `config/app.json` ただ1つ。
+  #}
+  <div class="brand">
+    <b class="brand__name">{{ display_name }}</b>
+    <span class="ver" title="このアプリの版">{{ version_label }}</span>
+  </div>
+  <div class="ribbon__slots">
+    {# 値はサーバが持つ(`shell.ribbon_values`)。画面を移っても消えない #}
+    <div class="slot"><span class="k">システム</span><span class="v" id="rb-system">{{ ribbon.system }}</span></div>
+    <div class="slot"><span class="k">利用者</span><span class="v" id="rb-user" {% if not ribbon.user %}data-state="unset"{% endif %}>{{ ribbon.user or "未ログイン" }}</span></div>
+    <div class="slot"><span class="k">Level</span><span class="v" id="rb-level">{{ ribbon.level or "-" }}</span></div>
+    <div class="slot"><span class="k">接続</span><span class="v" id="rb-mode">{{ ribbon.mode }}</span></div>
+  </div>
+  {#
+    いま動いているもの。**どの画面にいても見える。**
+
+    取り込みは数分かかることがあり、始めた画面(設定)を離れると
+    終わったかどうかが分からなくなる ── 戻って確かめに行くしかない。
+    帯に出しておけば、離れたまま待てる。
+
+    何も走っていないときは消える(`hidden`)。ずっと居座る枠にすると、
+    「動いていない」ことを読むために毎回そこを見ることになる。
+    中身は `jobs.js` の見張りが入れる。
+  #}
+  <div class="running" id="rb-running" hidden>
+    <span class="running__dot" aria-hidden="true"></span>
+    <span class="running__text">
+      <b id="rb-run-what"></b>
+      <small id="rb-run-how"></small>
+    </span>
+    <span class="running__track" aria-hidden="true"><i id="rb-run-fill"></i></span>
+  </div>
+  <div class="ribbon__end">
+    <button class="btn btn--danger" type="button" id="quit"><span class="gl">■</span>終了</button>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" aria-label="作業の順序">
+    <ol>
+      {% for item in nav %}
+      <li>
+        {# 2行。名前だけでは「倉庫連携」が何をする画面か押すまで分からない。
+           説明はサーバが持つ(`shell.NavItem.note`) #}
+        <a href="{{ item.url }}" {% if item.key == active %}aria-current="page"{% endif %}>
+          <span class="n" aria-hidden="true">{{ loop.index }}</span>
+          <span class="rail__text">
+            <b class="label">{{ item.label }}</b>
+            {% if item.note %}<small>{{ item.note }}</small>{% endif %}
+          </span>
+          {% if item.badge %}<span class="badge badge--{{ item.badge_kind }}">{{ item.badge }}</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <main class="work" id="main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script>
+  // サーバから渡す起動時の値。JSはここ以外から設定を読まない
+  window.APP = {
+    token: {{ token | tojson }},
+    // このタブの番号。自動終了の見張りが画面ごとに数えるためのもの
+    // (`dbviewer/idle_exit.py`)。この <script> は nav.js の差し替え対象では
+    // ないので、同じタブで画面を移っても番号は変わらない
+    screenId: {{ screen_id | tojson }},
+    healthPollMs: {{ health_poll_ms }},
+    logPollMs: {{ log_poll_ms }},
+    alivePollMs: {{ alive_poll_ms }}
+  };
+</script>
+<script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
+{#
+  画面ごとのスクリプトは**この箱の中だけ**に置く。画面を移るとき、
+  `nav.js` はこの箱の中身を入れ替えて動かし直す(外枠のぶんは残す)。
+#}
+<div id="pagescripts" hidden>{% block scripts %}{% endblock %}</div>
+</body>
+</html>
