@@ -19,17 +19,14 @@ import sqlite3
 import unittest
 from typing import Any, Optional
 
-from dbviewer import db
-
 # 試験用の起動トークン。**本物と同じ経路を通す**ために必ず付ける
 TOKEN = "test-token-abc123"
 
 
 def memory_db() -> sqlite3.Connection:
-    """スキーマを当てた手元のDB。1件の試験のあいだだけ生きる。"""
+    """手元の空 DB。1件の試験のあいだだけ生きる。"""
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    db.apply_schema(conn)
     return conn
 
 
@@ -48,16 +45,11 @@ def bind_db(case: unittest.TestCase, routes: Any,
     return conn
 
 
-def make_client(mode: str = "field", *, port: int = 8713, ready: bool = True,
-                grant: Any = None):
-    """トークン付きで叩ける `test_client`。
-
-    `grant` を渡せる形にしてあるのは、**開発機の `アクセス権限` マスタの
-    中身で試験の結果が変わってはいけない**ため。
-    """
+def make_client(mode: str = "main", *, port: int = 8743, ready: bool = True):
+    """トークン付きで叩ける `test_client`。"""
     from app import create_app
 
-    app = create_app(mode, token=TOKEN, port=port, grant=grant)
+    app = create_app(mode, token=TOKEN, port=port)
     app.config["TESTING"] = True
     if ready:
         app.config["READY"] = True

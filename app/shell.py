@@ -93,11 +93,15 @@ def ribbon_values() -> dict[str, str]:
         sys_name = prof.sys_name
     except ValueError:
         sys_name = "(プロファイル未設定)"
+    from dbviewer import auth
+
     online = user_settings.get(user_settings_key_online(), True)
+    s = auth.current()
     return {
         "system": sys_name,
-        "user": "",
-        "level": "",
+        "user": s.user_id if s else "",
+        "level": str(s.level) if s else "",
+        "developer": bool(s and s.developer),
         "mode": "オンライン" if online else "オフライン",
     }
 

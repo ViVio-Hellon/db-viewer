@@ -68,6 +68,7 @@
     <span class="running__track" aria-hidden="true"><i id="rb-run-fill"></i></span>
   </div>
   <div class="ribbon__end">
+    {% if ribbon.user %}<button class="btn" type="button" id="logout" title="別の ID でログインし直す">ログアウト</button>{% endif %}
     <button class="btn btn--danger" type="button" id="quit"><span class="gl">■</span>終了</button>
   </div>
 </header>

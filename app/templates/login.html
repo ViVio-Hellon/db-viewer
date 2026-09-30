@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}ログイン — {{ display_name }}{% endblock %}
+{% block content %}
+<div class="pane">
+  <div class="pane__head">
+    <div><span class="eyebrow">ログイン</span><h2>{{ ribbon.system }}</h2></div>
+  </div>
+  <span class="dimline" aria-hidden="true"></span>
+  <section class="card" style="max-width:32em; margin-top:12px">
+    <header><i class="ib ib--sm" aria-hidden="true">認</i><h3>ID とパスワード</h3></header>
+    <div class="pad">
+      <form id="loginForm" autocomplete="off">
+        <div class="field"><label for="loginId" style="width:8em">ID</label>
+          <input class="input" id="loginId" value="{{ last_user }}" spellcheck="false" style="flex:1">
+          <button class="btn btn--find" type="button" id="useMyId" title="この PC のログイン ID を入れる">{{ use_id }}</button>
+        </div>
+        <div class="field" style="margin-top:8px"><label for="loginPass" style="width:8em">パスワード</label>
+          <input class="input" id="loginPass" type="password" style="flex:1">
+          <button class="btn btn--find" type="button" id="showPass">表示</button>
+        </div>
+        <p class="why">この PC: <b>{{ use_pc }}</b> / OS のログイン ID: <b>{{ use_id }}</b>。ID テーブルの ID と PC の両方が一致する行のパスワードで確かめます(VBA 版と同じ)。</p>
+        <p class="status status--ng" id="loginProblem" hidden></p>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn btn--commit" type="submit" id="loginExe">ログイン</button>
+          <a class="btn btn--find" href="/settings">設定へ</a>
+        </div>
+      </form>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+  import { start } from "{{ url_for('static', filename='js/views/login.js') }}";
+  start({{ next_url | tojson }});
+</script>
+{% endblock %}

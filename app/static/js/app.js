@@ -29,6 +29,7 @@ running.start();
  */
 export function wireShell() {
   wireQuit(document.getElementById("quit"));
+  wireLogout(document.getElementById("logout"));
   // 新しい帯は空で来る。**移った先で「何も動いていない」に見せない**
   running.paint();
 }
@@ -68,6 +69,18 @@ function wireQuit(button) {
       }
       toastError(err);
     }
+  });
+}
+
+// ログアウト。セッションはプロセスに1つ(VBA と同じく1台1人)
+function wireLogout(button) {
+  if (!once(button)) return;
+  button.addEventListener("click", async () => {
+    try {
+      const body = await api.post("/api/logout", {});
+      unsaved.allowLeave();
+      location.href = body.next || "/login";
+    } catch (err) { toastError(err); }
   });
 }
 

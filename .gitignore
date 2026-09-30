@@ -4,3 +4,4 @@ __pycache__/
 /data/
 /logs/
 *.sqlite3-journal
+Access.log

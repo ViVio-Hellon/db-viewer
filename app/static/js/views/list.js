@@ -22,6 +22,19 @@ const state = {
   setup: {},
 };
 
+const STORE = "dbviewer.list";
+function remember() {
+  try { sessionStorage.setItem(STORE, JSON.stringify({ filters: state.filters, page: state.page, perPage: state.perPage, sql: el.sqlBox.textContent, selected: state.selected })); } catch (e) { /* 覚えられないだけ */ }
+}
+function recall() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(STORE) || "null");
+    if (!saved) return;
+    state.filters = saved.filters || {}; state.page = saved.page || 1; state.perPage = saved.perPage || 24; state.selected = saved.selected || null;
+    el.perPage.value = String(state.perPage);
+  } catch (e) { /* 壊れていれば最初から */ }
+}
+
 function problem(text) {
   el.listProblem.hidden = !text;
   el.listProblem.textContent = text || "";
@@ -37,6 +50,7 @@ async function load({ eventNo = 0, pageFlag = false, reset = false } = {}) {
     if (reset) state.filters = {};
     render(view);
   } catch (err) {
+    if (err.status === 401) { location.href = "/login?next=/list"; return; }
     if (err.status === 409 || err.status === 422) problem(err.message);
     else toastError(err);
   }
@@ -57,6 +71,7 @@ function render(view) {
   el.sqlBox.textContent = view.sql || "";
   renderFilters(view.filters || []);
   renderTable(view.columns, view.rows, view.align || []);
+  remember();
   el.btnReport.hidden = !(state.setup.report_flag);
   el.btnBrowse.hidden = !(state.setup.browse_flag);
   if (state.setup.column_problems && state.setup.column_problems.length && !state.warned) {
@@ -132,6 +147,7 @@ function select(tr) {
   for (const r of el.listTable.tBodies[0].rows) r.removeAttribute("aria-selected");
   tr.setAttribute("aria-selected", "true");
   state.selected = tr.dataset.key;
+  remember();
 }
 
 function pick(no, value) {
@@ -189,5 +205,6 @@ export function start() {
   el.btnOutput.addEventListener("click", () => { location.href = "/browse?from=list"; });
   el.btnReport.addEventListener("click", () => { location.href = "/report"; });
   el.btnBrowse.addEventListener("click", () => { location.href = "/browse"; });
-  load();
+  recall();
+  load({ pageFlag: true });
 }

@@ -77,5 +77,9 @@ def ensure_isolated() -> list[str]:
             setattr(config, name, _escape(name.lower()))
             moved.append(name)
 
+    # Access.log: 本体と同じフォルダ(試験ではリポジトリ直下)に書いてしまうので止める
+    from dbviewer import user_settings
+    user_settings.save(config.KEY_ACCESS_LOG, False)
+
     logging_utils.silence_console()
     return moved

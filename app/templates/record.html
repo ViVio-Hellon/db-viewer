@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}{{ rec_mode }}モード — {{ display_name }}{% endblock %}
+{% block head %}
+<style>
+  .rec { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; margin-top:10px; }
+  @media (max-width:1000px){ .rec { grid-template-columns:1fr; grid-auto-flow:row !important; grid-template-rows:none !important; } }
+  .rec__row { display:grid; grid-template-columns:9em 1fr; gap:6px; align-items:start; min-width:0; }
+  .rec__lbl { border:1px solid var(--rule); font-size:var(--fs-sm); padding:3px 6px; text-align:center;
+              border-radius:var(--radius-xs); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#18262f; }
+  .lbl--ivory { background:rgb(255,251,237); } .lbl--rococo { background:rgb(238,231,227); }
+  .lbl--oyster { background:rgb(246,230,222); } .lbl--champagne { background:rgb(254,239,212); }
+  .lbl--error { background:#e53935; color:#fff; }
+  .rec__val { display:flex; gap:4px; align-items:flex-start; min-width:0; position:relative; }
+  .rec__val .input { flex:1; min-width:0; font-family:inherit; }
+  .rec__val textarea.input { resize:vertical; }
+  .input.is-changed { background:rgb(255,165,0) !important; }
+  .input.is-locked { background:var(--surface); }
+  .input.is-auto { background:rgb(220,220,220) !important; }
+  .input.is-required-ng { background:rgb(255,0,0) !important; color:#fff; }
+  .rec__badge { font-size:var(--fs-xs); border-radius:var(--pill); padding:0 6px; line-height:1.6; white-space:nowrap; }
+  .badge--must { background:#fde2e2; color:#b4232a; } .badge--his { background:#e2ecfd; color:#1d4ed8; }
+  .rec__join { flex:0 0 40%; background:whitesmoke; color:dimgray; border:1px solid var(--rule); padding:3px 6px; font-size:var(--fs-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rec__icons { display:flex; gap:2px; flex-wrap:wrap; } .rec__icons img { width:18px; height:18px; cursor:pointer; border:1px solid var(--rule); }
+  .rec__nav { display:flex; gap:6px; align-items:center; }
+  .rec__nav select { width:8em; }
+  .helper { width:min(720px, 94vw); }
+  .helper .tablewrap { max-height:50vh; }
+  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:#fff; }
+  .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); }
+  .helper__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="pane">
+  <div class="pane__head">
+    <div><span class="eyebrow">Step 1</span><h2 id="recTitle">{{ rec_mode }}モード</h2></div>
+    <div class="nextstep">
+      <div class="rec__nav" id="recNav">
+        <button class="btn btn--find" type="button" id="navPrev">▲</button>
+        <select class="input" id="navKeys" aria-label="管理番号"></select>
+        <button class="btn btn--find" type="button" id="navNext">▼</button>
+      </div>
+      <p class="why" id="recNote">入力に制限のある欄は「…」で選びます。変えた欄は橙色になります。</p>
+    </div>
+  </div>
+  <span class="dimline" aria-hidden="true"></span>
+  <p class="status status--ng" id="recProblem" hidden></p>
+  <div class="rec" id="recFields"></div>
+  <div class="btn-row" style="margin-top:12px">
+    <button class="btn btn--find" type="button" id="btnBack">戻る</button>
+    <button class="btn btn--commit" type="button" id="btnExe">実行</button>
+    <span class="why" id="recMode"></span>
+  </div>
+</div>
+
+<dialog id="helper" class="browser helper">
+  <form method="dialog" class="browser__head">
+    <b id="helperTitle"></b>
+    <span class="why" id="helperNote" style="margin-left:auto"></span>
+    <button class="btn btn--danger" value="cancel">閉じる</button>
+  </form>
+  <div id="helperBody"></div>
+  <div class="btn-row" style="margin-top:8px">
+    <button class="btn btn--commit" type="button" id="helperOk">選択</button>
+    <button class="btn btn--find" type="button" id="helperClear">クリア</button>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+  import { start } from "{{ url_for('static', filename='js/views/record.js') }}";
+  start({{ rec_mode | tojson }}, {{ rec_key | tojson }}, {{ rec_click | tojson }});
+</script>
+{% endblock %}

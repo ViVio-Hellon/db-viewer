@@ -5,7 +5,11 @@ import unittest
 
 from dbviewer import config, filters as flt, records, sql_builder, vba_compat
 from dbviewer.settings_tables import ConvRow, ConvTable, load_setup, master_file_check
-from tests._fixture_db import connect
+import tempfile
+from pathlib import Path
+
+from dbviewer import shared_db
+from tests._fixture_db import connect, fresh_db_path
 
 EXPECTED_BASE_SQL = (
     "SELECT A.[管理番号],A.[作業名],A.[作業NO],A.[Ⅰ],A.[Ⅱ],A.[Ⅲ],A.[Ⅳ],A.[RA],A.[PC化],A.[担当],"
@@ -55,7 +59,7 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(s.conv.by_item("登録日").input_type, "calender")
 
     def test_master_file_check_messages(self):
-        with connect() as conn:
+        with tempfile.TemporaryDirectory() as tmp, shared_db.connect(fresh_db_path(Path(tmp))) as conn:
             conn.execute("CREATE TABLE T (管理番号 INTEGER, a TEXT, b TEXT)")
             conn.execute("CREATE TABLE T_設定 (管理番号 INTEGER, 項目名 TEXT, 文字色設定 TEXT, 入力形式 TEXT, 登録条件 TEXT, 参照形式 TEXT, マスタ結合 TEXT, 履歴 TEXT, 表示 TEXT, 追加表示 TEXT, ソート TEXT)")
             conn.execute("INSERT INTO T_設定 (管理番号, 項目名) VALUES (1, '管理番号'), (2, 'a')")

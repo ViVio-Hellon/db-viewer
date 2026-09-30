@@ -147,6 +147,33 @@ def _refuse_foreign_page():
     return FOREIGN_PAGE_HTML, 403, {"Content-Type": "text/html; charset=utf-8"}
 
 
+# ログイン無しで通す経路(VBA の Login フォームより前に触れるもの + 基盤)
+LOGIN_EXEMPT_PREFIXES = ("/static/", "/api/settings/", "/api/fs/")
+LOGIN_EXEMPT_PATHS = frozenset({"/", "/login", "/api/login", "/api/logout", "/api/session",
+                                "/api/health", "/api/alive", "/api/jobs", "/api/shutdown",
+                                "/settings", "/favicon.ico"})
+
+
+def _login_required():
+    """VBA は Login を通らないと MF1 を出さない。Web も同じ(設定だけは前から触れる)。"""
+    from dbviewer import auth
+    from flask import redirect
+
+    path = request.path
+    if path in LOGIN_EXEMPT_PATHS or any(path.startswith(p) for p in LOGIN_EXEMPT_PREFIXES):
+        s = auth.current()
+        if s:
+            s.touch()
+        return None
+    s = auth.current()
+    if s is None:
+        if path.startswith("/api/"):
+            return jsonify(_error("login", auth.MSG_NEED_LOGIN)), 401
+        return redirect("/login?next=" + path)
+    s.touch()
+    return None
+
+
 def _register_security(app: Flask) -> None:
     @app.before_request
     def _check_request():                       # noqa: ANN202 - Flaskのフック
@@ -159,7 +186,8 @@ def _register_security(app: Flask) -> None:
             return jsonify(_error("bad_host", "このアドレスからは利用できません")), 400
 
         if not any(request.path.startswith(p) for p in TOKEN_REQUIRED_PREFIXES):
-            return _refuse_foreign_page()
+            refused = _refuse_foreign_page()
+            return refused if refused is not None else _login_required()
 
         # --- 同一オリジンの確認 ---
         # ブラウザが付ける Fetch Metadata。付いていない場合(古い
@@ -183,6 +211,7 @@ def _register_security(app: Flask) -> None:
             return jsonify(_error(
                 "bad_token",
                 "この画面は無効になりました。アプリを開き直してください")), 401
+        return _login_required()
 
         return None
 
@@ -393,12 +422,15 @@ def get_db():
 # ルーティング
 # ------------------------------------------------------------------
 def _register_routes(app: Flask) -> None:
-    from .routes import health, pending, settings
+    from .routes import auth as auth_routes
+    from .routes import health, pending, record, settings
     from .routes import list as list_routes
 
     app.register_blueprint(health.bp)
     app.register_blueprint(settings.bp)
+    app.register_blueprint(auth_routes.bp)
     app.register_blueprint(list_routes.bp)
+    app.register_blueprint(record.bp)
 
     # レールに出ているのに中身がまだ無い画面へ、「準備中」の案内を置く
     pending.register(app)
