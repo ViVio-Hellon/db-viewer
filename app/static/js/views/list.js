@@ -5,7 +5,7 @@
   「何ページ目か」だけ(VBA の FL/FLL/SB1 にあたる)。タブを 2 枚開いても
   それぞれが自分の状態を持つだけで、取り合うものは無い。
 */
-import { api } from "../api.js";
+import { api, tokenUrl } from "../api.js";
 import { toast, toastError } from "../toast.js";
 
 const el = {};
@@ -179,6 +179,15 @@ function leaveSummary() {
   load();
 }
 
+async function runReport() {
+  // VBA REPORT_Click: いまの一覧 SQL で帳票を作り、原紙にシートを足してプレビュー
+  try {
+    const res = await api.post("/api/report/run", { sql: el.sqlBox.textContent });
+    toast(`原紙にシート「${res.sheet}」を追加しました。\n${res.path}`, "ok");
+    window.open(tokenUrl(res.preview), "_blank", "noopener");
+  } catch (err) { toast(err.message, "warn"); }
+}
+
 function command(cmd, clickType = "ButtonClick") {
   if (state.mode === "集計") { leaveSummary(); return; }
   const key = state.selected;
@@ -203,7 +212,7 @@ export function start() {
   el.btnBack.addEventListener("click", leaveSummary);
   el.btnSetting.addEventListener("click", () => { location.href = "/master"; });
   el.btnOutput.addEventListener("click", () => { location.href = "/browse?from=list"; });
-  el.btnReport.addEventListener("click", () => { location.href = "/report"; });
+  el.btnReport.addEventListener("click", runReport);
   el.btnBrowse.addEventListener("click", () => { location.href = "/browse"; });
   recall();
   load({ pageFlag: true });
