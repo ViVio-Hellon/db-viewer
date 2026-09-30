@@ -177,9 +177,23 @@
             <div class="paths">
               {{ pathrow("accdbSource", "元の .accdb", view.accdb_source, "") }}
             </div>
-            <p class="why" id="accessNote">この面の実行部分は Phase 1 で入ります。</p>
+            <p class="why">
+              取り込み先はいまの接続先の本体ファイル(<span id="accessTarget">{{ view.db_path }}</span>)です。
+              いまの本体は <code>.bak</code> に退けてから差し替えます。Windows の cscript + ADODB + ACE で読むので、この端末に Access Database Engine が要ります。
+            </p>
             <div class="btn-row" style="margin-top:8px">
-              <button class="btn btn--commit" type="button" id="saveAccess">元ファイルを保存</button>
+              <button class="btn btn--commit" type="button" id="runAccess">Access から取り込む</button>
+              <button class="btn btn--find" type="button" id="saveAccess">元ファイルだけ保存</button>
+            </div>
+            <div class="job" id="accessJob" hidden style="margin-top:12px">
+              <div class="job__head">
+                <span class="job__label" id="accessJobLabel"></span>
+                <span class="job__state st" id="accessJobState"></span>
+                <span class="num" id="accessJobPct"></span>
+              </div>
+              <div class="bar"><div class="bar__fill" id="accessJobBar"></div></div>
+              <p class="why" id="accessJobMessage"></p>
+              <p class="status" id="accessJobResult" hidden></p>
             </div>
           </div>
         </section>

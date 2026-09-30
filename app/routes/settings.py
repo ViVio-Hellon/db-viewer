@@ -62,6 +62,19 @@ def save():
     return jsonify(out)
 
 
+@bp.post("/api/settings/accdb-import")
+def accdb_import():
+    """Access(.accdb)をいまの接続先の .sqlite3 に取り込む(長時間処理)。"""
+    body = request.get_json(silent=True) or {}
+    job, result = settings_presenter.start_accdb_import(str(body.get("accdb_source", "")))
+    if not result.ok:
+        status = 409 if result.reason == settings_presenter.REFUSE_BUSY else 400
+        return jsonify({"error": {"code": result.reason, "message": result.message,
+                                  "field": result.field}}), status
+    return jsonify({"ok": True, "message": result.message,
+                    "job": settings_presenter.job_dict(job)})
+
+
 @bp.get("/api/fs/list")
 def fs_list():
     """サーバ側のフォルダを一覧する(「参照…」)。"""

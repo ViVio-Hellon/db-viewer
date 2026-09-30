@@ -5,6 +5,7 @@
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
 import * as tabs from "../tabs.js";
+import * as jobs from "../jobs.js";
 
 const el = {};
 let LEVEL_LABEL = {};
@@ -188,12 +189,52 @@ function startBrowser() {
   });
 }
 
+/* ---------------- Access 取り込み(長時間処理は jobs.js が見張る) ---------------- */
+let unwatch = null;
+
+function showJob(job) {
+  if (!el.accessJob) return;
+  const mine = job && job.kind === "accdb_import";
+  el.accessJob.hidden = !mine;
+  if (!mine) return;
+  el.accessJobLabel.textContent = job.label;
+  el.accessJobState.className = `st st--${job.state_kind}`;
+  el.accessJobState.textContent = job.state_label;
+  el.accessJobPct.textContent = `${job.pct}%`;
+  el.accessJobBar.style.width = `${job.pct}%`;
+  el.accessJobMessage.textContent = job.message || "";
+  const done = !job.running;
+  el.accessJobResult.hidden = !done;
+  el.accessJobResult.className = `status status--${job.ok ? "ok" : "ng"}`;
+  el.accessJobResult.textContent = done ? (job.ok ? job.summary : job.error) : "";
+}
+
+function onJobs(state) {
+  const job = state.running[0] || state.recent[0];
+  showJob(job);
+  el.runAccess.disabled = !!state.busy;
+  if (!state.busy && lastBusy) refresh();
+  lastBusy = !!state.busy;
+}
+let lastBusy = false;
+
+async function runAccess() {
+  try {
+    const res = await api.post("/api/settings/accdb-import", { accdb_source: el.accdbSource.value });
+    toast(res.message, "ok");
+    showJob(res.job);
+    jobs.refresh();
+  } catch (err) { toastError(err); jobs.refresh(); }
+}
+
 export function start(state) {
   for (const id of ["statusGrid", "progNo", "online", "serverDir", "serverDirReal", "serverDirDefault",
                     "localDir", "localDirReal", "dbFile", "dbPath",
                     "refDir", "refDirReal", "reportDir", "reportDirReal", "exportDir", "exportDirReal",
                     "accessLog", "reloginMinutes", "accdbSource",
-                    "saveSource", "savePaths", "saveBehavior", "saveAccess", "refresh", "settingsTabs"]) {
+                    "saveSource", "savePaths", "saveBehavior", "saveAccess", "runAccess", "refresh", "settingsTabs",
+                    "accessJob", "accessJobLabel", "accessJobState", "accessJobPct", "accessJobBar",
+                    "accessJobMessage", "accessJobResult"]) {
     el[id] = document.getElementById(id);
   }
   LEVEL_LABEL = state.level_label || {};
@@ -212,6 +253,9 @@ export function start(state) {
     access_log: el.accessLog.checked, relogin_minutes: Number(el.reloginMinutes.value || 0),
   }));
   el.saveAccess.addEventListener("click", () => save({ accdb_source: el.accdbSource.value }));
+  el.runAccess.addEventListener("click", runAccess);
+  if (unwatch) unwatch();
+  unwatch = jobs.subscribe(onJobs);
 
   el.statusGrid.addEventListener("click", (event) => {
     const go = event.target.closest("[data-goto]");
