@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}マスタ管理 — {{ display_name }}{% endblock %}
+{% block head %}
+<style>
+  .ms { display:grid; grid-template-columns:14em 1fr; gap:14px; margin-top:10px; min-height:0; }
+  @media (max-width:900px){ .ms { grid-template-columns:1fr; } }
+  .ms__list { border:1px solid var(--rule); border-radius:var(--radius-xs); background:var(--surface); max-height:60vh; overflow:auto; }
+  .ms__list div { padding:4px 10px; cursor:pointer; font-size:var(--fs-sm); white-space:nowrap; }
+  .ms__list div:hover { background:var(--accent-soft); } .ms__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+  .ms__main { min-width:0; display:flex; flex-direction:column; gap:8px; }
+  .table td.l, .table th.l { text-align:left; }
+  .table tbody tr { cursor:pointer; }
+  .rec { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; }
+  @media (max-width:1000px){ .rec { grid-template-columns:1fr; } }
+  .rec__row { display:grid; grid-template-columns:9em 1fr; gap:6px; align-items:start; min-width:0; }
+  .rec__lbl { border:1px solid var(--rule); font-size:var(--fs-sm); padding:3px 6px; text-align:center; border-radius:var(--radius-xs); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#18262f; }
+  .lbl--ivory { background:rgb(255,251,237); } .lbl--rococo { background:rgb(238,231,227); } .lbl--oyster { background:rgb(246,230,222); } .lbl--champagne { background:rgb(254,239,212); } .lbl--error { background:#e53935; color:#fff; }
+  .rec__val { display:flex; gap:4px; align-items:flex-start; min-width:0; }
+  .rec__val .input { flex:1; min-width:0; }
+  .input.is-changed { background:rgb(255,165,0) !important; }
+  .input.is-auto { background:rgb(220,220,220) !important; }
+  .helper { width:min(720px, 94vw); } .helper .tablewrap { max-height:50vh; }
+  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:#fff; }
+  .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); } .helper__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="pane">
+  <div class="pane__head">
+    <div><span class="eyebrow">Step 2</span><h2 id="msTitle">マスタメンテナンス</h2></div>
+    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。行をダブルクリックで修正。閉じると一覧のフィルタは消えます(VBA と同じ)。</p></div>
+  </div>
+  <span class="dimline" aria-hidden="true"></span>
+  <p class="status status--ng" id="msProblem" hidden></p>
+  <div class="ms">
+    <div class="ms__list" id="msTables"></div>
+    <div class="ms__main">
+      <div class="btn-row">
+        <b id="msName" style="min-width:10em"></b>
+        <span class="why" id="msPage" style="margin:0"></span>
+        <span style="margin-left:auto"></span>
+        <button class="btn btn--commit" type="button" id="msNew" hidden>新規</button>
+        <button class="btn btn--commit" type="button" id="msEdit" hidden>修正</button>
+        <button class="btn btn--danger" type="button" id="msDelete" hidden>削除</button>
+        <button class="btn btn--find" type="button" id="msBack" hidden>戻る</button>
+        <button class="btn btn--commit" type="button" id="msExe" hidden>実行</button>
+        <button class="btn btn--find" type="button" id="msClose">閉じる</button>
+      </div>
+      <div class="tablewrap" id="msGrid" style="max-height:60vh"><table class="table" id="msTable"><thead></thead><tbody></tbody></table></div>
+      <div class="rec" id="msFields" hidden></div>
+    </div>
+  </div>
+</div>
+<dialog id="helper" class="browser helper">
+  <form method="dialog" class="browser__head">
+    <b id="helperTitle"></b><span class="why" id="helperNote" style="margin-left:auto"></span>
+    <button class="btn btn--danger" value="cancel">閉じる</button>
+  </form>
+  <div id="helperBody"></div>
+  <div class="btn-row" style="margin-top:8px">
+    <button class="btn btn--commit" type="button" id="helperOk">選択</button>
+    <button class="btn btn--find" type="button" id="helperClear">クリア</button>
+  </div>
+</dialog>
+{% endblock %}
+{% block scripts %}
+<script type="module">
+  import { start } from "{{ url_for('static', filename='js/views/master.js') }}";
+  start();
+</script>
+{% endblock %}

@@ -423,7 +423,7 @@ def get_db():
 # ------------------------------------------------------------------
 def _register_routes(app: Flask) -> None:
     from .routes import auth as auth_routes
-    from .routes import health, pending, record, settings
+    from .routes import browse, health, master, pending, record, settings
     from .routes import list as list_routes
 
     app.register_blueprint(health.bp)
@@ -431,6 +431,8 @@ def _register_routes(app: Flask) -> None:
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(list_routes.bp)
     app.register_blueprint(record.bp)
+    app.register_blueprint(master.bp)
+    app.register_blueprint(browse.bp)
 
     # レールに出ているのに中身がまだ無い画面へ、「準備中」の案内を置く
     pending.register(app)
