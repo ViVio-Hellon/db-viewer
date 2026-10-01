@@ -341,12 +341,18 @@ export function createGrid(root, opts = {}) {
   });
   tbody.addEventListener("dblclick", (e) => {
     const tr = e.target.closest("tr[data-k]");
-    if (!tr) return;
+    if (!tr || e.target.closest(".cell-edit")) return;
     select(tr.dataset.k);
     const row = rowByKey(tr.dataset.k);
-    if (row && opts.onOpen) opts.onOpen(row.r);
+    if (!row) return;
+    // マスを直せる画面なら、まずそちら(直せない列なら false が返る → 行を開く)
+    const td = e.target.closest("td");
+    const name = td ? visible()[[...tr.cells].indexOf(td)] : null;
+    if (td && name && opts.onCellEdit && opts.onCellEdit(row.r, name, td) === true) return;
+    if (opts.onOpen) opts.onOpen(row.r);
   });
   wrap.addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest(".cell-edit")) return;   // マスを直している最中
     if (!["ArrowDown", "ArrowUp", "Enter", "Home", "End", "PageDown", "PageUp"].includes(e.key)) return;
     if (!st.shown.length) return;
     e.preventDefault();
@@ -676,6 +682,22 @@ export function createGrid(root, opts = {}) {
     view: () => st.view,
     selected: () => (st.selectedKey === null ? null : (rowByKey(st.selectedKey)?.r || null)),
     selectedKey: () => st.selectedKey,
+    /** 1 行を新しい値に置き換えて描き直す(マスを直したあと)。 */
+    updateRow(key, newRow) {
+      const row = rowByKey(key);
+      if (!row || !newRow) return;
+      row.r = newRow; row.hv = -1;
+      const scroll = wrap.scrollTop;
+      refresh({ keepScroll: true });
+      wrap.scrollTop = scroll;
+      if (st.selectedKey !== null) select(st.selectedKey);
+    },
+    /** そのマスの <td>(いま描いていれば)。 */
+    cell(key, name) {
+      const tr = tbody.querySelector(`tr[data-k="${CSS.escape(String(key))}"]`);
+      const i = visible().indexOf(name);
+      return tr && i >= 0 ? tr.cells[i] : null;
+    },
     total: () => st.rows.length,
     focus: () => wrap.focus(),
   };

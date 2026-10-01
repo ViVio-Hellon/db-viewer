@@ -20,6 +20,8 @@
   .input.is-changed { background:rgb(255,165,0) !important; }
   .input.is-auto { background:rgb(220,220,220) !important; }
   .helper { width:min(720px, 94vw); } .helper .tablewrap { max-height:50vh; }
+  .ms__why { display:block; font-size:var(--fs-2xs); color:var(--muted); }
+  .ms__list div[aria-selected="true"] .ms__why { color:inherit; opacity:.8; }
   /* 選んだ行は一覧と同じくはっきり(暗い配色でも分かるように) */
   #msTable tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
   .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }

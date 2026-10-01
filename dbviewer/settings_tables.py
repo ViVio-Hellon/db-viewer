@@ -274,29 +274,14 @@ def master_file_check(conn: sqlite3.Connection, table: str) -> str:
     main_cols = column_names(conn, table)
     fj = field_dic(main_cols)
     conv = load_conv(conn, conv_name)
-    _, flt_rows = read_table(conn, config.FLT_TABLE)
-    flt_cols = column_names(conn, config.FLT_TABLE)
-    flt_fj = field_dic(flt_cols)
-
-    # マスタ結合の「結合フィールド名」はフィルタで使ってよい
-    key_ck: set[str] = set()
-    for r in conv.rows:
-        if "/" in r.ms_join:
-            parts = r.ms_join.split("/")
-            if len(parts) > 2:
-                key_ck.add(parts[2])
-
+    # VBA はここでフィルタ表の列も照合していた。Web の一覧はフィルタ表を使わない
+    # (どの列でも絞り込める)ので、照合しない。項目数と並びの照合は今までどおり
     if conv.count != len(main_cols):
         return "メインテーブルとその設定テーブルで登録している項目数が一致していません。"
     for k, r in enumerate(conv.rows, start=1):
         if r.item != main_cols[k - 1]:
             return (f"不一致項目あり [{conv_name}]マスタ {k}番目の項目 "
                     f"{r.item} ≠ {main_cols[k - 1]}")
-    fi = flt_fj.get(config.FILTER_ITEM, 2)
-    for k, r in enumerate(flt_rows, start=1):
-        key = r[fi - 1]
-        if key != "" and fj.get(key, 0) == 0 and key not in key_ck:
-            return f"不一致項目あり {k}番目のフィルタ{key}"
     return ""
 
 
@@ -334,8 +319,13 @@ class SetupError(RuntimeError):
     pass
 
 
+# 起動に要る表(ログインの ID と、メインテーブル名などの 全般設定)
+REQUIRED_TABLES = (config.SET_TABLE, config.ID_TABLE)
+
+
 def load_setup(conn: sqlite3.Connection) -> SystemSetup:
-    for need in (config.SET_TABLE, config.FLT_TABLE, config.TYPE_TABLE, config.ID_TABLE):
+    # 一覧を Web の表にしたので、フィルタ・タイプは要らなくなった(あっても読むだけ)
+    for need in REQUIRED_TABLES:
         if not table_exists(conn, need):
             raise SetupError(f"必須テーブル [{need}] がありません。マスタファイルを確認してください。")
     general = load_general(conn)
@@ -345,7 +335,7 @@ def load_setup(conn: sqlite3.Connection) -> SystemSetup:
     column_problems = check_columns(conn, exclusion_set(conn, general.main_table), 2)
     conv = (load_conv(conn, general.conv_table)
             if table_exists(conn, general.conv_table) else ConvTable(general.conv_table, [], [], {}))
-    filters = load_filters(conn)
+    filters = load_filters(conn) if table_exists(conn, config.FLT_TABLE) else []
     main_columns = column_names(conn, general.main_table) if table_exists(conn, general.main_table) else []
     return SystemSetup(general=general, conv=conv, filters=filters,
                        main_columns=main_columns, fj=field_dic(main_columns),

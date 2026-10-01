@@ -39,28 +39,54 @@ MSG_DELETE_DONE = "削除しました。"
 MSG_NOT_EDITABLE = "この表はこのレベルでは直せません。"
 
 
-def editable_tables(conn: sqlite3.Connection, setup: SystemSetup, level: int) -> list[str]:
-    """VBA MF2 の L1 に並ぶ表(先頭の空欄は除く)。"""
+def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str, str]]:
+    """マスタ管理に出す表と、出す理由。**いま使っている表だけ。**
+
+    一覧を Web の表にしたので、フィルタ・フィルタ_設定・タイプは使わなくなった(出さない)。
+    残るのは:
+      ID                 … ログイン(誰が・どの PC で・どのレベルか)
+      全般設定           … メインテーブル名・帳票・テーブル閲覧・初期フィルタ
+      <メイン>_設定      … 登録画面の決まり(入力形式・必須・履歴・マスタ結合…)
+      <メイン>_設定 が参照するマスタ(入力形式 s/m、マスタ結合)… 選ぶ窓の中身
+      「表を持ってくる」で足した表
+      <メイン>_設定 の「履歴」に書いた H_ 表(見るだけ)
+    """
+    from . import table_bring
+    names = set(table_names(conn))
     main = setup.general.main_table
-    names = table_names(conn)
-    if level >= 5:
-        remove = {"", main}
-    elif level >= 4:
-        remove = {"", main, config.TYPE_TABLE}
-    elif level >= 3:
-        remove = {"", main, config.TYPE_TABLE, config.ID_TABLE}
-    else:
-        return [config.FLT_TABLE] if config.FLT_TABLE in names else []
-    pool = {n: i for i, n in enumerate(names) if n not in remove}
-    order = [config.ID_TABLE, config.SET_TABLE, main, main + config.SETTING_SUFFIX,
-             config.FLT_TABLE, config.FLT_TABLE + config.SETTING_SUFFIX, config.TYPE_TABLE]
-    out = []
-    for n in order:
-        if n in pool:
-            out.append(n)
-            pool.pop(n)
-    out.extend(pool.keys())
+    out: list[tuple[str, str]] = []
+
+    def add(name: str, why: str) -> None:
+        if name and name in names and name != main and name not in {n for n, _ in out}:
+            out.append((name, why))
+
+    add(config.ID_TABLE, "ログイン")
+    add(config.SET_TABLE, "メインテーブル名・帳票など")
+    add(setup.general.conv_table, "登録画面の決まり")
+    for r in setup.conv.rows:
+        spec = input_types.parse(r.input_type)
+        if spec.master:
+            add(spec.master, f"「{r.item}」で選ぶマスタ")
+        if "/" in (r.ms_join or ""):
+            add(r.ms_join.split("/")[0], f"「{r.item}」に結合するマスタ")
+    for name in sorted(table_bring.brought_tables(conn)):
+        add(name, "表を持ってくるで足した表")
+    for r in setup.conv.rows:
+        if r.his_rec:
+            add(r.his_rec, f"「{r.item}」の変更履歴(見るだけ)")
     return out
+
+
+def editable_tables(conn: sqlite3.Connection, setup: SystemSetup, level: int) -> list[str]:
+    """マスタ管理に並ぶ表。レベルの決まりは VBA MF2 と同じ:
+    Level 5 は全部、4 は ID まで、3 は ID 以外、2 以下は直せる表なし
+    (VBA の Level 2 以下はフィルタ表だけ直せたが、フィルタ表は使わなくなった)。"""
+    if level < 3:
+        return []
+    tables = [n for n, _ in used_tables(conn, setup)]
+    if level < 4:
+        tables = [n for n in tables if n != config.ID_TABLE]
+    return tables
 
 
 def is_history(table: str) -> bool:

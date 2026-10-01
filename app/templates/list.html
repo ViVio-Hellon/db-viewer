@@ -29,6 +29,19 @@
   .dt__list .is-hidden { opacity:.65; }
   .dt__list .dt__sep { grid-column:1 / -1; border-top:1px dashed var(--rule); margin:6px 0 2px; color:var(--faint); font-size:var(--fs-xs); padding-top:4px; }
   .dt__empty { padding:16px 12px; color:var(--muted); font-size:var(--fs-sm); }
+  /* マスを直す: 入力欄をマスにかぶせる。保存したマスは一瞬だけ色を付ける */
+  .grid__table tbody td.is-editing { padding:0; overflow:visible; position:relative; }
+  .cell-edit { box-sizing:border-box; width:100%; min-height:100%; margin:0; padding:4px 7px; font:inherit;
+               border:2px solid var(--focus); border-radius:3px; background:var(--surface); color:var(--ink); outline:none; }
+  textarea.cell-edit { position:absolute; left:0; top:0; z-index:5; min-height:6em; width:max(100%, 22em); resize:both; }
+  .grid__table tbody td.is-saved { animation:saved 1.4s ease-out; }
+  @keyframes saved { from { background:var(--ok-bg); box-shadow:inset 0 0 0 2px var(--state-ok); } to { box-shadow:none; } }
+  .savestate { font-size:var(--fs-xs); color:var(--muted); white-space:nowrap; }
+  .savestate.is-ok { color:var(--state-ok); } .savestate.is-ng { color:var(--state-error); }
+  .helper { width:min(720px, 94vw); } .helper .tablewrap { max-height:50vh; }
+  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
+  .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); }
+  .helper__list div[aria-selected="true"] { background:var(--accent); color:var(--on-accent); }
 </style>
 {% endblock %}
 
@@ -37,7 +50,8 @@
   <div class="lv__head">
     <div class="lv__title">
       <h2 id="listTitle">一覧</h2>
-      <span class="why" style="margin:0">見出しを押すと並べ替え、▾ で絞り込み、行をダブルクリックで修正</span>
+      <span class="why" style="margin:0" id="listHint">見出しを押すと並べ替え、▾ で絞り込み。マスをダブルクリックするとその場で直せて、すぐ保存されます</span>
+      <span class="savestate" id="saveState" aria-live="polite"></span>
     </div>
     <div class="lv__act">
       <button class="btn btn--commit" type="button" id="actNew"><span class="gl">＋</span>新規</button>
@@ -71,6 +85,18 @@
     </aside>
   </div>
 </div>
+<dialog id="helper" class="browser helper">
+  <form method="dialog" class="browser__head">
+    <b id="helperTitle"></b>
+    <span class="why" id="helperNote" style="margin-left:auto"></span>
+    <button class="btn btn--danger" value="cancel">閉じる</button>
+  </form>
+  <div id="helperBody"></div>
+  <div class="btn-row" style="margin-top:8px">
+    <button class="btn btn--commit" type="button" id="helperOk">選択</button>
+    <button class="btn btn--find" type="button" id="helperClear">クリア</button>
+  </div>
+</dialog>
 {% endblock %}
 
 {% block scripts %}

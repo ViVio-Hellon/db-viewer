@@ -58,6 +58,7 @@ def tables():
     return jsonify({"level": lv, "tables": master_admin.editable_tables(conn, setup, lv),
                     # 「表を持ってくる」で足した表(一覧に「足」の印を付ける)
                     "brought": sorted(table_bring.brought_tables(conn)),
+                    "why": dict(master_admin.used_tables(conn, setup)),
                     "title": f"マスタメンテナンス アクセスレベル:{lv}"})
 
 

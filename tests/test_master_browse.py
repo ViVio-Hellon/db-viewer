@@ -16,13 +16,29 @@ class MasterAdminTest(unittest.TestCase):
     def test_editable_tables_by_level(self):
         with connect() as conn:
             s = load_setup(conn)
-            self.assertEqual(master_admin.editable_tables(conn, s, 5),
-                             ["ID", "全般設定", "作業標準管理_設定", "フィルタ", "フィルタ_設定", "タイプ"])
-            self.assertEqual(master_admin.editable_tables(conn, s, 4),
-                             ["ID", "全般設定", "作業標準管理_設定", "フィルタ", "フィルタ_設定"])
-            self.assertEqual(master_admin.editable_tables(conn, s, 3),
-                             ["全般設定", "作業標準管理_設定", "フィルタ", "フィルタ_設定"])
-            self.assertEqual(master_admin.editable_tables(conn, s, 2), ["フィルタ"])
+            # いま使っている表だけ(フィルタ・フィルタ_設定・タイプは一覧が使わなくなった)
+            self.assertEqual(master_admin.editable_tables(conn, s, 5), ["ID", "全般設定", "作業標準管理_設定"])
+            self.assertEqual(master_admin.editable_tables(conn, s, 4), ["ID", "全般設定", "作業標準管理_設定"])
+            self.assertEqual(master_admin.editable_tables(conn, s, 3), ["全般設定", "作業標準管理_設定"])
+            self.assertEqual(master_admin.editable_tables(conn, s, 2), [])
+
+    def test_used_tables_follow_setting(self):
+        """_設定 が参照するマスタ(入力形式 s/m・マスタ結合)と履歴の H_ 表は出る。使っていない表は出ない。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = shared_db.connect(fresh_db_path(Path(tmp)))
+            conn.execute("CREATE TABLE 担当者 (管理番号 INTEGER, 担当者 TEXT)")
+            conn.execute("CREATE TABLE 区分マスタ (管理番号 INTEGER, 区分マスタ TEXT, 区分 TEXT)")
+            conn.execute("CREATE TABLE H_変更 (管理番号 INTEGER)")
+            conn.execute("CREATE TABLE 使っていない (管理番号 INTEGER)")
+            conn.execute("UPDATE 作業標準管理_設定 SET 入力形式='s担当者' WHERE 項目名='担当'")
+            conn.execute("UPDATE 作業標準管理_設定 SET マスタ結合='区分マスタ/区分/区分マスタ' WHERE 項目名='区分'")
+            conn.execute("UPDATE 作業標準管理_設定 SET 履歴='H_変更' WHERE 項目名='作業名'")
+            conn.commit()
+            s = load_setup(conn)
+            used = master_admin.used_tables(conn, s)
+            self.assertEqual([n for n, _ in used], ["ID", "全般設定", "作業標準管理_設定", "担当者", "区分マスタ", "H_変更"])
+            self.assertIn("担当", dict(used)["担当者"])
+            conn.close()
 
     def test_fields_use_setting_table(self):
         with connect() as conn:
@@ -116,12 +132,17 @@ class WebMasterTest(unittest.TestCase):
 
     def test_master_cycle_and_main_table_refused(self):
         self.assertEqual(self.c.post("/api/master/rows", json={"table": "作業標準管理"}, headers=self.h).status_code, 403)
-        f = self.c.post("/api/master/form", json={"table": "タイプ", "mode": "ADDNEW"}, headers=self.h).get_json()
+        self.assertEqual(self.c.post("/api/master/rows", json={"table": "タイプ"}, headers=self.h).status_code, 403)
+        t = self.c.post("/api/master/tables", json={}, headers=self.h).get_json()
+        self.assertEqual(t["tables"], ["ID", "全般設定", "作業標準管理_設定"])
+        self.assertEqual(t["why"]["ID"], "ログイン")
+        f = self.c.post("/api/master/form", json={"table": "全般設定", "mode": "ADDNEW"}, headers=self.h).get_json()
         key = f["fields"][0]["value"]
-        r = self.c.post("/api/master/execute", json={"table": "タイプ", "mode": "ADDNEW", "values": [key, "新", ""], "key": key,
+        row = [key, "テーブル閲覧", "ID", ""]
+        r = self.c.post("/api/master/execute", json={"table": "全般設定", "mode": "ADDNEW", "values": row, "key": key,
                                                      "confirmed": True, "answer": True}, headers=self.h).get_json()
         self.assertEqual(r["executed"], "ADDNEW")
-        r = self.c.post("/api/master/delete", json={"table": "タイプ", "row": [key, "新", ""], "confirmed": True, "answer": True}, headers=self.h).get_json()
+        r = self.c.post("/api/master/delete", json={"table": "全般設定", "row": row, "confirmed": True, "answer": True}, headers=self.h).get_json()
         self.assertTrue(r["ok"])
 
     def test_export_what_is_on_screen(self):

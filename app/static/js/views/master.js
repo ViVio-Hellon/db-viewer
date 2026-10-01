@@ -17,8 +17,14 @@ async function loadTables() {
     const d = await api.post("/api/master/tables", {});
     el.msTitle.textContent = d.title;
     const brought = new Set(d.brought || []);
+    if (!d.tables.length) problem(`このレベル(${d.level})で直せる表はありません。マスタ管理は Level 3 以上です。`);
     el.msTables.replaceChildren(...d.tables.map((t) => {
       const div = document.createElement("div"); div.textContent = t;
+      // なぜこの表が出ているか(いま使っている表だけを出している)
+      if (d.why && d.why[t]) {
+        const why = document.createElement("small"); why.className = "ms__why"; why.textContent = d.why[t];
+        div.appendChild(why);
+      }
       // 「表を持ってくる」で足した表(設定 → Access 取り込み)
       if (brought.has(t)) {
         const mark = document.createElement("span");

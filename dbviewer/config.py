@@ -138,6 +138,7 @@ KEY_REF_DIR = "ref_dir"              # 参照ファイル(PDF 等)の相対パ�
 KEY_ACCESS_LOG = "access_log"        # Access.log を書くか(既定 True)
 KEY_RELOGIN_MIN = "relogin_minutes"  # 無操作で再ログイン(0 = しない)
 KEY_ACCDB_SOURCE = "accdb_source"    # Access 取り込みの元 .accdb
+KEY_ACCDB_TARGET = "accdb_target"    # Access 取り込みの保存先 .sqlite3(空ならいまの接続先フォルダに同じ名前で)
 KEY_LAST_USER = "last_user"          # 前回のログイン ID(入力欄の初期値)
 
 

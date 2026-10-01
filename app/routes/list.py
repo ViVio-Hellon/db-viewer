@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, render_template, request
 
-from dbviewer import config, grid_data, records, session_setup, settings_tables, shared_db
+from dbviewer import auth, cell_edit, config, grid_data, records, session_setup, settings_tables, shared_db
 from dbviewer.logging_utils import get_logger
 
 from .. import get_db
@@ -67,9 +67,38 @@ def api_data():
         "key_index": key_index,
         "count": len(rows),
         "view": grid_data.load_view(_view_key(setup), columns),
+        # その場で直せる列(レベルが足りなければ全部だめ)
+        "edit": {"allowed": auth.level() >= auth.required_level("修正"),
+                 "columns": cell_edit.edit_specs(conn, setup)},
         "db_mtime": shared_db.probe().get("mtime"),
         "setup": _setup_dict(setup),
     })
+
+
+@bp.post("/api/list/cell")
+def api_cell():
+    """一覧の 1 マスを直して、すぐ本体に書く。`{"key", "column", "value", "seen"}`
+
+    確認の問い合わせはしない。決まり(レベル・入力形式・必須・自動項目・履歴)は登録画面と同じ。
+    """
+    conn, setup, err = _open()
+    if err:
+        return err
+    mode, refuse = auth.check_mode("修正", auth.level())
+    if refuse:
+        return _refuse("level", refuse, 403)
+    body = request.get_json(silent=True) or {}
+    s = auth.current()
+    result = cell_edit.save_cell(conn, setup, str(body.get("key") or ""), str(body.get("column") or ""),
+                                 "" if body.get("value") is None else str(body.get("value")),
+                                 "" if body.get("seen") is None else str(body.get("seen")),
+                                 user=s.user_id if s else auth.network_id(), pc=auth.pc_name())
+    status = 200 if result.ok else (409 if result.reason == "conflict" else 422)
+    if result.ok and result.reason != "unchanged":
+        log.info("一覧で直しました: %s=%s 管理番号 %s", body.get("column"), body.get("value"), body.get("key"))
+    return jsonify({"ok": result.ok, "message": result.message, "reason": result.reason,
+                    "row": result.row, "changed": result.changed,
+                    "db_mtime": shared_db.probe().get("mtime")}), status
 
 
 @bp.post("/api/list/view")

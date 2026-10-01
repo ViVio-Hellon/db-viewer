@@ -10,12 +10,14 @@ import { api, tokenUrl } from "../api.js";
 import { toast, toastError } from "../toast.js";
 import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
+import { createHelpers } from "../helpers.js";
 
 const el = {};
 const DETAIL_KEY = "dbviewer.list.detail";
 let grid = null;
 let data = null;            // サーバから受け取った一覧({columns, rows, key_index, setup, ...})
 let warned = false;
+let helpers = null;
 
 function problem(text) {
   el.listProblem.hidden = !text;
@@ -30,6 +32,9 @@ async function load() {
     el.listUpdated.hidden = true;
     el.listTitle.textContent = data.setup.main_table || "一覧";
     el.actReport.hidden = !data.setup.report_flag;
+    if (!data.edit || !data.edit.allowed) {
+      el.listHint.textContent = "見出しを押すと並べ替え、▾ で絞り込み。このレベルでは直せません(ダブルクリックで参照)";
+    }
     grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view });
     if (data.setup.column_problems && data.setup.column_problems.length && !warned) {
       warned = true;
@@ -137,16 +142,98 @@ async function runReport() {
   } catch (err) { toastError(err); }
 }
 
+/* ---------------- マスを直す(すぐ本体に書く) ---------------- */
+function saveState(text, kind = "") {
+  el.saveState.textContent = text;
+  el.saveState.className = `savestate${kind ? ` is-${kind}` : ""}`;
+}
+
+/** マスのダブルクリック。直せる列なら true(その場で直す)、直せなければ false(行を開く)。 */
+function onCellEdit(row, name, td) {
+  if (!data || !data.edit || !data.edit.allowed) return false;          // レベルが足りない → 参照で開く
+  const spec = data.edit.columns[name];
+  if (!spec || !spec.inline) {
+    if (spec && spec.why) toast(`${name}: ${spec.why}`, "info");
+    else if (!spec) toast(`${name}: この列は一覧で作った列(マスタ結合・追加表示)なので直せません。`, "info");
+    return true;
+  }
+  const key = keyOf(row);
+  const names = data.columns.map((c) => c.name);
+  const seen = row[names.indexOf(name)] ?? "";
+  if (spec.inline === "pick") {
+    // マスタ・日付・数値などは、登録画面と同じ選ぶ窓で
+    const inp = document.createElement("input");
+    inp.value = seen;
+    helpers.open({ ...spec, value: seen, original: seen }, inp).then((res) => {
+      if (res !== undefined) saveCell(key, name, res.value, seen, row);
+    });
+    return true;
+  }
+  startTextEdit(td, key, name, seen, spec, row);
+  return true;
+}
+
+function startTextEdit(td, key, name, seen, spec, row) {
+  const multi = (spec.lines || 1) > 1 || /\n/.test(seen);
+  const input = document.createElement(multi ? "textarea" : "input");
+  input.className = "cell-edit";
+  input.value = seen;
+  td.classList.add("is-editing");
+  td.replaceChildren(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const v = input.value;
+    td.classList.remove("is-editing");
+    td.textContent = commit ? v : seen;
+    if (commit && v !== seen) saveCell(key, name, v, seen, row);
+    grid.focus();
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    else if (e.key === "Enter" && (!multi || e.ctrlKey)) { e.preventDefault(); finish(true); }
+    else if (e.key === "Tab") { e.preventDefault(); finish(true); }
+  });
+  input.addEventListener("blur", () => finish(true));
+  input.addEventListener("dblclick", (e) => e.stopPropagation());
+}
+
+async function saveCell(key, name, value, seen, row) {
+  saveState(`保存しています… ${name}`);
+  try {
+    const res = await api.post("/api/list/cell", { key, column: name, value, seen });
+    if (res.db_mtime && data) data.db_mtime = res.db_mtime;        // 自分の書き込みで「他の端末」帯を出さない
+    if (res.row) grid.updateRow(key, res.row);
+    if (res.reason === "unchanged") { saveState(""); return; }
+    const t = new Date();
+    saveState(`保存しました ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")} ・ ${name}`, "ok");
+    const td = grid.cell(key, name);
+    if (td) { td.classList.remove("is-saved"); void td.offsetWidth; td.classList.add("is-saved"); }
+  } catch (err) {
+    const body = err.body || {};
+    if (body.db_mtime && data) data.db_mtime = body.db_mtime;
+    if (body.row) grid.updateRow(key, body.row);          // ほかの端末の値に置き換える
+    else grid.updateRow(key, row);                        // 元の値に描き直す
+    saveState(`保存できませんでした ・ ${name}`, "ng");
+    toast(err.message, err.status === 409 ? "error" : "warn");
+  }
+}
+
 export function start() {
   for (const id of ["listTitle", "listProblem", "listUpdated", "listReload", "lvBody", "grid", "detail",
                     "actNew", "actEdit", "actView", "actDelete", "actReport", "actPrint", "actOut",
-                    "outMenu", "outCopy", "outSave", "actDetail"]) {
+                    "outMenu", "outCopy", "outSave", "actDetail", "saveState", "listHint"]) {
     el[id] = document.getElementById(id);
   }
   grid = createGrid(el.grid, {
     stateKey: "dbviewer.list.grid",
     onSelect,
     onOpen: () => command("修正", "DblClick"),
+    onCellEdit,
     onChange: () => {
       if (!grid) return;
       renderDetail(grid.selected());
@@ -160,6 +247,7 @@ export function start() {
     },
   });
 
+  helpers = createHelpers({ parent: "MF1" });
   el.actNew.addEventListener("click", () => command("新規"));
   el.actEdit.addEventListener("click", () => command("修正"));
   el.actView.addEventListener("click", () => command("参照"));

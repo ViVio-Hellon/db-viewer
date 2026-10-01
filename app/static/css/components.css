@@ -1112,3 +1112,12 @@ dialog::backdrop { background: var(--scrim); }
 .table thead th .ths:focus-visible { box-shadow: 0 0 0 2px var(--focus); border-radius: 3px; }
 .ths__mark { color: var(--accent); font-family: var(--mono); font-size: var(--fs-2xs); }
 .table thead th[aria-sort="ascending"], .table thead th[aria-sort="descending"] { color: var(--ink); }
+
+/* パスの入力(設定): 名前 | 入力欄 + 参照… の 2 列。実際の行き先は入力欄の下 */
+.paths { display: grid; grid-template-columns: minmax(9em, 14em) minmax(0, 1fr); gap: 6px 12px; align-items: center; }
+.paths > label { color: var(--muted); font-size: var(--fs-sm); }
+.paths > .pathrow { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.paths > .pathrow .input { flex: 1; min-width: 0; }
+.paths > small, .paths > .why { grid-column: 2; margin: -2px 0 4px; font-size: var(--fs-xs); color: var(--muted);
+                                overflow-wrap: anywhere; }
+@media (max-width: 760px) { .paths { grid-template-columns: 1fr; } .paths > small, .paths > .why { grid-column: 1; } }

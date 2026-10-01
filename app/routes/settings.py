@@ -62,6 +62,29 @@ def save():
     return jsonify(out)
 
 
+@bp.get("/api/settings/db-files")
+def db_files_list():
+    """接続先フォルダの中身(開ける .sqlite3 / 変換すれば開ける Access / その他)。`?path=` でフォルダ指定。"""
+    from pathlib import Path
+
+    from dbviewer import config as cfg, db_files, shared_db
+    text = request.args.get("path", "").strip()
+    folder = cfg.resolve_dir(text) if text else shared_db.server_dir()
+    return jsonify(db_files.scan(folder, current=shared_db.db_path()))
+
+
+@bp.post("/api/settings/open-db")
+def open_db():
+    """その .sqlite3 を接続先にする。"""
+    body = request.get_json(silent=True) or {}
+    result = settings_presenter.open_db(str(body.get("path", "")))
+    if not result.ok:
+        return jsonify({"error": {"code": result.reason, "message": result.message, "field": result.field}}), 400
+    out = settings_presenter.to_dict(settings_presenter.build())
+    out["message"] = result.message
+    return jsonify(out)
+
+
 @bp.post("/api/settings/reset-mode")
 def reset_mode():
     """VBA Login の LOCKBT ダブルクリック(起動モード設定情報の初期化)。"""
@@ -167,7 +190,8 @@ def table_refresh_run():
 def accdb_import():
     """Access(.accdb)をいまの接続先の .sqlite3 に取り込む(長時間処理)。"""
     body = request.get_json(silent=True) or {}
-    job, result = settings_presenter.start_accdb_import(str(body.get("accdb_source", "")))
+    job, result = settings_presenter.start_accdb_import(str(body.get("accdb_source", "")),
+                                                        str(body.get("accdb_target", "")))
     if not result.ok:
         status = 409 if result.reason == settings_presenter.REFUSE_BUSY else 400
         return jsonify({"error": {"code": result.reason, "message": result.message,

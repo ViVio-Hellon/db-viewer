@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 import re
 
-from .. import app_config, config, jobs, settings_tables, shared_db, table_browse, user_settings
+from .. import app_config, config, jobs, settings_tables, shared_db, source_db, table_browse, user_settings
 from ..logging_utils import get_logger
 
 log = get_logger("presenters.settings")
@@ -108,6 +108,7 @@ class SettingsViewModel:
     access_log: bool
     relogin_minutes: int
     accdb_source: str
+    accdb_target: str
     terminal: dict[str, str]
 
     @property
@@ -165,6 +166,7 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
         access_log=bool(user_settings.get(config.KEY_ACCESS_LOG, True)),
         relogin_minutes=int(user_settings.get(config.KEY_RELOGIN_MIN, 0) or 0),
         accdb_source=str(user_settings.get(config.KEY_ACCDB_SOURCE, "") or ""),
+        accdb_target=str(user_settings.get(config.KEY_ACCDB_TARGET, "") or ""),
         terminal=_terminal_values(),
     )
 
@@ -286,7 +288,7 @@ def _db_section(db_path: Path, prof: config.Profile, online: bool) -> Section:
 
 def _required_tables_check(section: Section, names: list[str]) -> None:
     """VBA `MasterFileCheck` と同じ必須テーブルの有無。"""
-    required = (config.SET_TABLE, config.FLT_TABLE, config.TYPE_TABLE, config.ID_TABLE)
+    required = settings_tables.REQUIRED_TABLES
     missing = [t for t in required if t not in names]
     if missing:
         section.checks.append(Check("必須テーブル", "足りません", NG,
@@ -413,6 +415,7 @@ def to_dict(view: SettingsViewModel) -> dict[str, Any]:
         "access_log": view.access_log,
         "relogin_minutes": view.relogin_minutes,
         "accdb_source": view.accdb_source,
+        "accdb_target": view.accdb_target,
         "terminal": view.terminal,
         "tab_badges": tab_badges(view),
     }
@@ -578,8 +581,17 @@ REFUSE_NO_SOURCE = "no_source"
 REFUSE_BUSY = "busy"
 
 
-def start_accdb_import(source: str = "") -> tuple[Optional[jobs.Job], SaveResult]:
-    """`.accdb` → いまの接続先の `.sqlite3`。走らせたら `Job` を返す。"""
+def default_target(src: Path) -> Path:
+    """変換した .sqlite3 の既定の置き場所: いまの接続先フォルダに、Access と同じ名前で。"""
+    return shared_db.server_dir() / (src.stem + config.DB_SUFFIX)
+
+
+def start_accdb_import(source: str = "", target: str = "") -> tuple[Optional[jobs.Job], SaveResult]:
+    """`.accdb` を `.sqlite3` に変換して、指定の場所に保存する(長時間処理)。
+
+    保存先に同じ名前があれば `.bak` に退けてから差し替える。保存先を空にすると、
+    いまの接続先フォルダに Access と同じ名前で置く。
+    """
     from ..accdb_bridge import importer
 
     text = (source or user_settings.get(config.KEY_ACCDB_SOURCE, "") or "").strip()
@@ -591,14 +603,41 @@ def start_accdb_import(source: str = "") -> tuple[Optional[jobs.Job], SaveResult
     if not src.is_file():
         return None, SaveResult(False, f"アクセス許可がないか、ファイルが存在しないため参照できません。\n{src}",
                                 REFUSE_BAD_INPUT, "accdb_source")
-    target = shared_db.db_path()
+    if src.suffix.lower() not in (".accdb", ".mdb"):
+        return None, SaveResult(False, "元は Access のファイル(.accdb / .mdb)を指定してください。",
+                                REFUSE_BAD_INPUT, "accdb_source")
+    out_text = (target or "").strip()
+    dest = config.resolve_dir(out_text) if out_text else default_target(src)
+    if dest.is_dir():                                # フォルダだけ選んだ → Access と同じ名前で
+        dest = dest / (src.stem + config.DB_SUFFIX)
+    if dest.suffix.lower() not in source_db.SUFFIXES:
+        dest = dest.with_suffix(config.DB_SUFFIX)
+    if not dest.parent.is_dir():
+        return None, SaveResult(False, f"保存先のフォルダがありません: {dest.parent}", REFUSE_BAD_INPUT, "accdb_target")
+    user_settings.save(config.KEY_ACCDB_TARGET, str(dest))
 
     def work(progress):
-        return importer.import_accdb(src, target, progress=progress)
+        return importer.import_accdb(src, dest, progress=progress)
 
     try:
-        job = jobs.get_registry().start("accdb_import", "Access 取り込み", work)
+        job = jobs.get_registry().start("accdb_import", "Access → .sqlite3 変換", work)
     except jobs.JobBusy as exc:
         return None, SaveResult(False, f"{exc.running.label}を実行中です。終わってからもう一度押してください。",
                                 REFUSE_BUSY)
-    return job, SaveResult(True, f"取り込みを始めました: {src.name} → {target}")
+    return job, SaveResult(True, f"変換を始めました: {src.name} → {dest}")
+
+
+def open_db(path_text: str) -> SaveResult:
+    """その .sqlite3 を接続先にする。フォルダはいまのモード(オンライン/オフライン)の側に入れる。"""
+    from .. import db_files
+    path = config.resolve_dir((path_text or "").strip())
+    if path.suffix.lower() not in source_db.SUFFIXES or not path.is_file():
+        return SaveResult(False, f"開ける .sqlite3 ではありません: {path}", REFUSE_BAD_INPUT, "db_file")
+    info = db_files.inspect_sqlite(path)
+    if info["kind"] != db_files.KIND_OPEN:
+        return SaveResult(False, f"{path.name} は開けません: {info['note']}", REFUSE_BAD_INPUT, "db_file")
+    online = bool(user_settings.get(config.KEY_ONLINE, True))
+    user_settings.save(config.KEY_SERVER_DIR if online else config.KEY_LOCAL_DIR, str(path.parent))
+    user_settings.save(config.KEY_DB_FILE, path.name)
+    return SaveResult(True, f"{path.name} を開きます({info['note']})。")
+

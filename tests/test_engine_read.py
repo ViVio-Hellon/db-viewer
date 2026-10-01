@@ -68,7 +68,11 @@ class SetupTest(unittest.TestCase):
             conn.execute("INSERT INTO T_設定 (管理番号, 項目名) VALUES (3, 'x')")
             self.assertEqual(master_file_check(conn, "T"), "不一致項目あり [T_設定]マスタ 3番目の項目 x ≠ b")
             conn.execute("UPDATE T_設定 SET 項目名='b' WHERE 管理番号=3")
-            self.assertEqual(master_file_check(conn, "T"), "不一致項目あり 1番目のフィルタ作業名")
+            # フィルタ表の列は照合しない(一覧がフィルタ表を使わなくなった)
+            self.assertEqual(master_file_check(conn, "T"), "")
+            # フィルタ・タイプが無くても起動できる
+            conn.execute("DROP TABLE フィルタ"); conn.execute("DROP TABLE タイプ")
+            self.assertEqual(load_setup(conn).filters, [])
             conn.rollback()
 
 

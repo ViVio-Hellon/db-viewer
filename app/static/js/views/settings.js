@@ -79,6 +79,7 @@ function render(state) {
   el.statusGrid.replaceChildren(...state.sections.map(sectionCard));
   el.progNo.value = String(state.prog_no);
   el.online.checked = !!state.online;
+  defaultServerDir = state.server_dir_default || "";
   el.serverDir.value = state.server_dir;
   el.localDir.value = state.local_dir;
   el.dbFile.value = state.db_file;
@@ -99,6 +100,9 @@ function render(state) {
   el.accessLog.checked = !!state.access_log;
   el.reloginMinutes.value = state.relogin_minutes;
   el.accdbSource.value = state.accdb_source;
+  el.accdbTarget.value = state.accdb_target || "";
+  showTargetDefault();
+  loadDbFiles();
   if (el.settingsTabs) tabs.setBadges(el.settingsTabs, state.tab_badges);
 }
 
@@ -212,6 +216,8 @@ function showJob(job) {
   el.accessJobResult.hidden = !done;
   el.accessJobResult.className = `status status--${job.ok ? "ok" : "ng"}`;
   el.accessJobResult.textContent = done ? (job.ok ? job.summary : job.error) : "";
+  // 変換できたら、その .sqlite3 をすぐ開けるように
+  if (el.openConverted) el.openConverted.hidden = !(done && job.ok);
 }
 
 function onJobs(state) {
@@ -223,9 +229,76 @@ function onJobs(state) {
 }
 let lastBusy = false;
 
+/* ---------------- 接続先フォルダのファイル ---------------- */
+// 画面で入れているフォルダ(保存前でも)。オンラインなら共有フォルダ、オフラインなら手元
+function activeFolder() {
+  return el.online.checked ? (el.serverDir.value.trim() || defaultServerDir) : el.localDir.value.trim();
+}
+let defaultServerDir = "";
+
+async function loadDbFiles() {
+  if (!el.dbFiles) return;
+  try {
+    const d = await api.get(`/api/settings/db-files?path=${encodeURIComponent(activeFolder())}`);
+    el.dbFilesFolder.textContent = `フォルダ: ${d.folder}`;
+    el.dbFilesNote.hidden = !d.message;
+    el.dbFilesNote.className = `status status--${d.exists ? "warn" : "ng"}`;
+    el.dbFilesNote.textContent = d.message;
+    el.dbFiles.replaceChildren(...d.files.map(fileRow));
+  } catch (err) { toastError(err); }
+}
+
+function fileRow(f) {
+  const li = document.createElement("li");
+  li.className = `dbfile dbfile--${f.kind}${f.current ? " is-current" : ""}`;
+  const pill = document.createElement("span");
+  pill.className = `lv lv--${f.kind === "open" ? "ok" : f.kind === "convert" ? "warn" : "info"}`;
+  pill.textContent = f.kind === "open" ? (f.current ? "いま開いている" : "開けます")
+    : f.kind === "convert" ? "変換すると開けます" : "対象外";
+  const name = document.createElement("b");
+  name.textContent = f.name;
+  const note = document.createElement("small");
+  note.textContent = `${f.note} ・ ${f.mtime} ・ ${(f.size / 1024).toLocaleString(undefined, { maximumFractionDigits: 0 })} KB`;
+  li.append(pill, name, note);
+  if (f.kind === "open" && !f.current) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn btn--commit"; b.textContent = "これを開く";
+    b.addEventListener("click", () => openDb(f.path));
+    li.appendChild(b);
+  } else if (f.kind === "convert") {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "btn btn--find"; b.textContent = "Access 取り込みへ";
+    b.addEventListener("click", () => {
+      el.accdbSource.value = f.path;
+      el.accdbTarget.value = f.target;
+      showTargetDefault();
+      if (el.settingsTabs) tabs.select(el.settingsTabs, "access");
+    });
+    li.appendChild(b);
+  }
+  return li;
+}
+
+async function openDb(path) {
+  try {
+    const state = await api.post("/api/settings/open-db", { path });
+    render(state);
+    toast(state.message, "ok");
+  } catch (err) { toastError(err); }
+}
+
+function showTargetDefault() {
+  if (!el.accdbTargetDefault) return;
+  const src = el.accdbSource.value.trim();
+  const stem = src ? src.split(/[\\/]/).pop().replace(/\.(accdb|mdb)$/i, "") : "(元の名前)";
+  const folder = activeFolder() || "(接続先フォルダ)";
+  el.accdbTargetDefault.textContent = `${folder}${/[\\/]$/.test(folder) ? "" : (folder.includes("\\") ? "\\" : "/")}${stem}.sqlite3`;
+}
+
 async function runAccess() {
   try {
-    const res = await api.post("/api/settings/accdb-import", { accdb_source: el.accdbSource.value });
+    const res = await api.post("/api/settings/accdb-import",
+                               { accdb_source: el.accdbSource.value, accdb_target: el.accdbTarget.value });
     toast(res.message, "ok");
     showJob(res.job);
     jobs.refresh();
@@ -460,8 +533,9 @@ export function start(state) {
                     "localDir", "localDirReal", "dbFile", "dbPath",
                     "refDir", "refDirReal", "exportDir", "exportDirReal", "exportDirState", "refDirState", "exportEncoding",
                     "saveExport", "openExport", "saveRef",
-                    "accessLog", "reloginMinutes", "accdbSource",
-                    "saveSource", "saveBehavior", "saveAccess", "runAccess", "refresh", "settingsTabs",
+                    "accessLog", "reloginMinutes", "accdbSource", "accdbTarget", "accdbTargetDefault", "openConverted",
+                    "dbFiles", "dbFilesFolder", "dbFilesNote", "dbFilesReload",
+                    "saveSource", "saveBehavior", "runAccess", "refresh", "settingsTabs",
                     "accessJob", "accessJobLabel", "accessJobState", "accessJobPct", "accessJobBar",
                     "accessJobMessage", "accessJobResult"]) {
     el[id] = document.getElementById(id);
@@ -488,8 +562,16 @@ export function start(state) {
   el.saveBehavior.addEventListener("click", () => save({
     access_log: el.accessLog.checked, relogin_minutes: Number(el.reloginMinutes.value || 0),
   }));
-  el.saveAccess.addEventListener("click", () => save({ accdb_source: el.accdbSource.value }));
   el.runAccess.addEventListener("click", runAccess);
+  el.openConverted.addEventListener("click", async () => {
+    // 変換した先(保存先が空なら既定の場所)
+    const target = el.accdbTarget.value.trim() || el.accdbTargetDefault.textContent;
+    await openDb(target);
+    if (el.settingsTabs) tabs.select(el.settingsTabs, "source");
+  });
+  el.dbFilesReload.addEventListener("click", loadDbFiles);
+  for (const node of [el.online, el.serverDir, el.localDir]) node.addEventListener("change", () => { loadDbFiles(); showTargetDefault(); });
+  el.accdbSource.addEventListener("change", showTargetDefault);
   if (unwatch) unwatch();
   unwatch = jobs.subscribe(onJobs);
 

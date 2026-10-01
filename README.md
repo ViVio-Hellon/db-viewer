@@ -31,7 +31,7 @@ Excel VBA + Access（.accdb）で動いている「汎用システム」（現�
 ```
 Start.vbs                                      # 現場 PC(ブラウザが開く)
 start.bat --check                              # 環境確認だけ
-python3 -m unittest discover -s tests -t .     # 全テスト(109 件)
+python3 -m unittest discover -s tests -t .     # 全テスト(116 件)
 ```
 
 初回は 設定 → Access 取り込み で `.accdb` を `.sqlite3` にします（Windows の cscript + ACE）。
