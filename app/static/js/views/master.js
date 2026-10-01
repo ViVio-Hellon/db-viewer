@@ -164,7 +164,7 @@ async function execute() {
     }
     toast(res.message, res.ok ? "ok" : "warn");
     if (res.ok) { switchScreen(0); await loadRows(); }
-  } catch (err) { toast(err.message, err.status === 409 ? "error" : "warn"); }
+  } catch (err) { toastError(err, err.status === 409 ? "error" : "warn"); }
 }
 
 async function remove() {

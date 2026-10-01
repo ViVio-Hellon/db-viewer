@@ -191,6 +191,8 @@ class IdleWatch:
                 log.info("誰も見ていませんが、処理中なので待ちます")
                 continue
             log.info("誰も見ていないので終了します(%s)", why)
+            from . import trace
+            trace.event("app.stop", f"誰も見ていないので終了します({why})")
             self._done.set()
             self._stop()
             return

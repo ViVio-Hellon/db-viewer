@@ -17,14 +17,16 @@ python-web-tools(梱包資材総合ツール)の `app/__init__.py` を複製し�
 from __future__ import annotations
 
 import secrets
+import sys
 import threading
 import time
+from html import escape
 from pathlib import Path
 from typing import Optional
 
 from flask import Flask, g, jsonify, request
 
-from dbviewer import app_config, db, idle_exit, modes
+from dbviewer import app_config, config, db, idle_exit, modes
 from dbviewer.logging_utils import get_logger
 
 
@@ -95,13 +97,113 @@ def create_app(mode: str = modes.DEFAULT, *,
         SECRET_KEY=secrets.token_hex(16),
     )
 
+    _register_trace(app)          # 記録番号を振るので、いちばん先
     _register_security(app)
     _register_db(app)
     _register_static_version(app)
     _register_routes(app)
 
     log.info("create_app: mode=%s port=%s", requested, app.config["PORT"])
+    _start_records(app)
     return app
+
+
+# ------------------------------------------------------------------
+# 記録(なぜなぜ分析のため)  dbviewer/trace.py
+# ------------------------------------------------------------------
+# 何度も来るだけの問い合わせ。記録すると埋もれる
+_QUIET_PATHS = frozenset({"/api/health", "/api/alive", "/api/jobs", "/favicon.ico", "/api/log/client"})
+RID_HEADER = "X-Request-Id"
+
+
+def _start_records(app: Flask) -> None:
+    """記録の置き場所(設定)を当て、古い記録を消し、起動を 1 行残す。"""
+    from dbviewer import logging_utils, shared_db, trace, user_settings
+    state = logging_utils.apply_settings()
+    app.config["LOG_STATE"] = state
+    keep = user_settings.get(config.KEY_LOG_KEEP_DAYS, config.DEFAULT_LOG_KEEP_DAYS)
+    try:
+        gone = trace.cleanup(int(keep))
+    except (TypeError, ValueError):
+        gone = 0
+    try:
+        db = str(shared_db.db_path())
+    except Exception:                                  # noqa: BLE001
+        db = ""
+    trace.event("app.start", f"起動しました(版 {app.config['VERSION']})",
+                level="WARN" if state["problem"] else "INFO",
+                data={"app_root": str(config.BASE_DIR), "db": db, "log_dir": state["dir"],
+                      "log_dir_problem": state["problem"], "removed_old_logs": gone,
+                      "python": sys.version.split()[0], "mode": app.config["MODE"]})
+
+
+def _register_trace(app: Flask) -> None:
+    """要求ごとに記録番号を振り、書く操作・断り・エラーを残す。
+
+    【記録番号】画面のエラーにも出す(`X-Request-Id`)。「エラーが出た」と言われたら、
+    その番号で設定「記録」を引けば、どの画面で何を押し、何が返り、その前に何が
+    あったかが一続きで読める。
+    """
+    import uuid
+
+    from werkzeug.exceptions import HTTPException
+
+    from dbviewer import trace
+
+    @app.before_request
+    def _rid():                                 # noqa: ANN202 - Flaskのフック
+        g.rid = uuid.uuid4().hex[:8]
+        g.t0 = time.perf_counter()
+
+    @app.after_request
+    def _record(response):                      # noqa: ANN202 - Flaskのフック
+        rid = g.get("rid", "")
+        if rid:
+            response.headers[RID_HEADER] = rid
+        path = request.path
+        if path.startswith("/static/") or path in _QUIET_PATHS or g.get("recorded"):
+            return response
+        status = response.status_code
+        is_api = path.startswith("/api/")
+        if request.method == "GET" and status < 400:
+            if not is_api and response.mimetype == "text/html":
+                trace.event("screen", st=status)          # どの画面を開いたか
+            return response
+        ms = round((time.perf_counter() - g.get("t0", time.perf_counter())) * 1000)
+        err = {}
+        if response.is_json:
+            try:
+                body = response.get_json(silent=True) or {}
+                err = body.get("error") or {}
+                if not err and isinstance(body, dict) and body.get("ok") is False:
+                    err = {"code": body.get("reason", ""), "message": body.get("message", "")}
+            except Exception:                          # noqa: BLE001
+                err = {}
+        sent = trace.sent_body()
+        level = "ERROR" if status >= 500 else "WARN" if status >= 400 or err else "INFO"
+        trace.event("request", (err or {}).get("message", "") if isinstance(err, dict) else "",
+                    level=level, st=status, ms=ms,
+                    data={"sent": sent, "reason": (err or {}).get("code", "") if isinstance(err, dict) else ""})
+        return response
+
+    @app.errorhandler(Exception)
+    def _unexpected(exc):                       # noqa: ANN202 - Flaskのフック
+        """思わぬエラー。トレースバックを残し、画面には記録番号を出す。"""
+        if isinstance(exc, HTTPException):
+            return exc
+        rid = g.get("rid", "")
+        log.exception("思わぬエラー rid=%s %s %s", rid, request.method, request.path)
+        sent = trace.sent_body()
+        ms = round((time.perf_counter() - g.get("t0", time.perf_counter())) * 1000)
+        trace.event("error.server", str(exc) or type(exc).__name__, level="ERROR", exc=exc,
+                    st=500, ms=ms, data={"sent": sent})
+        g.recorded = True
+        message = (f"思わぬエラーが起きました。記録番号 {rid} を管理者に伝えてください"
+                   f"(設定 →「記録」で中身を見られます)。")
+        if request.path.startswith("/api/"):
+            return jsonify(_error("server_error", message) | {"rid": rid}), 500
+        return (f"<!doctype html><meta charset='utf-8'><title>エラー</title>"
+                f"<p style='font:16px sans-serif;margin:2em'>{escape(message)}</p>"), 500
 
 
 # ------------------------------------------------------------------
@@ -148,7 +250,7 @@ def _refuse_foreign_page():
 
 
 # ログイン無しで通す経路(VBA の Login フォームより前に触れるもの + 基盤)
-LOGIN_EXEMPT_PREFIXES = ("/static/", "/api/settings/", "/api/fs/")
+LOGIN_EXEMPT_PREFIXES = ("/static/", "/api/settings/", "/api/fs/", "/api/log/")
 LOGIN_EXEMPT_PATHS = frozenset({"/", "/login", "/api/login", "/api/logout", "/api/session",
                                 "/api/health", "/api/alive", "/api/jobs", "/api/shutdown",
                                 "/settings", "/favicon.ico"})
@@ -425,6 +527,7 @@ def _register_routes(app: Flask) -> None:
     from .routes import auth as auth_routes
     from .routes import browse, health, master, pending, record, report, settings
     from .routes import list as list_routes
+    from .routes import log as log_routes
 
     app.register_blueprint(health.bp)
     app.register_blueprint(settings.bp)
@@ -434,6 +537,7 @@ def _register_routes(app: Flask) -> None:
     app.register_blueprint(master.bp)
     app.register_blueprint(browse.bp)
     app.register_blueprint(report.bp)
+    app.register_blueprint(log_routes.bp)
 
     # レールに出ているのに中身がまだ無い画面へ、「準備中」の案内を置く
     pending.register(app)

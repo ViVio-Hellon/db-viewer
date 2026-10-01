@@ -6,6 +6,7 @@ import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
 import * as tabs from "../tabs.js";
 import * as jobs from "../jobs.js";
+import * as logTab from "./log_tab.js";
 
 const el = {};
 let LEVEL_LABEL = {};
@@ -103,6 +104,7 @@ function render(state) {
   el.accdbTarget.value = state.accdb_target || "";
   showTargetDefault();
   loadDbFiles();
+  logTab.render(state.log);
   if (el.settingsTabs) tabs.setBadges(el.settingsTabs, state.tab_badges);
 }
 
@@ -544,6 +546,7 @@ export function start(state) {
   tabs.attachAll();
   startBrowser();
   startBring();
+  logTab.start(state, save);
 
   el.refresh.addEventListener("click", refresh);
   el.saveSource.addEventListener("click", () => save({

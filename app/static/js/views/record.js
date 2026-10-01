@@ -30,7 +30,7 @@ async function loadForm(mode, key) {
     render();
   } catch (err) {
     if (err.status === 403 || err.status === 422 || err.status === 409) {
-      toast(err.message, "warn");
+      toastError(err, "warn");
       history.back();
       return;
     }
@@ -100,7 +100,7 @@ async function openFile(f) {
   try {
     const inp = el.recFields.querySelector(`[data-no="${f.no}"]`);
     await api.post("/api/record/open-file", { dir: f.file_dir, name: inp.value, kind: f.file_kind.toLowerCase() });
-  } catch (err) { toast(err.message, "warn"); }
+  } catch (err) { toastError(err, "warn"); }
 }
 
 function render() {
@@ -186,7 +186,7 @@ async function helper(f, inp) {
       const res = await api.post("/api/record/new-code", { field: f.link_args[0], date: result.value, current: linkedInput(f.link_field)?.value || "" });
       const target = linkedInput(f.link_field);
       if (target) { target.value = res.code; markChanged(target, state.fields.find((x) => x.name === f.link_field)); }
-    } catch (err) { toast(err.message, "warn"); }
+    } catch (err) { toastError(err, "warn"); }
   }
 }
 
@@ -224,7 +224,7 @@ async function execute() {
       // 数値変換で変わった値を画面に戻す
       for (const f of state.fields) { const inp = el.recFields.querySelector(`[data-no="${f.no}"]`); if (inp && err.body.values && err.body.values[f.name] !== undefined) inp.value = err.body.values[f.name]; }
     }
-    toast(err.message, err.status === 409 ? "error" : "warn");
+    toastError(err, err.status === 409 ? "error" : "warn");
   }
 }
 

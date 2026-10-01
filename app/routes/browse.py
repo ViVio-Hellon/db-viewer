@@ -18,6 +18,7 @@ from flask import Blueprint, jsonify, render_template, request
 from dbviewer import (app_config, config, grid_data, session_setup, settings_tables, shared_db,
                       table_browse, user_settings)
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 
 from .. import get_db
 from ..shell import shell_context
@@ -143,6 +144,7 @@ def export():
     except (ValueError, OSError) as exc:
         return _refuse("export", f"出力できませんでした: {exc}")
     log.info("出力: %s (%d 行 × %d 列)", path, len(rows), len(columns))
+    trace.event("export", str(path), data={"rows": len(rows), "columns": columns, "format": fmt, "encoding": enc})
     return jsonify({"ok": True, "message": table_browse.MSG_DONE, "path": str(path),
                     "dir": str(path.parent), "rows": len(rows), "can_open": info["can_open"]})
 

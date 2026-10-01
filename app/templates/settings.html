@@ -292,6 +292,86 @@
         </details>
       </section>
 
+      <section class="tabpanel tabpanel--scroll" id="panel-log" role="tabpanel" aria-labelledby="tab-log" hidden>
+        <div class="pathcards">
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">番</i>
+            <h3>記録番号で引く</h3>
+            <span class="eyebrow">エラーが出たら</span>
+          </header>
+          <div class="pad">
+            <p class="why">画面のエラーには<b>記録番号</b>(8 桁の英数字)が出ます。ここに入れると、その操作の前後
+              ── どの画面で・誰が・何を押し・何が返り・その前に何があったか ── が一続きで出ます。
+              なぜなぜ分析の下書きもそこからコピーできます。</p>
+            <div class="ridrow">
+              <input class="input" id="logRid" placeholder="例: 3f9a0c12" maxlength="16" spellcheck="false" autocomplete="off">
+              <button class="btn btn--commit" type="button" id="logChainGo">前後を見る</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">記</i>
+            <h3>最近の記録</h3>
+            <span class="lv lv--info" id="logToday"></span>
+          </header>
+          <div class="pad">
+            <div class="logbar">
+              <div class="seg" role="radiogroup" aria-label="出すもの">
+                <label class="checkline"><input type="radio" name="logOnly" value="problems" checked> 問題だけ(断り・エラー)</label>
+                <label class="checkline"><input type="radio" name="logOnly" value="all"> すべて</label>
+              </div>
+              <select class="input" id="logDays" aria-label="期間">
+                <option value="1">今日</option>
+                <option value="7" selected>7 日</option>
+                <option value="30">30 日</option>
+                <option value="90">90 日</option>
+              </select>
+              <input class="input" id="logQ" type="search" placeholder="言葉で絞る(ID・画面・理由・値…)" spellcheck="false">
+              <button class="btn btn--find" type="button" id="logReload"><span class="gl">⟳</span>見直す</button>
+            </div>
+            <p class="why" id="logSummary"></p>
+            <div class="tablewrap tablewrap--log" id="logWrap">
+              <table class="table logtable">
+                <thead><tr><th>時刻</th><th>出来事</th><th>画面</th><th>利用者</th><th>PC</th><th>内容</th><th>記録番号</th></tr></thead>
+                <tbody id="logRows"></tbody>
+              </table>
+            </div>
+            <p class="status" id="logEmpty" hidden></p>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">置</i>
+            <h3>記録の置き場所</h3>
+            <span class="lv lv--{{ view.log.dir_state.level }}" id="logDirState">{{ view.log.dir_state.text }}</span>
+          </header>
+          <div class="pad">
+            <p class="why">操作・断り・エラーを 1 行ずつ残します(パスワードは「***」にします)。
+              <b>共有フォルダにすると、どの PC で起きたことも 1 か所で引けます</b>。ファイル名に PC 名が入るので、同じファイルを取り合いません。
+              空ならこの PC の中({{ view.log.dir_default }})。</p>
+            <div class="paths">
+              {{ pathrow("logDir", "置き場所", view.log.dir, view.log.dir_real) }}
+            </div>
+            <p class="status status--warn" id="logDirProblem" {% if not view.log.problem %}hidden{% endif %}>{{ view.log.problem }}</p>
+            <div class="field" style="margin-top:8px">
+              <label for="logKeepDays">残す日数</label>
+              <input class="input" id="logKeepDays" type="number" min="0" max="3650" step="1" style="width:6em" value="{{ view.log.keep_days }}">
+              <span class="why" style="margin:0">0 = 消さない。起動したときに、<b>この PC の</b>古い記録だけ消します</span>
+            </div>
+            <p class="why" id="logFile">この PC のファイル: {{ view.log.file }}(ほかに dbviewer_{{ view.log.pc }}_日付.log = 開発者向けの詳しいログ)</p>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn--commit" type="button" id="saveLog">記録の設定を保存</button>
+              <button class="btn btn--find" type="button" id="openLog" {% if not view.log.can_open %}hidden{% endif %}>フォルダを開く</button>
+            </div>
+          </div>
+        </section>
+        </div>
+      </section>
+
       <section class="tabpanel tabpanel--scroll" id="panel-terminal" role="tabpanel" aria-labelledby="tab-terminal" hidden>
         <section class="card">
           <header>
@@ -303,7 +383,7 @@
               <div class="check check--info"><dt>PC 名</dt><dd><span class="v">{{ view.terminal.pc_name }}</span></dd></div>
               <div class="check check--info"><dt>ログイン ID(OS)</dt><dd><span class="v">{{ view.terminal.user }}</span></dd></div>
               <div class="check check--info"><dt>版</dt><dd><span class="v">{{ view.terminal.version }}</span><span class="why">{{ view.terminal.app_root }}</span></dd></div>
-              <div class="check check--info"><dt>ローカル領域</dt><dd><span class="v">{{ view.terminal.local_root }}</span><span class="why">ログ: {{ view.terminal.log_dir }} / 設定: {{ view.terminal.config_path }}</span></dd></div>
+              <div class="check check--info"><dt>ローカル領域</dt><dd><span class="v">{{ view.terminal.local_root }}</span><span class="why">記録: {{ view.terminal.log_dir }}(設定「記録」で変えられます) / 設定: {{ view.terminal.config_path }}</span></dd></div>
             </dl>
           </div>
         </section>
@@ -366,6 +446,23 @@
   </p>
 </dialog>
 
+{# 記録番号の前後(なぜなぜ分析)。上が古い #}
+<dialog id="logChain" class="browser chain" aria-labelledby="logChainTitle">
+  <div class="browser__head">
+    <b id="logChainTitle">記録番号の前後</b>
+    <button class="btn" type="button" id="logCopyDraft">なぜなぜの下書きをコピー</button>
+    <button class="btn" type="button" id="logCopyChain">この並びをコピー</button>
+    <button class="btn" type="button" data-close>閉じる</button>
+  </div>
+  <p class="why" style="margin-top:0">同じ画面・同じ PC の前後 15 分。<b>色の付いた行</b>がその記録番号。行を開くと、送った値・断りの理由・例外の場所が見えます。</p>
+  <p class="status status--warn" id="logChainNote" hidden></p>
+  <ol class="timeline" id="logChainList"></ol>
+  <details class="draft">
+    <summary>なぜなぜの下書きを見る(コピーできないとき)</summary>
+    <textarea class="input" id="logDraft" rows="14" readonly spellcheck="false"></textarea>
+  </details>
+</dialog>
+
 <dialog id="browser" class="browser">
   <form method="dialog" class="browser__head">
     <b id="browseFor"></b>
@@ -415,6 +512,43 @@
               padding:18px; margin:8px 0; display:flex; flex-direction:column;
               align-items:center; gap:4px; text-align:center; }
   .dropzone.is-over, #bringOpenDrop.is-over { border-color:var(--accent); background:var(--accent-soft); }
+  /* 記録 */
+  .ridrow { display:flex; gap:8px; flex-wrap:wrap; }
+  .ridrow .input { width:12em; font-family:var(--mono); }
+  .logbar { display:flex; gap:8px 12px; flex-wrap:wrap; align-items:center; }
+  .logbar .seg { display:flex; gap:4px 14px; flex-wrap:wrap; }
+  .logbar #logQ { flex:1; min-width:14em; }
+  .tablewrap--log { max-height:56vh; margin-top:6px; }
+  .logtable td, .logtable th { text-align:left !important; vertical-align:top; }
+  .logtable td { color:var(--ink); }
+  .logtable td.t { font-family:var(--mono); white-space:nowrap; color:var(--muted); }
+  .logtable td.msg { min-width:16em; overflow-wrap:anywhere; }
+  .logtable tr.is-error td { background:var(--warn-bg); }
+  .logtable tr.is-error td.ev { color:var(--state-error); font-weight:700; }
+  .logtable tr.is-warn td.ev { color:var(--state-warn); font-weight:700; }
+  .ridlink { font-family:var(--mono); min-height:28px; padding:2px 8px; font-size:var(--fs-sm); }
+  /* 見出し(コピー・閉じる)は動かさず、並びだけを送る */
+  .chain { width:min(980px, 94vw); }
+  .chain[open] { display:flex; flex-direction:column; overflow:hidden; }
+  .chain .timeline { flex:1 1 auto; min-height:0; overflow:auto; }
+  .timeline { list-style:none; margin:8px 0; padding:0 2px; display:flex; flex-direction:column; gap:4px; }
+  .timeline > li { border:1px solid var(--rule); border-radius:var(--radius-xs); background:var(--surface); }
+  .timeline > li.is-center { box-shadow:inset 0 0 0 2px var(--accent); background:var(--accent-soft); }
+  .timeline > li.is-error { border-color:var(--state-error); }
+  .timeline > li.is-warn { border-color:var(--state-warn); }
+  .timeline summary { cursor:pointer; padding:6px 10px; display:grid;
+                      grid-template-columns:9.5em 12em 10em minmax(0,1fr); gap:4px 10px; align-items:baseline; }
+  .timeline summary .t { font-family:var(--mono); color:var(--muted); white-space:nowrap; }
+  .timeline summary .ev { font-weight:700; }
+  .timeline summary .sc { color:var(--muted); }
+  .timeline summary .m { overflow-wrap:anywhere; }
+  .timeline pre { margin:0; padding:8px 10px; border-top:1px solid var(--rule); background:var(--sunken); color:var(--ink);
+                  font-size:var(--fs-xs); white-space:pre-wrap; overflow-wrap:anywhere; max-height:40vh; overflow:auto; }
+  .draft > summary { cursor:pointer; color:var(--muted); padding:6px 0; }
+  .draft textarea { width:100%; font-family:var(--mono); font-size:var(--fs-xs); }
+  @media (max-width: 640px) {
+    .timeline summary { grid-template-columns:1fr; }
+  }
   .bring { width:min(980px, 94vw); }
   .bring #bringRows td, .bring thead th { text-align:left; }
   .bring #bringRows td.num, .bring thead th.num { text-align:right; }

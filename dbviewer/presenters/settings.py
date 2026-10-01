@@ -9,6 +9,7 @@ python-web-tools の `presenters/settings.py` の形(Check / Section /
     paths    … 参照・出力・帳票(参照ファイルの起点・出力先・帳票原紙の置き場所)
     behavior … 動作(Access.log・無操作の再ログイン)
     access   … Access 取り込み(.accdb → .sqlite3。Phase 1)
+    log      … 記録(置き場所・残す日数・最近の記録・記録番号の前後 = なぜなぜ分析)
     terminal … この端末(PC 名・ログの場所・版)
 """
 from __future__ import annotations
@@ -22,7 +23,8 @@ from typing import Any, Optional
 
 import re
 
-from .. import app_config, config, jobs, settings_tables, shared_db, source_db, table_browse, user_settings
+from .. import (app_config, config, jobs, logging_utils, settings_tables, shared_db, source_db, table_browse,
+               trace, user_settings)
 from ..logging_utils import get_logger
 
 log = get_logger("presenters.settings")
@@ -40,6 +42,7 @@ TABS: tuple[tuple[str, str], ...] = (
     ("paths", "参照・出力"),
     ("behavior", "動作"),
     ("access", "Access 取り込み"),
+    ("log", "記録"),
     ("terminal", "この端末"),
 )
 TAB_KEYS = frozenset(k for k, _ in TABS)
@@ -109,6 +112,7 @@ class SettingsViewModel:
     relogin_minutes: int
     accdb_source: str
     accdb_target: str
+    log: dict[str, Any]
     terminal: dict[str, str]
 
     @property
@@ -167,6 +171,7 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
         relogin_minutes=int(user_settings.get(config.KEY_RELOGIN_MIN, 0) or 0),
         accdb_source=str(user_settings.get(config.KEY_ACCDB_SOURCE, "") or ""),
         accdb_target=str(user_settings.get(config.KEY_ACCDB_TARGET, "") or ""),
+        log=log_state(),
         terminal=_terminal_values(),
     )
 
@@ -340,6 +345,36 @@ def _setup_section(db_path: Path) -> Section:
     return section
 
 
+def log_state() -> dict[str, Any]:
+    """記録の置き場所・残す日数・今日の問題の数。"""
+    text = str(user_settings.get(config.KEY_LOG_DIR, "") or "").strip()
+    wanted = logging_utils.resolve_log_dir(text)
+    actual = config.LOG_DIR
+    state = _folder_state(actual, create_later=True)
+    problem = ""
+    if wanted != actual:
+        problem = f"設定の場所({wanted})に書けないため、既定の場所に書いています。"
+        state = {"level": WARN, "text": "既定の場所に書いています"}
+    try:
+        keep = max(0, int(user_settings.get(config.KEY_LOG_KEEP_DAYS, config.DEFAULT_LOG_KEEP_DAYS)))
+    except (TypeError, ValueError):
+        keep = config.DEFAULT_LOG_KEEP_DAYS
+    today = trace.read(1, only_problems=True, limit=2000)
+    return {
+        "dir": text,
+        "dir_real": str(actual),
+        "dir_default": str(config.DEFAULT_LOG_DIR),
+        "dir_state": state,
+        "problem": problem,
+        "keep_days": keep,
+        "pc": trace.pc_name(),
+        "file": trace.file_for().name,
+        "errors_today": sum(1 for r in today if r.get("lv") == "ERROR"),
+        "warns_today": sum(1 for r in today if r.get("lv") == "WARN"),
+        "can_open": os.name == "nt",
+    }
+
+
 def _terminal_values() -> dict[str, str]:
     return {
         "pc_name": socket.gethostname(),
@@ -375,6 +410,11 @@ def tab_badges(view: SettingsViewModel) -> dict[str, dict[str, str]]:
     if lv in (WARN, NG):
         out["status"] = {"level": lv, "text": LEVEL_LABEL[lv]}
         out["source"] = {"level": lv, "text": LEVEL_LABEL[lv]}
+    # 今日の思わぬエラー。開かなくても気づけるように
+    if view.log.get("problem"):
+        out["log"] = {"level": WARN, "text": "置き場所"}
+    elif view.log.get("errors_today"):
+        out["log"] = {"level": WARN, "text": f"エラー {view.log['errors_today']}"}
     return out
 
 
@@ -416,6 +456,7 @@ def to_dict(view: SettingsViewModel) -> dict[str, Any]:
         "relogin_minutes": view.relogin_minutes,
         "accdb_source": view.accdb_source,
         "accdb_target": view.accdb_target,
+        "log": view.log,
         "terminal": view.terminal,
         "tab_badges": tab_badges(view),
     }
@@ -493,6 +534,19 @@ def save(body: dict[str, Any]) -> SaveResult:
         user_settings.save(config.KEY_EXPORT_ENCODING, enc)
     if "access_log" in body:
         user_settings.save(config.KEY_ACCESS_LOG, bool(body["access_log"]))
+    if "log_keep_days" in body:
+        try:
+            keep = int(body["log_keep_days"])
+        except (TypeError, ValueError):
+            keep = -1
+        if not 0 <= keep <= MAX_LOG_KEEP_DAYS:
+            return SaveResult(False, f"残す日数は 0〜{MAX_LOG_KEEP_DAYS} の整数で入れてください(0 = 消さない)。",
+                              REFUSE_BAD_INPUT, "log_keep_days")
+        user_settings.save(config.KEY_LOG_KEEP_DAYS, keep)
+    if "log_dir" in body:
+        result = _save_log_dir(str(body["log_dir"] or "").strip())
+        if not result.ok:
+            return result
     if "relogin_minutes" in body:
         try:
             minutes = max(0, int(body["relogin_minutes"] or 0))
@@ -501,6 +555,32 @@ def save(body: dict[str, Any]) -> SaveResult:
                               "relogin_minutes")
         user_settings.save(config.KEY_RELOGIN_MIN, minutes)
     return SaveResult(True, "設定を保存しました。")
+
+
+MAX_LOG_KEEP_DAYS = 3650
+
+
+def _save_log_dir(text: str) -> SaveResult:
+    """記録の置き場所を変える。**書けるのを確かめてから**(書けない場所は保存しない)。
+
+    移る前の置き場所に「どこへ移したか」を 1 行残す ── 前の記録を見ている人が、
+    続きの場所を知れるように。
+    """
+    target = logging_utils.resolve_log_dir(text)
+    before = config.LOG_DIR
+    if target == before:
+        user_settings.save(config.KEY_LOG_DIR, text)
+        return SaveResult(True)
+    why = logging_utils.probe_writable(target)
+    if why:
+        return SaveResult(False, f"記録の置き場所に書き込めません: {target}({why})", REFUSE_BAD_INPUT, "log_dir")
+    trace.event("log.moved", f"記録の置き場所を {target} に移します", data={"from": str(before), "to": str(target)})
+    why = logging_utils.set_log_dir(target)
+    if why:
+        return SaveResult(False, f"記録の置き場所に書き込めません: {target}({why})", REFUSE_BAD_INPUT, "log_dir")
+    user_settings.save(config.KEY_LOG_DIR, text)
+    trace.event("log.moved", f"記録の置き場所を {before} から移しました", data={"from": str(before), "to": str(target)})
+    return SaveResult(True)
 
 
 # ------------------------------------------------------------------

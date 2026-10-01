@@ -14,6 +14,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, render_template, request
 
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 from dbviewer.presenters import fs_browse
 from dbviewer.presenters import settings as settings_presenter
 
@@ -54,6 +55,7 @@ def state():
 def save():
     body = request.get_json(silent=True) or {}
     result = settings_presenter.save(body)
+    trace.event("settings.save", result.message, level="INFO" if result.ok else "WARN", data=body)
     if not result.ok:
         return jsonify({"error": {"code": result.reason, "message": result.message,
                                   "field": result.field}}), 400
@@ -78,6 +80,7 @@ def open_db():
     """その .sqlite3 を接続先にする。"""
     body = request.get_json(silent=True) or {}
     result = settings_presenter.open_db(str(body.get("path", "")))
+    trace.event("db.open", result.message, level="INFO" if result.ok else "WARN", data={"path": body.get("path")})
     if not result.ok:
         return jsonify({"error": {"code": result.reason, "message": result.message, "field": result.field}}), 400
     out = settings_presenter.to_dict(settings_presenter.build())
@@ -89,6 +92,7 @@ def open_db():
 def reset_mode():
     """VBA Login の LOCKBT ダブルクリック(起動モード設定情報の初期化)。"""
     result = settings_presenter.reset_mode()
+    trace.event("settings.reset_mode", result.message)
     return jsonify({"ok": True, "message": result.message, "mode_set": settings_presenter.mode_is_set()})
 
 
@@ -150,6 +154,8 @@ def table_bring_run():
     if not isinstance(tables, list):
         return jsonify({"error": {"code": "bad_tables", "message": "持ってくる表の指定が正しくありません"}}), 400
     result = table_bring.bring(str(body.get("path", "")), [str(t) for t in tables])
+    trace.event("table.bring", result.message, level="INFO" if result.ok else "WARN",
+                data={"path": body.get("path"), "tables": tables, "backup": result.backup, "reason": result.reason})
     payload = {"ok": result.ok, "message": result.message,
                "brought": [{"name": n, "rows": r} for n, r in result.brought],
                "backup": result.backup,
@@ -174,6 +180,8 @@ def table_refresh_run():
     if not isinstance(tables, list):
         return jsonify({"error": {"code": "bad_tables", "message": "入れ替える表の指定が正しくありません"}}), 400
     result = table_bring.refresh(str(body.get("path", "")), [str(t) for t in tables])
+    trace.event("table.refresh", result.message, level="INFO" if result.ok else "WARN",
+                data={"path": body.get("path"), "tables": tables, "backup": result.backup, "reason": result.reason})
     payload = {"ok": result.ok, "message": result.message,
                "refreshed": [{"name": n, "before": b, "after": a} for n, b, a in result.refreshed],
                "kept_old": [{"name": n, "old": o} for n, o in result.kept_old],
@@ -192,6 +200,8 @@ def accdb_import():
     body = request.get_json(silent=True) or {}
     job, result = settings_presenter.start_accdb_import(str(body.get("accdb_source", "")),
                                                         str(body.get("accdb_target", "")))
+    trace.event("accdb.convert", result.message, level="INFO" if result.ok else "WARN",
+                data={"source": body.get("accdb_source"), "target": body.get("accdb_target"), "reason": result.reason})
     if not result.ok:
         status = 409 if result.reason == settings_presenter.REFUSE_BUSY else 400
         return jsonify({"error": {"code": result.reason, "message": result.message,

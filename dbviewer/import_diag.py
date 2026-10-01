@@ -20,7 +20,8 @@ log = get_logger("import_diag")
 
 
 def path_for(day: Optional[date] = None) -> Path:
-    return config.LOG_DIR / f"取り込み診断_{(day or date.today()):%Y%m%d}.log"
+    from .trace import pc_name
+    return config.LOG_DIR / f"取り込み診断_{pc_name()}_{(day or date.today()):%Y%m%d}.log"
 
 
 def latest_path() -> Optional[Path]:

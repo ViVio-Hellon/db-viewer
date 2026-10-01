@@ -24,7 +24,7 @@ const TOKEN = window.APP.token;
  * いるのに通信の失敗として案内される**ので、現場は直しようがない。
  */
 export class ApiError extends Error {
-  constructor(status, body) {
+  constructor(status, body, rid = "") {
     const info = (body && body.error) || {};
     super(info.message || (body && body.message)
           || `通信に失敗しました (HTTP ${status})`);
@@ -35,6 +35,8 @@ export class ApiError extends Error {
     // 断られたときも本文に画面ぜんぶが入っていることがある(422)。
     // 「断られた」と「画面が古いまま」を同時に起こさないために渡す
     this.body = body;
+    // 記録番号(`X-Request-Id`)。設定「記録」でこの操作の前後が引ける
+    this.rid = rid || (body && body.rid) || "";
   }
 }
 
@@ -71,7 +73,7 @@ async function request(path, options = {}) {
       body = await res.json();
     }
     if (!res.ok) {
-      const err = new ApiError(res.status, body);
+      const err = new ApiError(res.status, body, res.headers.get("X-Request-Id") || "");
       throw err;
     }
     return body;

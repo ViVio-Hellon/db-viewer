@@ -225,6 +225,9 @@ def shutdown():
                         "message": "このプロセスは停止操作に対応していません"}), 501
 
     log.info("停止要求を受け付けました (force=%s)", force)
+    from dbviewer import trace
+    trace.event("app.stop", "終了の操作で終了します" + ("(実行中の処理を中断)" if running else ""),
+                level="WARN" if running else "INFO", data={"force": force, "running": running})
     threading.Timer(SHUTDOWN_DELAY_SEC, _shutdown_hook).start()
     return jsonify({"stopped": True, "message": "終了します"})
 

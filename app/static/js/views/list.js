@@ -219,7 +219,7 @@ async function saveCell(key, name, value, seen, row) {
     if (body.row) grid.updateRow(key, body.row);          // ほかの端末の値に置き換える
     else grid.updateRow(key, row);                        // 元の値に描き直す
     saveState(`保存できませんでした ・ ${name}`, "ng");
-    toast(err.message, err.status === 409 ? "error" : "warn");
+    toastError(err, err.status === 409 ? "error" : "warn");
   }
 }
 

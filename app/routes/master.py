@@ -9,10 +9,11 @@
 """
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request
 
 from dbviewer import auth, master_admin, session_setup, settings_tables, shared_db
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 
 from .. import get_db
 from ..shell import shell_context
@@ -35,6 +36,30 @@ def _open():
     except settings_tables.SetupError as exc:
         return None, None, _refuse("setup", str(exc), 409)
     return conn, setup, None
+
+
+# 表の列の並びで値が来る項目(ID 表なら PASS が入る)
+_ROW_KEYS = ("values", "seen", "row")
+
+
+@bp.before_request
+def _hide_secrets():                            # noqa: ANN202 - Flaskのフック
+    """**ID 表の PASS を記録に残さない。** 値は列名の無い並びで来るので、表の列を見て伏せる。"""
+    body = request.get_json(silent=True) if request.method == "POST" else None
+    if not isinstance(body, dict) or not any(k in body for k in _ROW_KEYS):
+        return None
+    try:
+        cols = [r[1] for r in get_db().execute(
+            f"PRAGMA table_info({settings_tables.q(str(body.get('table') or ''))})")] or None
+    except Exception:                           # noqa: BLE001 - 分からなければ全部伏せる
+        cols = None
+    g.secret_cols = cols
+    g.trace_sent = {k: trace.mask_by_columns(cols, v) if k in _ROW_KEYS else v for k, v in body.items()}
+    return None
+
+
+def _masked(values):
+    return trace.mask_by_columns(g.get("secret_cols"), values)
 
 
 def _allowed(conn, setup, table: str):
@@ -114,6 +139,10 @@ def execute():
                              answer=None if answer is None else bool(answer),
                              seen=[str(v) for v in seen] if seen else None)
     status = 200 if r.ok or r.reason == "question" else (409 if r.reason == "conflict" else 422)
+    if r.reason != "question":
+        trace.event("master.save", r.message, level="INFO" if r.ok else "WARN",
+                    data={"table": table, "mode": mode, "key": key, "executed": r.executed,
+                          "reason": r.reason, "before": _masked(seen), "after": _masked(values)})
     return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason, "executed": r.executed}), status
 
 
@@ -135,4 +164,7 @@ def delete():
     r = master_admin.delete(conn, table, row, confirmed=bool(body.get("confirmed")),
                             answer=None if answer is None else bool(answer))
     status = 200 if r.ok or r.reason in ("question", "cancelled") else 422
+    if r.reason != "question":
+        trace.event("master.delete", r.message, level="INFO" if r.ok or r.reason == "cancelled" else "WARN",
+                    data={"table": table, "row": _masked(row), "reason": r.reason})
     return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason}), status

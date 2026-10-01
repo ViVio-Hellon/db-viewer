@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, redirect, render_template, request
 
 from dbviewer import auth, config, session_setup, settings_tables, shared_db, user_settings
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 from dbviewer.presenters import settings as settings_presenter
 
 from .. import get_db
@@ -68,8 +69,12 @@ def login():
         return jsonify({"error": {"code": "setup", "message": str(exc)}}), 409
     result = auth.authenticate(conn, inp_id, inp_pass)
     if not result.ok:
+        trace.event("login.ng", result.message, level="WARN",
+                    data={"id": inp_id, "os_user": auth.network_id(), "pc": auth.pc_name()})
         return jsonify({"error": {"code": "login_failed", "message": result.message}}), 403
     s = auth.start(result)
+    trace.event("login.ok", f"Level {s.level}" + ("(開発者)" if s.developer else ""),
+                data={"id": s.user_id, "note": result.note, "db": str(path)})
     log.info("ログイン: %s Level=%s%s", s.user_id, s.level, "(開発者)" if s.developer else "")
     out = _session_dict(s)
     out["note"] = result.note

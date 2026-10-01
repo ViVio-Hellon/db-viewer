@@ -6,7 +6,8 @@
 
 import { api } from "./api.js";
 import { startHeartbeat } from "./health.js";
-import { toast, toastError } from "./toast.js";
+import { toast, toastError, addRecordNo } from "./toast.js";
+import * as errlog from "./errlog.js";
 import * as busy from "./busy.js";
 import * as nav from "./nav.js";
 import * as running from "./running.js";
@@ -15,6 +16,12 @@ import * as unsaved from "./unsaved.js";
 // **押されたボタンを覚えておく。** `api.js` が送信を始めるときに、
 // そのボタンを待機の姿にする(無言で待たせない)
 busy.watchClicks();
+
+// 拾われなかった画面のエラーを記録へ送り、番号を知らせる
+errlog.install((rid) => {
+  const el = toast("画面の中で思わぬエラーが起きました。続けて困るときは、記録番号を管理者に伝えてください。", "error");
+  addRecordNo(el, rid);
+});
 
 startHeartbeat();
 // 長い処理は帯に出す。**画面を離れても見える**ようにするため
@@ -28,6 +35,7 @@ running.start();
  * 付けた要素に印を残す ── 押すたびに2回終了しようとしないため。
  */
 export function wireShell() {
+  errlog.resetCount();
   wireQuit(document.getElementById("quit"));
   wireLogout(document.getElementById("logout"));
   // 新しい帯は空で来る。**移った先で「何も動いていない」に見せない**

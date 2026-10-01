@@ -5,12 +5,16 @@ VBA版はFileSystemObjectで手動追記し、さらに端末のライン名を
 Python版ではファイル配置の複雑さの割に価値が薄いため、標準の
 `logging` モジュールに置き換える。
 
-- 出力先: config.LOG_DIR 配下に `dbviewer_YYYYMMDD.log`
+- 出力先: config.LOG_DIR 配下に `dbviewer_<PC名>_YYYYMMDD.log`(PC 名を入れるのは、
+  設定で共有フォルダを記録の置き場所にしたとき、PC ごとにファイルを分けるため)
+- 置き場所は設定「記録」で変えられる(`set_log_dir` / `apply_settings`)
+- 操作の記録(なぜなぜ分析用)は別のファイル(`trace.py`)
 - コンソール(Debug.Printのイミディエイト相当)にも同時出力
 """
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date
 from pathlib import Path
 
@@ -21,7 +25,8 @@ _configured = False
 
 def log_path_for(day: date) -> "Path":
     """その日のログファイル。**名前の作り方はここ1か所**。"""
-    return config.LOG_DIR / f"dbviewer_{day:%Y%m%d}.log"
+    from .trace import pc_name
+    return config.LOG_DIR / f"dbviewer_{pc_name()}_{day:%Y%m%d}.log"
 
 
 class DailyFileHandler(logging.FileHandler):
@@ -40,6 +45,17 @@ class DailyFileHandler(logging.FileHandler):
     def __init__(self, day: date, **kwargs) -> None:
         self._day = day
         super().__init__(log_path_for(day), **kwargs)
+
+    def reopen(self) -> None:
+        """置き場所が変わった(設定「記録」)。次の 1 行から新しい場所へ。"""
+        self.acquire()
+        try:
+            self.close()
+            self._day = date.today()
+            self.baseFilename = str(log_path_for(self._day))
+            self.stream = None
+        finally:
+            self.release()
 
     def emit(self, record: logging.LogRecord) -> None:
         # **書く直前に見る。** 日付が変わったことは、次の1行で気づく
@@ -83,6 +99,52 @@ def configure_logging() -> None:
         root.addHandler(console_handler)
 
     _configured = True
+
+
+def probe_writable(folder: "Path") -> str:
+    """書けるか試す。書ければ ""、だめなら理由。"""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / f".dbviewer_probe_{os.getpid()}"
+        probe.write_text("x", encoding="utf-8")
+        probe.unlink()
+        return ""
+    except OSError as exc:
+        return str(exc)
+
+
+def set_log_dir(folder: "Path") -> str:
+    """記録の置き場所を変える(動いたまま)。書けなければ変えずに理由を返す。"""
+    why = probe_writable(folder)
+    if why:
+        return why
+    config.LOG_DIR = folder
+    for handler in logging.getLogger("dbviewer").handlers:
+        if isinstance(handler, DailyFileHandler):
+            handler.reopen()
+    return ""
+
+
+def resolve_log_dir(text: str) -> "Path":
+    """設定の文字 → 置き場所。空なら既定(この PC のローカル領域)、相対はアプリのフォルダ基準。"""
+    text = (text or "").strip()
+    return config.resolve_dir(text) if text else config.DEFAULT_LOG_DIR
+
+
+def apply_settings() -> dict:
+    """利用者設定の「記録の置き場所」を当てる。だめなら既定の場所のまま、理由を返す。
+
+    戻り値: {"dir": 実際の置き場所, "requested": 設定の文字, "problem": 理由(無ければ "")}
+    """
+    from . import user_settings
+    text = str(user_settings.get(config.KEY_LOG_DIR, "") or "").strip()
+    target = resolve_log_dir(text)
+    problem = set_log_dir(target)
+    if problem and target != config.DEFAULT_LOG_DIR:
+        set_log_dir(config.DEFAULT_LOG_DIR)
+        logging.getLogger("dbviewer").warning("記録の置き場所に書けないので既定の場所にします: %s (%s)",
+                                              target, problem)
+    return {"dir": str(config.LOG_DIR), "requested": text, "problem": problem}
 
 
 def _has_console() -> bool:

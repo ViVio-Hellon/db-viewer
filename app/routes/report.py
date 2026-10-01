@@ -17,6 +17,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from dbviewer import config, grid_data, records, reports, session_setup, settings_tables, shared_db
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 from dbviewer.reports import render
 
 from .. import get_db
@@ -85,6 +86,7 @@ def run():
     html = render.to_html(grid, f"{setup.general.main_table} {sheet}")
     pid = _keep(html)
     log.info("帳票: %s %d 行", spec.proc, len(rows))
+    trace.event("report", spec.proc, data={"source_rows": len(rows), "keys": keys})
     return jsonify({"ok": True, "preview": f"/report/preview?id={pid}", "rows": len(grid.rows),
                     "source_rows": len(rows), "sheet": sheet})
 
@@ -105,6 +107,7 @@ def print_view():
     numeric = [bool(x) for x in body.get("numeric") or []]
     html = render.view_html(str(body.get("title") or "一覧"), columns, rows,
                             note=str(body.get("note") or ""), numeric=numeric)
+    trace.event("print", str(body.get("title") or ""), data={"rows": len(rows), "columns": columns})
     return jsonify({"ok": True, "preview": f"/report/preview?id={_keep(html)}", "rows": len(rows)})
 
 

@@ -19,6 +19,7 @@ from flask import Blueprint, jsonify, render_template, request, send_file
 from dbviewer import (auth, choices, config, editing, numbering, records, session_setup,
                       settings_tables, shared_db, user_settings)
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 from dbviewer.vba_compat import cdate
 
 from .. import get_db
@@ -126,6 +127,11 @@ def execute():
                              pc=auth.pc_name(), confirmed=bool(body.get("confirmed")),
                              answer=None if answer is None else bool(answer), seen=seen)
     status = 200 if result.ok or result.reason == "question" else (409 if result.reason == "conflict" else 422)
+    if result.reason != "question":
+        changes = {f.name: [f.original, f.value] for f in fields if f.value != f.original}
+        trace.event("record.save", result.message, level="INFO" if result.ok else "WARN",
+                    data={"mode": mode, "key": form.key, "executed": result.executed,
+                          "reason": result.reason, "changes": changes, "fields_ng": result.fields_ng})
     return jsonify({"ok": result.ok, "message": result.message, "reason": result.reason,
                     "fields_ng": result.fields_ng, "values": result.values,
                     "reset_filters": result.reset_filters, "executed": result.executed,

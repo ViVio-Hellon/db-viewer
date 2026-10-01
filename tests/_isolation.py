@@ -76,6 +76,8 @@ def ensure_isolated() -> list[str]:
         if _under(current, repo) or not _under(current, Path(tempfile.gettempdir())):
             setattr(config, name, _escape(name.lower()))
             moved.append(name)
+    # 記録の置き場所を設定で変えても、既定(戻り先)は一時フォルダ
+    config.DEFAULT_LOG_DIR = config.LOG_DIR
 
     # Access.log: 本体と同じフォルダ(試験ではリポジトリ直下)に書いてしまうので止める
     from dbviewer import user_settings

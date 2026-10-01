@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, render_template, request
 
 from dbviewer import auth, cell_edit, config, grid_data, records, session_setup, settings_tables, shared_db
 from dbviewer.logging_utils import get_logger
+from dbviewer import trace
 
 from .. import get_db
 from ..shell import shell_context
@@ -94,8 +95,10 @@ def api_cell():
                                  "" if body.get("seen") is None else str(body.get("seen")),
                                  user=s.user_id if s else auth.network_id(), pc=auth.pc_name())
     status = 200 if result.ok else (409 if result.reason == "conflict" else 422)
-    if result.ok and result.reason != "unchanged":
-        log.info("一覧で直しました: %s=%s 管理番号 %s", body.get("column"), body.get("value"), body.get("key"))
+    if result.reason != "unchanged":
+        trace.event("cell.save", result.message, level="INFO" if result.ok else "WARN",
+                    data={"key": body.get("key"), "column": body.get("column"), "before": body.get("seen"),
+                          "after": body.get("value"), "reason": result.reason, "changed": result.changed})
     return jsonify({"ok": result.ok, "message": result.message, "reason": result.reason,
                     "row": result.row, "changed": result.changed,
                     "db_mtime": shared_db.probe().get("mtime")}), status

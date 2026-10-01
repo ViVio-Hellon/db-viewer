@@ -181,12 +181,18 @@ class JobRegistry:
                           self._progress(job, pct, message, ok))
         except Exception as exc:                  # noqa: BLE001 - 画面に出して続ける
             log.exception("失敗: %s id=%s", job.label, job.id)
+            from . import trace
+            trace.event("job.failed", f"{job.label}: {exc}", level="ERROR", exc=exc,
+                        data={"kind": job.kind, "job": job.id})
             self._finish(job, STATE_FAILED, ok=False, summary="", error=str(exc),
                          mark_last_step_failed=True)
         else:
             summary = (result.summary() if hasattr(result, "summary")
                        else ("" if result is None else str(result)))
             ok = bool(getattr(result, "ok", True))
+            from . import trace
+            trace.event("job.done" if ok else "job.failed", f"{job.label}: {summary}",
+                        level="INFO" if ok else "ERROR", data={"kind": job.kind, "job": job.id})
             self._finish(job, STATE_DONE if ok else STATE_FAILED,
                          ok=ok, summary=summary, error="")
 

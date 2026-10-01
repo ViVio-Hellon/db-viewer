@@ -8,7 +8,7 @@
     const result = await helpers.open(field, inputElement);   // {value, link?} か undefined
 */
 import { api } from "./api.js";
-import { toast } from "./toast.js";
+import { toast, toastError } from "./toast.js";
 import { makeSortable } from "./sort_table.js";
 
 export function isNumericVba(v) {
@@ -61,7 +61,7 @@ async function masterHelper(f, inp) {
   try {
     data = await api.post("/api/record/choices", link ? { kind: "link", ms_join: f.ms_join, multi: f.multi }
                                                     : { kind: "master", name: f.master, multi: f.multi, parent });
-  } catch (err) { toast(err.message, "warn"); return undefined; }
+  } catch (err) { toastError(err, "warn"); return undefined; }
   const wrap = document.createElement("div"); wrap.className = "tablewrap";
   const table = document.createElement("table"); table.className = "table";
   const thead = document.createElement("thead"); const hr = document.createElement("tr");
@@ -97,7 +97,7 @@ async function listHelper(f, inp, kind, title, note) {
   let data;
   try {
     data = await api.post("/api/record/choices", kind === "field" ? { kind, list_sql: listSql() } : { kind, dsp_type: f.dsp_type });
-  } catch (err) { toast(err.message, "warn"); return undefined; }
+  } catch (err) { toastError(err, "warn"); return undefined; }
   const box = document.createElement("div"); box.className = "helper__list";
   for (const item of data.items) {
     const d = document.createElement("div"); d.textContent = item;
