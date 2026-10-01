@@ -9,6 +9,7 @@
 */
 import { api } from "./api.js";
 import { toast } from "./toast.js";
+import { makeSortable } from "./sort_table.js";
 
 export function isNumericVba(v) {
   const s = String(v).normalize("NFKC").replace(/,/g, "").trim();
@@ -80,7 +81,9 @@ async function masterHelper(f, inp) {
     tbody.appendChild(tr);
   }
   table.appendChild(tbody); wrap.appendChild(table);
-  return openDialog(`${data.name}マスタ`, f.multi ? "Ctrl+クリックで複数選択できます。" : "ダブルクリックでも選択できます。", wrap, () => {
+  // 列名を押すと並べ替え(マスタ管理・一覧と同じ決まり)。選んだ行はそのまま
+  makeSortable(table);
+  return openDialog(`${data.name}マスタ`, (f.multi ? "Ctrl+クリックで複数選択できます。" : "ダブルクリックでも選択できます。") + "列名を押すと並べ替えます。", wrap, () => {
     const picked = [...tbody.rows].filter((r) => r.getAttribute("aria-selected") === "true");
     if (!picked.length) return undefined;
     const value = picked.map((r) => r.cells[data.value_col - 1].textContent).join(",");

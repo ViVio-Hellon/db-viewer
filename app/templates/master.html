@@ -20,6 +20,8 @@
   .input.is-changed { background:rgb(255,165,0) !important; }
   .input.is-auto { background:rgb(220,220,220) !important; }
   .helper { width:min(720px, 94vw); } .helper .tablewrap { max-height:50vh; }
+  /* 選んだ行は一覧と同じくはっきり(暗い配色でも分かるように) */
+  #msTable tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
   .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
   .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); } .helper__list div[aria-selected="true"] { background:var(--accent); color:var(--on-accent); }
 </style>
@@ -28,7 +30,7 @@
 <div class="pane">
   <div class="pane__head">
     <div><span class="eyebrow">Step 2</span><h2 id="msTitle">マスタメンテナンス</h2></div>
-    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。行をダブルクリックで修正。</p></div>
+    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。列名を押すと並べ替え。行をダブルクリックで修正。</p></div>
   </div>
   <span class="dimline" aria-hidden="true"></span>
   <p class="status status--ng" id="msProblem" hidden></p>

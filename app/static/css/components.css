@@ -1104,3 +1104,11 @@ dialog::backdrop { background: var(--scrim); }
 .lv--warn { background: var(--warn-bg); color: var(--state-warn); }
 .lv--ng   { background: var(--warn-bg); color: var(--state-error); }
 .lv--info { background: var(--info-bg); color: var(--info-fg); }
+
+/* 列名を押して並べ替える見出し(sort_table.js: マスタ管理・マスタから選ぶ窓) */
+.table thead th .ths { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px;
+                       cursor: pointer; width: 100%; color: inherit; }
+.table thead th .ths:hover { color: var(--accent); }
+.table thead th .ths:focus-visible { box-shadow: 0 0 0 2px var(--focus); border-radius: 3px; }
+.ths__mark { color: var(--accent); font-family: var(--mono); font-size: var(--fs-2xs); }
+.table thead th[aria-sort="ascending"], .table thead th[aria-sort="descending"] { color: var(--ink); }

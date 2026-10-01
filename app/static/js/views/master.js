@@ -2,10 +2,13 @@
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
 import { createHelpers, isNumericVba } from "../helpers.js";
+import { makeSortable } from "../sort_table.js";
 
 const el = {};
 const state = { table: "", columns: [], rows: [], selected: -1, mode: "", fields: [], readOnly: false };
 let helpers = null;
+let sorter = null;
+let sorterTable = "";
 
 function problem(text) { el.msProblem.hidden = !text; el.msProblem.textContent = text || ""; }
 
@@ -48,19 +51,35 @@ async function loadRows() {
   } catch (err) { toastError(err); }
 }
 
+function selectRow(i) {
+  state.selected = i;
+  for (const r of el.msTable.tBodies[0].rows) {
+    if (Number(r.dataset.i) === i) r.setAttribute("aria-selected", "true"); else r.removeAttribute("aria-selected");
+  }
+}
+
 function renderTable() {
   const thead = el.msTable.tHead; const tbody = el.msTable.tBodies[0];
   const tr = document.createElement("tr");
   for (const c of state.columns) { const th = document.createElement("th"); th.textContent = c; th.className = "l"; tr.appendChild(th); }
   thead.replaceChildren(tr);
+  // 行には元の番号(state.rows の何番目か)を持たせる。並べ替えても選んだ行はずれない
   tbody.replaceChildren(...state.rows.map((row, i) => {
     const r = document.createElement("tr");
+    r.dataset.i = String(i);
     if (i === state.selected) r.setAttribute("aria-selected", "true");
     row.forEach((v) => { const td = document.createElement("td"); td.textContent = v; td.className = "l"; r.appendChild(td); });
-    r.addEventListener("click", () => { state.selected = i; renderTable(); });
-    r.addEventListener("dblclick", () => { state.selected = i; if (!state.readOnly) openForm("UPDATE"); });
+    r.addEventListener("click", () => selectRow(i));
+    r.addEventListener("dblclick", () => { selectRow(i); if (!state.readOnly) openForm("UPDATE"); });
     return r;
   }));
+  // 列名を押すと並べ替え。並べ替えは表ごとに覚える(直して戻っても同じ並び)
+  if (!sorter || sorterTable !== state.table) {
+    sorter = makeSortable(el.msTable, { stateKey: `dbviewer.master.sort.${state.table}` });
+    sorterTable = state.table;
+  } else {
+    sorter.apply();
+  }
 }
 
 function switchScreen(mode) {

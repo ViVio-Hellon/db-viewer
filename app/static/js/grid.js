@@ -52,6 +52,32 @@ function toDate(v) {
   return `${m[1]}-${p(m[2])}-${p(m[3])} ${p(m[4])}:${p(m[5])}:${p(m[6])}`;
 }
 
+/**
+ * 2 つの値を比べる(一覧・マスタ管理・選択の窓で共通)。空欄は呼ぶ側で扱う。
+ * num は数として、date は日付として、text は日本語の並び(数字は数として: 0-1-2 < 0-1-10)。
+ */
+export function compareValues(kind, a, b) {
+  if (kind === "num") return (toNum(a) ?? 0) - (toNum(b) ?? 0);
+  if (kind === "date") return (toDate(a) || "").localeCompare(toDate(b) || "");
+  return collator.compare(a, b);
+}
+
+/** 列の値から種類を決める(サーバの `grid_data.column_kind` と同じ決まり)。 */
+export function guessKind(values) {
+  let seen = 0, num = true, date = true;
+  for (const v of values) {
+    const s = String(v ?? "").trim();
+    if (!s) continue;
+    seen++;
+    const t = s.replace(/,/g, "");
+    num = num && /^-?(?:\d+|\d+\.\d+|\.\d+)$/.test(t) && !(t.length > 1 && t[0] === "0" && t[1] !== ".");
+    date = date && /^\d{4}[/-]\d{1,2}[/-]\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/.test(s);
+    if (!num && !date) return "text";
+  }
+  if (!seen) return "text";
+  return num ? "num" : date ? "date" : "text";
+}
+
 /** 文字の幅のあたり(13px の字で)。全角は広く、半角カナは狭く。 */
 function textWidth(s) {
   let w = 0;
@@ -186,9 +212,7 @@ export function createGrid(root, opts = {}) {
   function cmp(col, a, b) {
     const ea = a === "" || a == null, eb = b === "" || b == null;
     if (ea || eb) return ea && eb ? 0 : ea ? 1 : -1;       // 空欄はいつも下
-    if (col.kind === "num") return (toNum(a) ?? 0) - (toNum(b) ?? 0);
-    if (col.kind === "date") return (toDate(a) || "").localeCompare(toDate(b) || "");
-    return collator.compare(a, b);
+    return compareValues(col.kind, a, b);
   }
 
   function compute() {
