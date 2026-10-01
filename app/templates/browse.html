@@ -2,53 +2,50 @@
 {% block title %}閲覧・出力 — {{ display_name }}{% endblock %}
 {% block head %}
 <style>
-  .br { display:grid; grid-template-columns:14em 1fr; gap:14px; margin-top:10px; }
+  .br { display:grid; grid-template-columns:13em minmax(0,1fr); gap:14px; flex:1; min-height:0; }
   @media (max-width:900px){ .br { grid-template-columns:1fr; } }
-  .br__list { border:1px solid var(--rule); border-radius:var(--radius-xs); background:var(--surface); max-height:60vh; overflow:auto; }
-  .br__list div { padding:4px 10px; cursor:pointer; font-size:var(--fs-sm); white-space:nowrap; }
-  .br__list div:hover { background:var(--accent-soft); } .br__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
-  .table td.l, .table th.l { text-align:left; }
-  .exp { width:min(560px, 94vw); }
+  .br__list { border:1px solid var(--rule); border-radius:var(--radius-xs); background:var(--surface); overflow:auto; align-self:start; max-height:100%; }
+  .br__list button { all:unset; box-sizing:border-box; display:block; width:100%; padding:6px 10px; cursor:pointer;
+                     font-size:var(--fs-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--ink); }
+  .br__list button:hover { background:var(--accent-soft); }
+  .br__list button[aria-current="true"] { background:var(--accent); color:var(--on-accent); }
+  .br__list button:focus-visible { box-shadow:inset 0 0 0 2px var(--focus); }
+  .br__main { display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; }
+  .br__head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .br__head h3 { margin:0 auto 0 0; font-size:var(--fs-lg, 15px); }
+  .br__grid { display:flex; flex:1; min-height:0; min-width:0; }
+  .brv { display:flex; flex-direction:column; gap:10px; overflow:hidden; }
 </style>
 {% endblock %}
 {% block content %}
-<div class="pane">
+<div class="pane brv">
   <div class="pane__head">
-    <div><span class="eyebrow">Step 3</span><h2>閲覧＆出力モード</h2></div>
-    <div class="nextstep"><p class="why" id="brNote">全般設定「テーブル閲覧」の表を見て、xlsx / txt / csv に出します。一覧の「出力」もここと同じ形で出ます。</p></div>
+    <div><span class="eyebrow">Step 3</span><h2>閲覧・出力</h2></div>
+    <p class="why" id="brNote" style="margin:0">全般設定「テーブル閲覧」の表を、一覧と同じ表(並べ替え・絞り込み・列の設定)で見て、コピー・保存・印刷します。</p>
   </div>
-  <span class="dimline" aria-hidden="true"></span>
   <p class="status status--ng" id="brProblem" hidden></p>
   <div class="br">
-    <div class="br__list" id="brTables"></div>
-    <div style="min-width:0; display:flex; flex-direction:column; gap:8px">
-      <div class="btn-row">
-        <b id="brName" style="min-width:10em"></b><span class="why" id="brCount" style="margin:0"></span>
-        <span style="margin-left:auto"></span>
-        <button class="btn btn--find" type="button" id="brRefresh">リスト更新</button>
-        <button class="btn btn--commit" type="button" id="brExport" hidden>出力</button>
-        <button class="btn btn--find" type="button" id="brPrint" hidden>印刷</button>
-        <button class="btn btn--find" type="button" id="brClose">閉じる</button>
+    <nav class="br__list" id="brTables" aria-label="表"></nav>
+    <div class="br__main">
+      <div class="br__head">
+        <h3 id="brName">表を選んでください</h3>
+        <button class="btn btn--find" type="button" id="brPrint" disabled>印刷</button>
+        <div class="menu">
+          <button class="btn btn--find" type="button" id="brOut" aria-haspopup="true" aria-expanded="false" disabled>出力 ▾</button>
+          <div class="menu__list" id="brMenu" hidden>
+            <button type="button" id="brCopy">表をコピー<small>見えている行・列を、Excel やメールに貼り付けられる形で</small></button>
+            <button type="button" id="brSave">ファイルに保存…<small>CSV など。設定の「出力先」フォルダに書きます</small></button>
+          </div>
+        </div>
       </div>
-      <div class="tablewrap" style="max-height:60vh"><table class="table" id="brTable"><thead></thead><tbody></tbody></table></div>
+      <div class="br__grid" id="brGrid"></div>
     </div>
   </div>
 </div>
-<dialog id="exportDialog" class="browser exp">
-  <form method="dialog" class="browser__head"><b id="exportTitle">出力</b><button class="btn btn--danger" value="cancel">閉じる</button></form>
-  <div class="pad" style="display:flex; flex-direction:column; gap:8px">
-    <p class="why" id="exportWhat" style="margin:0"></p>
-    <div class="field"><label style="width:6em">ファイル名</label><input class="input" id="exportName" style="flex:1"></div>
-    <div class="field"><label style="width:6em">形式</label>
-      <select class="input" id="exportExt"><option value="xlsx">Excel形式 (*.xlsx)</option><option value="txt">タブ区切り (*.txt)</option><option value="csv">カンマ区切り (*.csv)</option></select></div>
-    <p class="why" style="margin:0">出力先: <span id="exportDir"></span>(設定タブ「参照・出力・帳票」で変えられます)</p>
-    <div class="btn-row"><button class="btn btn--commit" type="button" id="exportOk">出力する</button></div>
-  </div>
-</dialog>
 {% endblock %}
 {% block scripts %}
 <script type="module">
   import { start } from "{{ url_for('static', filename='js/views/browse.js') }}";
-  start({{ request.args.get('from', '') | tojson }});
+  start();
 </script>
 {% endblock %}

@@ -156,14 +156,14 @@ async function remove() {
 
 export function start() {
   for (const id of ["msTitle", "msProblem", "msTables", "msName", "msPage", "msNew", "msEdit", "msDelete", "msBack", "msExe", "msClose", "msGrid", "msTable", "msFields"]) el[id] = document.getElementById(id);
-  helpers = createHelpers({ listSql: () => { try { return JSON.parse(sessionStorage.getItem("dbviewer.list") || "{}").sql || ""; } catch (e) { return ""; } }, parent: "MF2" });
+  helpers = createHelpers({ parent: "MF2" });
   el.msNew.addEventListener("click", () => openForm("ADDNEW"));
   el.msEdit.addEventListener("click", () => openForm("UPDATE"));
   el.msDelete.addEventListener("click", remove);
   el.msBack.addEventListener("click", () => switchScreen(0));
   el.msExe.addEventListener("click", execute);
   // VBA MF2.QueryClose: 一覧を作り直してフィルタを消す
-  el.msClose.addEventListener("click", () => { sessionStorage.removeItem("dbviewer.list"); location.href = "/list"; });
+  el.msClose.addEventListener("click", () => { location.href = "/list"; });
   switchScreen(0);
   loadTables();
 }

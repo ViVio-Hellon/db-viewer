@@ -1,17 +1,22 @@
-"""テーブル閲覧(VBA `MF3`)と出力(VBA `ExportData` / `ExportFile` / `SaveArrayAsWorkbook`)
+"""テーブル閲覧(VBA `MF3`)と出力
 
-【閲覧】全般設定「テーブル閲覧」に `/` 区切りで書かれた表を、全行 1 ページで見せる。
-【出力】VBA は保存ダイアログで xlsx / txt(タブ) / csv を選ばせ、既定のファイル名は
-`Format(Now, "YYYYMMDD_HHMMSS")`。Web はブラウザから OS の保存ダイアログを出せないので、
-設定タブ「出力先」のフォルダに書いて場所を知らせる。
+【閲覧】全般設定「テーブル閲覧」に `/` 区切りで書かれた表を見せる。
+【出力】画面に出している表(絞り込み・並べ替え・列の設定どおり)をファイルに書く。
+ブラウザからは保存ダイアログを出さない(ダウンロードはしない)。設定「出力先」の
+フォルダに書いて、場所を知らせる。
 
-txt / csv の行の形は VBA の `ExportFile` そのまま: **各セルのあとに区切りを付ける**
-(行末にも 1 つ残る)、行末は CRLF、文字コードは ANSI(cp932)。
-xlsx は 1 シートに配列をそのまま置く。Excel は文字列でも数値に見えるものを数値として
-持つので、数値に読める値だけ数値にする(日付は文字列のまま)。
+形式は CSV が基本。Excel を前提にしない:
+- csv … カンマ区切り。値にカンマ・改行・" があれば "…" で囲む(ふつうの CSV)
+- tsv … タブ区切り(.txt)。表計算ソフト・メモ帳どちらでも開ける
+- xlsx … 標準ライブラリだけで書く(Excel が無くても作れる)
+文字コードは CP932(Shift_JIS、日本語版 Excel がそのまま開ける)か UTF-8(BOM 付き)。
+
+VBA の `ExportFile` は「各セルのあとに区切り」(行末にも 1 つ残る)形だった。
+Web 版はふつうの CSV/TSV にした(意図した差異、docs/06)。
 """
 from __future__ import annotations
 
+import csv
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -26,11 +31,12 @@ from .vba_compat import format_date
 sys.path.insert(0, str(config.BASE_DIR / "vendor"))
 import xlsx_writer  # noqa: E402  (標準ライブラリだけの writer)
 
-MSG_ASK = "ListViewに表示されているデータを出力しますか？"
 MSG_DONE = "出力しました。"
-MSG_CANCEL = "キャンセルしました。"
-MSG_EMPTY_ASK = "データが空です。強制的に作成しますか？"
-EXTENSIONS = ("xlsx", "txt", "csv")
+MSG_EMPTY = "出す行がありません。絞り込みを見直してください。"
+FORMATS = {"csv": ("csv", ","), "tsv": ("txt", "\t"), "xlsx": ("xlsx", "")}
+ENCODINGS = {"cp932": "Shift_JIS(CP932)", "utf-8-sig": "UTF-8(BOM 付き)"}
+DEFAULT_FORMAT = "csv"
+DEFAULT_ENCODING = "cp932"
 
 
 def browse_tables(browse_str: str) -> list[str]:
@@ -54,12 +60,39 @@ def view(conn: sqlite3.Connection, table: str) -> TableView:
     return TableView(table, cols, rows)
 
 
-def default_name() -> str:
-    return format_date(datetime.now(), "YYYYMMDD_HHMMSS")
+def export_dir() -> Path:
+    """出力先。設定「出力先」、空ならこの PC のローカル領域(work/出力)。"""
+    from . import app_config, user_settings
+    text = str(user_settings.get(config.KEY_EXPORT_DIR, "") or "").strip()
+    default = app_config.local_dir("work") / "出力"
+    return config.resolve_dir(text, default) if text else default
+
+
+def default_name(prefix: str = "") -> str:
+    stamp = format_date(datetime.now(), "YYYYMMDD_HHMMSS")
+    return f"{prefix}_{stamp}" if prefix else stamp
+
+
+def _safe_name(name: str) -> str:
+    """ファイル名に使えない字を _ に。フォルダを含めさせない。"""
+    bad = '\\/:*?"<>|'
+    out = "".join("_" if ch in bad or ord(ch) < 32 else ch for ch in str(name)).strip(" .")
+    return out[:120] or default_name()
+
+
+def _unique(path: Path) -> Path:
+    if not path.exists():
+        return path
+    n = 2
+    while True:
+        cand = path.with_name(f"{path.stem}_{n}{path.suffix}")
+        if not cand.exists():
+            return cand
+        n += 1
 
 
 def _number(value: str):
-    """Excel が数値として持つもの(先頭 0 の桁や "-" 入りは文字列のまま)。"""
+    """xlsx で数値として持つもの(先頭 0 の桁や "-" 入りは文字列のまま)。"""
     s = value.strip()
     if s == "" or (len(s) > 1 and s[0] == "0" and s[1] != "."):
         return value
@@ -70,20 +103,25 @@ def _number(value: str):
     return int(n) if n.is_integer() and "." not in s and "e" not in s.lower() else n
 
 
-def export(table_data: list[list[str]], directory: Path, name: str, ext: str) -> Path:
-    """`table_data` は 1 行目が列名(VBA の `GetTableArr` / `TableData` と同じ形)。"""
-    ext = ext.lower().lstrip(".")
-    if ext not in EXTENSIONS:
-        raise ValueError("拡張子は xlsx / txt / csv のどれかにしてください。")
+def export(columns: list[str], rows: list[list[str]], directory: Path, name: str,
+           fmt: str = DEFAULT_FORMAT, encoding: str = DEFAULT_ENCODING) -> Path:
+    """表を書く。同じ名前があれば `_2` を付ける(上書きしない)。戻り値は書いた場所。"""
+    fmt = (fmt or DEFAULT_FORMAT).lower()
+    if fmt == "txt":
+        fmt = "tsv"
+    if fmt not in FORMATS:
+        raise ValueError("形式は csv / tsv / xlsx のどれかにしてください。")
+    if encoding not in ENCODINGS:
+        encoding = DEFAULT_ENCODING
+    ext, sep = FORMATS[fmt]
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{name or default_name()}.{ext}"
-    if ext == "xlsx":
-        header = table_data[0] if table_data else []
-        rows = [[_number(v) if isinstance(v, str) else v for v in r] for r in table_data[1:]]
-        xlsx_writer.write_xlsx([{"name": "Sheet1", "columns": header, "rows": rows}], str(path))
+    path = _unique(directory / f"{_safe_name(name)}.{ext}")
+    if fmt == "xlsx":
+        data = [[_number(v) if isinstance(v, str) else v for v in r] for r in rows]
+        xlsx_writer.write_xlsx([{"name": "Sheet1", "columns": list(columns), "rows": data}], str(path))
         return path
-    spl = "\t" if ext == "txt" else ","
-    with open(path, "w", encoding="cp932", errors="replace", newline="") as f:
-        for row in table_data:
-            f.write("".join(str(v) + spl for v in row) + "\r\n")
+    with open(path, "w", encoding=encoding, errors="replace", newline="") as f:
+        w = csv.writer(f, delimiter=sep, lineterminator="\r\n", quoting=csv.QUOTE_MINIMAL)
+        w.writerow(columns)
+        w.writerows(rows)
     return path

@@ -1,69 +1,40 @@
 /*
-  一覧(VBA MF1 の一覧ページ)。
+  一覧。VBA の表示(フィルタ列 + ListView + ページ)は捨て、Web の表にした。
 
-  判断はサーバが済ませる。ここが持つのは「いまどのフィルタを選んでいるか」
-  「何ページ目か」だけ(VBA の FL/FLL/SB1 にあたる)。タブを 2 枚開いても
-  それぞれが自分の状態を持つだけで、取り合うものは無い。
+  - 全行をまとめて受け取り、絞り込み・並べ替え・列の設定は画面の中で(grid.js)
+  - 右に選んだ行の詳細(隠した列も含めて全部)
+  - 帳票・印刷・コピー・保存は「いま見えているとおり」
+  判断(誰が何をできるか・登録の決まり)は今までどおりサーバ(レコード画面)。
 */
 import { api, tokenUrl } from "../api.js";
 import { toast, toastError } from "../toast.js";
+import { createGrid } from "../grid.js";
+import * as out from "../export_ui.js";
 
 const el = {};
-const state = {
-  filters: {},        // {no: 値}
-  candidates: {},     // {no: [..]}(サーバが null を返した列は前のまま)
-  page: 1,
-  perPage: 24,
-  mode: "選択",
-  columns: [],
-  rows: [],
-  keyCol: 0,
-  selected: null,     // 選んだ行の 管理番号
-  setup: {},
-  dbMtime: null,      // この一覧を読んだときの共有 DB の更新時刻
-};
-
-const STORE = "dbviewer.list";
-function remember() {
-  try { sessionStorage.setItem(STORE, JSON.stringify({ filters: state.filters, page: state.page, perPage: state.perPage, sql: el.sqlBox.textContent, selected: state.selected })); } catch (e) { /* 覚えられないだけ */ }
-}
-function recall() {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(STORE) || "null");
-    if (!saved) return;
-    state.filters = saved.filters || {}; state.page = saved.page || 1; state.perPage = saved.perPage || 24; state.selected = saved.selected || null;
-    el.perPage.value = String(state.perPage);
-  } catch (e) { /* 壊れていれば最初から */ }
-}
+const DETAIL_KEY = "dbviewer.list.detail";
+let grid = null;
+let data = null;            // サーバから受け取った一覧({columns, rows, key_index, setup, ...})
+let warned = false;
 
 function problem(text) {
   el.listProblem.hidden = !text;
   el.listProblem.textContent = text || "";
 }
 
-// 他の端末が共有 DB を書いた(心拍の `db_mtime` が、この一覧を読んだ時刻より新しい)。
-// VBA は次に一覧を作り直すまで古いままだった。Web 版は帯で知らせ、押したら読み直す
-function updated(on) {
-  el.listUpdated.hidden = !on;
-}
-
-function onHealth(event) {
-  const mtime = event.detail && event.detail.db_mtime;
-  if (!mtime || !state.dbMtime) return;
-  if (mtime > state.dbMtime + 0.5 && state.mode !== "集計") updated(true);
-}
-
-async function load({ eventNo = 0, pageFlag = false, reset = false } = {}) {
+/* ---------------- 読む ---------------- */
+async function load() {
   try {
-    const view = await api.post("/api/list", {
-      filters: state.filters, page: state.page, per_page: state.perPage,
-      page_flag: pageFlag, event_no: eventNo, reset,
-    });
+    data = await api.post("/api/list/data", {});
     problem("");
-    if (reset) state.filters = {};
-    state.dbMtime = view.db_mtime || null;
-    updated(false);
-    render(view);
+    el.listUpdated.hidden = true;
+    el.listTitle.textContent = data.setup.main_table || "一覧";
+    el.actReport.hidden = !data.setup.report_flag;
+    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view });
+    if (data.setup.column_problems && data.setup.column_problems.length && !warned) {
+      warned = true;
+      toast(data.setup.column_problems.join("\n"), "warn");
+    }
   } catch (err) {
     if (err.status === 401) { location.href = "/login?next=/list"; return; }
     if (err.status === 409 || err.status === 422) problem(err.message);
@@ -71,166 +42,146 @@ async function load({ eventNo = 0, pageFlag = false, reset = false } = {}) {
   }
 }
 
-function render(view) {
-  state.mode = view.mode || "選択";
-  state.columns = view.columns;
-  state.rows = view.rows;
-  state.keyCol = view.key_item_col || 0;
-  state.setup = view.setup || state.setup;
-  state.page = view.page.no;
-  el.modeChip.textContent = state.mode;
-  el.pageLabel.textContent = view.page.label;
-  el.rowCount.textContent = `${view.page.rows} 件`;
-  el.pagePrev.disabled = view.page.no <= 1;
-  el.pageNext.disabled = view.page.no >= view.page.count;
-  el.sqlBox.textContent = view.sql || "";
-  renderFilters(view.filters || []);
-  renderTable(view.columns, view.rows, view.align || []);
-  remember();
-  el.btnReport.hidden = !(state.setup.report_flag);
-  el.btnBrowse.hidden = !(state.setup.browse_flag);
-  if (state.setup.column_problems && state.setup.column_problems.length && !state.warned) {
-    state.warned = true;
-    toast(state.setup.column_problems.join("\n"), "warn");
+// 他の端末が本体を書いた(心拍の db_mtime が、読んだときより新しい)
+function onHealth(event) {
+  const mtime = event.detail && event.detail.db_mtime;
+  if (!mtime || !data || !data.db_mtime) return;
+  if (mtime > data.db_mtime + 0.5) el.listUpdated.hidden = false;
+}
+
+/* ---------------- 選んだ行・詳細 ---------------- */
+function keyOf(row) {
+  return row && data && data.key_index >= 0 ? String(row[data.key_index] ?? "") : "";
+}
+
+function onSelect(row) {
+  for (const b of [el.actEdit, el.actView, el.actDelete]) b.disabled = !row;
+  renderDetail(row);
+}
+
+function renderDetail(row) {
+  if (!row) {
+    const p = document.createElement("p");
+    p.className = "dt__empty";
+    p.textContent = "行を選ぶと、ここに全部の列が出ます。";
+    el.detail.replaceChildren(p);
+    return;
   }
-}
-
-function renderFilters(filters) {
-  const cols = [];
-  for (const f of filters) {
-    if (f.candidates !== null && f.candidates !== undefined) state.candidates[f.no] = f.candidates;
-    const cands = state.candidates[f.no] || [];
-    const col = document.createElement("div");
-    col.className = "flt__col";
-    col.style.flexBasis = `${f.width_pct}%`;
-    const head = document.createElement("div");
-    head.className = "flt__head" + (f.kind === "master" ? " flt__head--master" : "");
-    head.textContent = f.label;
-    head.title = (f.tip ? f.tip + " / " : "") + "ダブルクリックで集計";
-    head.dataset.item = f.item;
-    head.addEventListener("dblclick", () => summary(f.item));
-    const sel = document.createElement("div");
-    sel.className = "flt__sel";
-    sel.textContent = f.value || "";
-    const list = document.createElement("div");
-    list.className = "flt__list";
-    // VBA の ListBox: 先頭に空欄(解除)、候補、末尾に空欄ダミー
-    for (const value of ["", ...cands, ""]) {
-      const item = document.createElement("div");
-      item.textContent = value;
-      if (value === (f.value || "") && value !== "") item.setAttribute("aria-selected", "true");
-      item.addEventListener("click", () => pick(f.no, value));
-      list.appendChild(item);
-    }
-    col.append(head, sel, list);
-    cols.push(col);
+  const names = data.columns.map((c) => c.name);
+  const idx = Object.fromEntries(names.map((n, i) => [n, i]));
+  const shown = grid.visibleColumns();
+  const hidden = names.filter((n) => !shown.includes(n));
+  const head = document.createElement("div");
+  head.className = "dt__head";
+  const small = document.createElement("small");
+  small.textContent = data.key_index >= 0 ? `${names[data.key_index]} ${keyOf(row)}` : "選んだ行";
+  const title = document.createElement("b");
+  const firstText = shown.find((n) => n !== names[data.key_index] && (row[idx[n]] || "").length > 1);
+  title.textContent = firstText ? row[idx[firstText]] : "";
+  head.append(small, title);
+  const dl = document.createElement("dl");
+  dl.className = "dt__list";
+  const add = (n, cls = "") => {
+    const dt = document.createElement("dt"); dt.textContent = n; if (cls) dt.className = cls;
+    const dd = document.createElement("dd"); dd.textContent = row[idx[n]] ?? ""; if (cls) dd.className = cls;
+    dl.append(dt, dd);
+  };
+  for (const n of shown) add(n);
+  if (hidden.length) {
+    const sep = document.createElement("div");
+    sep.className = "dt__sep";
+    sep.textContent = "表で隠している列";
+    dl.appendChild(sep);
+    for (const n of hidden) add(n, "is-hidden");
   }
-  el.filters.replaceChildren(...cols);
+  el.detail.replaceChildren(head, dl);
 }
 
-function renderTable(columns, rows, align) {
-  const thead = el.listTable.tHead;
-  const tbody = el.listTable.tBodies[0];
-  const tr = document.createElement("tr");
-  columns.forEach((c, j) => {
-    const th = document.createElement("th");
-    th.textContent = c;
-    th.className = (align[j] || "left")[0];
-    tr.appendChild(th);
-  });
-  thead.replaceChildren(tr);
-  const out = [];
-  for (const row of rows) {
-    const r = document.createElement("tr");
-    const key = state.keyCol ? row[state.keyCol - 1] : "";
-    r.dataset.key = key;
-    if (key !== "" && key === state.selected) r.setAttribute("aria-selected", "true");
-    row.forEach((v, j) => {
-      const td = document.createElement("td");
-      td.textContent = v;
-      td.className = (align[j] || "left")[0];
-      r.appendChild(td);
-    });
-    r.addEventListener("click", () => select(r));
-    r.addEventListener("dblclick", () => { select(r); command("修正", "DblClick"); });
-    out.push(r);
-  }
-  tbody.replaceChildren(...out);
+function setDetail(on) {
+  el.lvBody.classList.toggle("no-detail", !on);
+  el.actDetail.setAttribute("aria-pressed", String(on));
+  try { localStorage.setItem(DETAIL_KEY, on ? "1" : "0"); } catch { /* 覚えられないだけ */ }
 }
 
-function select(tr) {
-  for (const r of el.listTable.tBodies[0].rows) r.removeAttribute("aria-selected");
-  tr.setAttribute("aria-selected", "true");
-  state.selected = tr.dataset.key;
-  remember();
-}
-
-function pick(no, value) {
-  // VBA ListClickEvents: 選んだ値を見出し下に出し、押した列以外の候補を作り直す
-  state.filters[no] = value;
-  state.mode = "選択";
-  state.page = 1;
-  load({ eventNo: no });
-}
-
-async function summary(item) {
-  try {
-    const view = await api.post("/api/list/summary", { item });
-    state.mode = "集計";
-    el.modeChip.textContent = "集計";
-    el.sqlBox.textContent = view.sql;
-    el.pageLabel.textContent = view.page.label;
-    el.rowCount.textContent = `${view.page.rows} 件`;
-    renderTable(view.columns, view.rows, view.align);
-    for (const b of el.sideButtons.querySelectorAll("button")) b.hidden = b.id !== "btnBack";
-  } catch (err) { toastError(err); }
-}
-
-function leaveSummary() {
-  // VBA REG_BAC: 一覧に戻る
-  for (const b of el.sideButtons.querySelectorAll("button")) b.hidden = false;
-  el.btnBack.hidden = true;
-  state.mode = "選択";
-  load();
-}
-
-async function runReport() {
-  // VBA REPORT_Click: いまの一覧 SQL で帳票を作り、原紙にシートを足してプレビュー
-  try {
-    const res = await api.post("/api/report/run", { sql: el.sqlBox.textContent });
-    toast(`原紙にシート「${res.sheet}」を追加しました。\n${res.path}`, "ok");
-    window.open(tokenUrl(res.preview), "_blank", "noopener");
-  } catch (err) { toast(err.message, "warn"); }
-}
-
-function command(cmd, clickType = "ButtonClick") {
-  if (state.mode === "集計") { leaveSummary(); return; }
-  const key = state.selected;
-  if (cmd !== "新規" && !key) { toast("対象が選択されていません。", "warn"); return; }
-  const q = new URLSearchParams({ mode: cmd, click: clickType });
-  if (key) q.set("key", key);
+/* ---------------- 新規・修正・参照・削除(判断はレコード画面) ---------------- */
+function command(mode, click = "ButtonClick") {
+  const row = grid.selected();
+  if (mode !== "新規" && !row) { toast("対象が選択されていません。", "warn"); return; }
+  const q = new URLSearchParams({ mode, click });
+  if (mode !== "新規") q.set("key", keyOf(row));
   location.href = `/record?${q}`;
 }
 
+/* ---------------- 見えているとおりに取り出す ---------------- */
+function visibleTable() {
+  const names = data.columns.map((c) => c.name);
+  const cols = grid.visibleColumns();
+  const idx = cols.map((n) => names.indexOf(n));
+  const rows = grid.shownRows().map((r) => idx.map((i) => r[i] ?? ""));
+  const numeric = cols.map((n) => data.columns[names.indexOf(n)].kind === "num");
+  return { cols, rows, numeric };
+}
+
+function filterNote() {
+  const all = grid.total(), n = grid.shownRows().length;
+  return n === all ? `${all.toLocaleString()} 件` : `${all.toLocaleString()} 件中 ${n.toLocaleString()} 件(絞り込み中)`;
+}
+
+async function runReport() {
+  // 帳票(全般設定「帳票」)。いま絞り込んでいる行で作る。並びはサーバが帳票の決まりで決める
+  const keys = grid.shownKeys();
+  if (!keys.length) { toast("帳票にする行がありません。", "warn"); return; }
+  try {
+    const res = await api.post("/api/report/run", { keys });
+    window.open(tokenUrl(res.preview), "_blank", "noopener");
+  } catch (err) { toastError(err); }
+}
+
 export function start() {
-  for (const id of ["filters", "listTable", "pagePrev", "pageNext", "pageLabel", "rowCount", "perPage",
-                    "sqlBox", "modeChip", "listProblem", "listUpdated", "listReload", "sideButtons", "btnNew", "btnEdit", "btnDelete",
-                    "btnView", "btnReport", "btnBrowse", "btnSetting", "btnOutput", "btnBack"]) {
+  for (const id of ["listTitle", "listProblem", "listUpdated", "listReload", "lvBody", "grid", "detail",
+                    "actNew", "actEdit", "actView", "actDelete", "actReport", "actPrint", "actOut",
+                    "outMenu", "outCopy", "outSave", "actDetail"]) {
     el[id] = document.getElementById(id);
   }
-  el.pagePrev.addEventListener("click", () => { state.page -= 1; load({ pageFlag: true }); });
-  el.pageNext.addEventListener("click", () => { state.page += 1; load({ pageFlag: true }); });
-  el.perPage.addEventListener("change", () => { state.perPage = Number(el.perPage.value); state.page = 1; load(); });
-  for (const b of [el.btnNew, el.btnEdit, el.btnDelete, el.btnView]) {
-    b.addEventListener("click", () => command(b.dataset.cmd));
-  }
-  el.btnBack.addEventListener("click", leaveSummary);
-  el.btnSetting.addEventListener("click", () => { location.href = "/master"; });
-  el.btnOutput.addEventListener("click", () => { location.href = "/browse?from=list"; });
-  el.btnReport.addEventListener("click", runReport);
-  el.btnBrowse.addEventListener("click", () => { location.href = "/browse"; });
-  el.listReload.addEventListener("click", () => load({ pageFlag: true }));
+  grid = createGrid(el.grid, {
+    stateKey: "dbviewer.list.grid",
+    onSelect,
+    onOpen: () => command("修正", "DblClick"),
+    onChange: () => {
+      if (!grid) return;
+      renderDetail(grid.selected());
+      try { sessionStorage.setItem("dbviewer.list.keys", JSON.stringify(grid.shownKeys().slice(0, 50000))); } catch { /* 大きすぎれば覚えない */ }
+    },
+    onViewChange: async (view) => {
+      try { await api.post("/api/list/view", view); } catch (err) { toastError(err); }
+    },
+    onViewReset: async () => {
+      try { return (await api.post("/api/list/view", { reset: true })).view; } catch (err) { toastError(err); return null; }
+    },
+  });
+
+  el.actNew.addEventListener("click", () => command("新規"));
+  el.actEdit.addEventListener("click", () => command("修正"));
+  el.actView.addEventListener("click", () => command("参照"));
+  el.actDelete.addEventListener("click", () => command("削除"));
+  el.actReport.addEventListener("click", runReport);
+  el.actPrint.addEventListener("click", () => {
+    const t = visibleTable();
+    if (!t.rows.length) { toast("印刷する行がありません。", "warn"); return; }
+    out.printTable({ title: data.setup.main_table, note: filterNote(), columns: t.cols, rows: t.rows, numeric: t.numeric });
+  });
+  out.wireMenu(el.actOut, el.outMenu);
+  el.outCopy.addEventListener("click", () => { const t = visibleTable(); out.copyTable(t.cols, t.rows); });
+  el.outSave.addEventListener("click", () => {
+    const t = visibleTable();
+    if (!t.rows.length) { toast("出す行がありません。", "warn"); return; }
+    out.openSaveDialog({ title: data.setup.main_table, columns: t.cols, rows: t.rows });
+  });
+  el.actDetail.addEventListener("click", () => setDetail(el.lvBody.classList.contains("no-detail")));
+  let detailOn = true;
+  try { detailOn = localStorage.getItem(DETAIL_KEY) !== "0"; } catch { /* 既定は出す */ }
+  setDetail(detailOn);
+  el.listReload.addEventListener("click", load);
   document.addEventListener("app:health", onHealth);
-  recall();
-  load({ pageFlag: true });
+  load();
 }

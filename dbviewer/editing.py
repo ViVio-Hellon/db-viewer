@@ -89,7 +89,8 @@ def nl_conv(text: str) -> str:
 # 画面の組立(SET_BEF + SetDataToCtrl)
 # ------------------------------------------------------------------
 def build_form(conn: sqlite3.Connection, setup: SystemSetup, mode: str, key: str, *,
-               list_sql: str = "", base_dir: Optional[Path] = None,
+               list_sql: str = "", list_keys: Optional[list[str]] = None,
+               base_dir: Optional[Path] = None,
                server_dir: Optional[Path] = None, ref_dir: Optional[Path] = None) -> RecordForm:
     main = setup.general.main_table
     cols = setup.main_columns
@@ -107,7 +108,7 @@ def build_form(conn: sqlite3.Connection, setup: SystemSetup, mode: str, key: str
             # VBA は `GetRecordsArr` が Empty → 欄が空のまま(Enabled=False)。同じにする
             pass
 
-    keys = _all_keys(conn, setup, list_sql)
+    keys = _all_keys(conn, setup, list_sql, list_keys)
     fields: list[Field] = []
     for i, name in enumerate(cols, start=1):
         r = setup.conv.rows[i - 1] if i - 1 < len(setup.conv.rows) else ConvRow(i, name)
@@ -143,11 +144,19 @@ def build_form(conn: sqlite3.Connection, setup: SystemSetup, mode: str, key: str
                       his_flag=history.hisrec_flag(conn, setup.conv))
 
 
-def _all_keys(conn: sqlite3.Connection, setup: SystemSetup, list_sql: str) -> list[str]:
-    """VBA `outputArr`(いまの一覧 SQL の全行)の管理番号。無ければメイン表の全部。"""
+def _all_keys(conn: sqlite3.Connection, setup: SystemSetup, list_sql: str,
+              list_keys: Optional[list[str]] = None) -> list[str]:
+    """レコード画面の ▲▼ で辿る管理番号。
+
+    Web 版の一覧は画面の中で絞り込み・並べ替えるので、**一覧に並んでいる順**
+    (`list_keys`)をそのまま使う(VBA `outputArr` = いまの一覧の全行、と同じ考え)。
+    無ければ一覧 SQL、それも無ければメイン表の全部。
+    """
     k = setup.fj.get(config.KEY_ITEM, 0)
     if not k:
         return []
+    if list_keys:
+        return [str(x) for x in dict.fromkeys(list_keys)]
     try:
         if list_sql:
             rows = conn.execute(list_sql).fetchall()

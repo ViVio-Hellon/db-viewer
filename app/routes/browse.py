@@ -1,18 +1,21 @@
-"""テーブル閲覧・出力(VBA MF3 / ExportData)
+"""テーブル閲覧と出力
 
-- `GET  /browse`              … 画面
-- `POST /api/browse/tables`   … 全般設定「テーブル閲覧」の表
-- `POST /api/browse/rows`     … 表の全行
-- `POST /api/export`          … xlsx / txt / csv に書く(元は 一覧の SQL か 表)
-- `GET  /report/table?table=` … 表の印刷用 HTML(VBA MF3 の PrintForm の代わり)
+- `GET  /browse`               … 画面
+- `POST /api/browse/tables`    … 全般設定「テーブル閲覧」の表
+- `POST /api/browse/data`      … 表の全行・列の種類・列の見せ方(一覧と同じグリッドで見る)
+- `POST /api/browse/view`      … 列の見せ方を保存する
+- `GET  /api/export/settings`  … 出力先・既定の形式・文字コード
+- `POST /api/export`           … 画面に出している表をファイルに書く(ダウンロードはしない)
+- `POST /api/export/open`      … 出力先のフォルダを開く(Windows のエクスプローラー)
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from flask import Blueprint, jsonify, render_template, request
 
-from dbviewer import (app_config, config, records, session_setup, settings_tables, shared_db,
+from dbviewer import (app_config, config, grid_data, session_setup, settings_tables, shared_db,
                       table_browse, user_settings)
 from dbviewer.logging_utils import get_logger
 
@@ -22,6 +25,9 @@ from ..shell import shell_context
 log = get_logger("app.routes.browse")
 
 bp = Blueprint("browse", __name__)
+
+# 一度に書く行の上限(画面から送る表の大きさの歯止め)
+MAX_EXPORT_ROWS = 200_000
 
 
 def _refuse(code: str, message: str, status: int = 422):
@@ -39,9 +45,17 @@ def _open():
     return conn, setup, None
 
 
-def export_dir() -> Path:
-    text = user_settings.get(config.KEY_EXPORT_DIR, "") or ""
-    return config.resolve_dir(text, app_config.local_dir("work")) if text else app_config.local_dir("work")
+export_dir = table_browse.export_dir
+
+
+def export_settings() -> dict:
+    fmt = str(user_settings.get(config.KEY_EXPORT_FORMAT, "") or table_browse.DEFAULT_FORMAT)
+    enc = str(user_settings.get(config.KEY_EXPORT_ENCODING, "") or table_browse.DEFAULT_ENCODING)
+    return {"dir": str(export_dir()),
+            "format": fmt if fmt in table_browse.FORMATS else table_browse.DEFAULT_FORMAT,
+            "encoding": enc if enc in table_browse.ENCODINGS else table_browse.DEFAULT_ENCODING,
+            "encodings": table_browse.ENCODINGS,
+            "can_open": os.name == "nt"}
 
 
 @bp.get("/browse")
@@ -55,56 +69,93 @@ def tables():
     if err:
         return err
     names = table_browse.browse_tables(setup.general.browse_str)
-    return jsonify({"tables": names, "browse_flag": setup.general.browse_flag,
-                    "export_dir": str(export_dir()), "default_name": table_browse.default_name()})
+    return jsonify({"tables": names, "browse_flag": setup.general.browse_flag})
 
 
-@bp.post("/api/browse/rows")
-def rows():
+def _table(setup) -> tuple[str, object]:
+    table = str((request.get_json(silent=True) or {}).get("table") or "")
+    if table not in table_browse.browse_tables(setup.general.browse_str):
+        return table, _refuse("table", "その表は閲覧の対象ではありません。", 403)
+    return table, None
+
+
+def _view_key(table: str) -> str:
+    return grid_data.view_key("browse", shared_db.current_profile().prog_no, table)
+
+
+@bp.post("/api/browse/data")
+def data():
     conn, setup, err = _open()
     if err:
         return err
-    table = str((request.get_json(silent=True) or {}).get("table") or "")
-    if table not in table_browse.browse_tables(setup.general.browse_str):
-        return _refuse("table", "その表は閲覧の対象ではありません。", 403)
+    table, err = _table(setup)
+    if err:
+        return err
     try:
         v = table_browse.view(conn, table)
     except ValueError as exc:
         return _refuse("table", str(exc))
-    return jsonify({"table": v.table, "columns": v.columns, "rows": v.rows, "count": len(v.rows)})
+    return jsonify({"table": v.table, "columns": grid_data.columns_meta(v.columns, v.rows),
+                    "rows": v.rows, "count": len(v.rows), "key_index": -1,
+                    "view": grid_data.load_view(_view_key(table), v.columns)})
+
+
+@bp.post("/api/browse/view")
+def view():
+    conn, setup, err = _open()
+    if err:
+        return err
+    table, err = _table(setup)
+    if err:
+        return err
+    v = table_browse.view(conn, table)
+    body = request.get_json(silent=True) or {}
+    if body.get("reset"):
+        return jsonify({"view": grid_data.reset_view(_view_key(table), v.columns)})
+    return jsonify({"view": grid_data.save_view(_view_key(table), v.columns, body)})
+
+
+@bp.get("/api/export/settings")
+def export_info():
+    return jsonify(export_settings())
 
 
 @bp.post("/api/export")
 def export():
-    """VBA `ExportData`。`source` は list(一覧の SQL) か table(表)。"""
-    conn, setup, err = _open()
-    if err:
-        return err
+    """画面に出している表(列と行)を書く。`{"columns":[…],"rows":[[…]],"name":…,"format":…,"encoding":…}`"""
     body = request.get_json(silent=True) or {}
-    source = str(body.get("source") or "list")
-    ext = str(body.get("ext") or "xlsx")
+    columns = body.get("columns")
+    rows = body.get("rows")
+    if not isinstance(columns, list) or not isinstance(rows, list) or not columns:
+        return _refuse("bad_table", "出す表の指定が正しくありません。", 400)
+    if not rows:
+        return _refuse("empty", table_browse.MSG_EMPTY)
+    if len(rows) > MAX_EXPORT_ROWS:
+        return _refuse("too_many", f"一度に出せるのは {MAX_EXPORT_ROWS:,} 行までです。")
+    columns = [str(c) for c in columns]
+    rows = [["" if v is None else str(v) for v in (r if isinstance(r, list) else [])] for r in rows]
+    info = export_settings()
+    fmt = str(body.get("format") or info["format"])
+    enc = str(body.get("encoding") or info["encoding"])
     name = str(body.get("name") or "").strip() or table_browse.default_name()
-    if source == "table":
-        table = str(body.get("table") or "")
-        if table not in table_browse.browse_tables(setup.general.browse_str):
-            return _refuse("table", "その表は閲覧の対象ではありません。", 403)
-        v = table_browse.view(conn, table)
-        data = [list(v.columns)] + v.rows
-    else:
-        sql = str(body.get("sql") or "")
-        if not sql:
-            from dbviewer import sql_builder
-            sql = sql_builder.build(setup.conv, setup.general.main_table).sql
-        try:
-            data = records.table_array(conn, sql)
-        except records.ListError as exc:
-            return _refuse("sql", str(exc))
-    if len(data) <= 1 and not body.get("force"):
-        return jsonify({"ok": False, "reason": "question", "message": table_browse.MSG_EMPTY_ASK})
     try:
-        path = table_browse.export(data, export_dir(), name, ext)
+        path = table_browse.export(columns, rows, export_dir(), name, fmt, enc)
     except (ValueError, OSError) as exc:
         return _refuse("export", f"出力できませんでした: {exc}")
-    log.info("出力: %s (%d 行)", path, len(data) - 1)
+    log.info("出力: %s (%d 行 × %d 列)", path, len(rows), len(columns))
     return jsonify({"ok": True, "message": table_browse.MSG_DONE, "path": str(path),
-                    "rows": len(data) - 1})
+                    "dir": str(path.parent), "rows": len(rows), "can_open": info["can_open"]})
+
+
+@bp.post("/api/export/open")
+def open_folder():
+    """出力先のフォルダをエクスプローラーで開く(このアプリは同じ PC で動いている)。"""
+    folder = export_dir()
+    if os.name != "nt":
+        return _refuse("not_windows", f"この PC ではフォルダを開けません。場所: {folder}", 501)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(folder))                       # noqa: S606 - 同じ PC のフォルダを開くだけ
+    except OSError as exc:
+        return _refuse("open", f"フォルダを開けませんでした: {exc}")
+    return jsonify({"ok": True, "dir": str(folder)})

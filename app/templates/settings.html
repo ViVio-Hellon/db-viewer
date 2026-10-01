@@ -121,23 +121,85 @@
       </section>
 
       <section class="tabpanel tabpanel--scroll" id="panel-paths" role="tabpanel" aria-labelledby="tab-paths" hidden>
+        <div class="pathcards">
         <section class="card">
           <header>
-            <i class="ib ib--sm" aria-hidden="true">パ</i>
-            <h3>参照・出力・帳票</h3>
-            <span class="eyebrow">空なら本体と同じフォルダ(帳票・参照)/ローカル領域(出力)</span>
+            <i class="ib ib--sm" aria-hidden="true">出</i>
+            <h3>出力(一覧・閲覧の「出力」)</h3>
+            <span class="lv lv--{{ view.export_dir_state.level }}" id="exportDirState">{{ view.export_dir_state.text }}</span>
           </header>
           <div class="pad">
+            <p class="why">ブラウザのダウンロードは使いません。「ファイルに保存」はいつもこのフォルダに書きます。
+              ファイルが要らないときは「表をコピー」で、Excel やメールにそのまま貼り付けられます。</p>
             <div class="paths">
-              {{ pathrow("refDir", "参照ファイルの起点(PDF・ICON の相対パス)", view.ref_dir, view.ref_dir_real) }}
-              {{ pathrow("reportDir", "帳票原紙の置き場所(出力原紙.xlsx)", view.report_dir, view.report_dir_real) }}
-              {{ pathrow("exportDir", "出力先(xlsx / txt / csv)", view.export_dir, view.export_dir_real) }}
+              {{ pathrow("exportDir", "保存先フォルダ", view.export_dir, view.export_dir_real) }}
             </div>
+            <div class="optgrid">
+              <span>既定の形式</span>
+              <div class="opts" role="radiogroup" aria-label="既定の形式">
+                {% for v, label in (("csv", "CSV(カンマ区切り)"), ("tsv", "タブ区切り(.txt)"), ("xlsx", "Excel 形式(.xlsx)")) %}
+                <label class="checkline"><input type="radio" name="exportFormat" value="{{ v }}" {% if view.export_format == v %}checked{% endif %}> {{ label }}</label>
+                {% endfor %}
+              </div>
+              <label for="exportEncoding">文字コード</label>
+              <select class="input" id="exportEncoding" style="width:16em">
+                {% for v, label in state.encodings.items() %}
+                <option value="{{ v }}" {% if view.export_encoding == v %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <p class="why">CSV・タブ区切りの文字コード。Shift_JIS は日本語版 Excel でそのまま開けます。UTF-8 は機種依存文字も欠けません。
+              xlsx は Excel が無い PC でも作れます(開くのに表計算ソフトが要ります)。</p>
             <div class="btn-row" style="margin-top:8px">
-              <button class="btn btn--commit" type="button" id="savePaths">パスを保存</button>
+              <button class="btn btn--commit" type="button" id="saveExport">出力の設定を保存</button>
+              <button class="btn btn--find" type="button" id="openExport" {% if not view.can_open %}hidden{% endif %}>フォルダを開く</button>
             </div>
           </div>
         </section>
+
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">参</i>
+            <h3>参照ファイル(PDF・画像など)</h3>
+            <span class="lv lv--{{ view.ref_dir_state.level }}" id="refDirState">{{ view.ref_dir_state.text }}</span>
+          </header>
+          <div class="pad">
+            <p class="why">レコード画面で開く PDF・画像の置き場所。<code>_設定</code> の「参照形式」に相対パスで書いた列は、このフォルダから探します。
+              空なら VBA と同じく本体のある共有フォルダから探します。</p>
+            <div class="paths">
+              {{ pathrow("refDir", "相対パスの起点", view.ref_dir, view.ref_dir_real) }}
+            </div>
+            <dl class="checks" id="refUses">
+              {% for u in view.ref_uses %}
+              <div class="check check--info"><dt>{{ u.item }}</dt><dd><span class="v">{{ u.kind }}</span><span class="why">{{ u.where }}</span></dd></div>
+              {% else %}
+              <div class="check check--info"><dt>使っている列</dt><dd><span class="v">なし</span><span class="why">この本体の「参照形式」にファイルを開く列はありません</span></dd></div>
+              {% endfor %}
+            </dl>
+            <div class="btn-row" style="margin-top:8px">
+              <button class="btn btn--commit" type="button" id="saveRef">参照の設定を保存</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">帳</i>
+            <h3>帳票・印刷</h3>
+            <span class="lv lv--{{ view.report.level }}" id="reportState">{{ "使えます" if view.report.level == "ok" else "確認" if view.report.level == "warn" else "情報" }}</span>
+          </header>
+          <div class="pad">
+            <p class="why">帳票も印刷も、Excel を使わず<b>印刷用の画面</b>(A4・余白 6mm)で出します。開いた画面で Ctrl+P を押すと印刷、
+              プリンタに「PDF に保存」を選べば PDF になります。設定することはありません。</p>
+            <dl class="checks" id="reportChecks">
+              <div class="check check--{{ view.report.level }}"><dt>全般設定「帳票」</dt>
+                <dd><span class="v">{{ view.report.setting or "(空)" }}</span><span class="why">{{ view.report.text }}</span></dd></div>
+              <div class="check check--info"><dt>一覧の「印刷」</dt>
+                <dd><span class="v">いつでも使えます</span><span class="why">見えている行・列のまま A4 横で。列が多ければ紙の幅に縮めます</span></dd></div>
+            </dl>
+          </div>
+        </section>
+        </div>
       </section>
 
       <section class="tabpanel tabpanel--scroll" id="panel-behavior" role="tabpanel" aria-labelledby="tab-behavior" hidden>
@@ -310,6 +372,10 @@
   .job__head .num { margin-left:auto; font-family:var(--mono); }
   .bar { height:8px; background:var(--raised); border-radius:var(--pill); overflow:hidden; margin:6px 0; }
   .bar__fill { height:100%; width:0; border-radius:var(--pill); background:var(--accent); transition:width .3s; }
+  .pathcards { display:flex; flex-direction:column; gap:12px; }
+  .optgrid { display:grid; grid-template-columns:8em 1fr; gap:8px 10px; align-items:center; margin-top:10px; font-size:var(--fs-sm); }
+  .optgrid > span, .optgrid > label { color:var(--muted); }
+  .opts { display:flex; flex-wrap:wrap; gap:4px 16px; }
   /* 表を持ってくる: 落とす場所。重ねている間は色を変える */
   .dropzone { border:2px dashed var(--rule); border-radius:var(--radius-xs);
               padding:18px; margin:8px 0; display:flex; flex-direction:column;

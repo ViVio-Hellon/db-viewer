@@ -1,11 +1,13 @@
 """帳票の登録簿(VBA `Application.Run(reportArr(3), ...)` の代わり)
 
 全般設定「帳票」は `フォルダ/原紙ファイル/原紙シート名/プロシージャ名[/引数]`。
-    [0] フォルダ … 空ならアプリのフォルダ(Web 版は設定「帳票原紙の置き場所」、
-                    それも空なら本体と同じフォルダ)
-    [1] 原紙ファイル(出力原紙.xlsx)
-    [2] 複製する原紙シート
-    [3] プロシージャ名(半角英数字)。ここに無い名前は VBA と同じ文言で断る
+Web 版が使うのは [3] プロシージャ名(半角英数字)と [4] 以降の引数だけ。
+ここに無い名前は VBA と同じ文言で断る。
+
+【Excel の原紙は使わない】
+VBA は原紙ブック(出力原紙.xlsx)のシートを複製して書き込み、印刷プレビューを
+出していた。Web 版は帳票を**印刷用の画面**(A4・余白 6mm)で出し、原紙は読まない
+([0]〜[2] は書いてあっても無視する)。Excel が無い PC でも同じ帳票が出る。
 """
 from __future__ import annotations
 
@@ -66,12 +68,3 @@ def builder_for(proc: str) -> Builder:
 
 def build(spec: ReportSpec, table: list[list[str]]) -> Grid:
     return builder_for(spec.proc)(table, spec.args)
-
-
-def xlsx_append_report(template: Path, grid: Grid, sheet_name: str, *, template_sheet: str = "") -> str:
-    """原紙 xlsx にシートを足す(VBA `ActSh.Copy After:= ... BK.Save`)。戻り値は付いた名前。"""
-    from .. import xlsx_append
-    from . import render
-
-    spec = render.to_sheet(grid, sheet_name)
-    return xlsx_append.append_sheet(template, spec, template_sheet_name=template_sheet or None)

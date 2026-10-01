@@ -3,7 +3,7 @@
 Excel VBA + Access（.accdb）で動いている「汎用システム」（現在は progNo=4 作業標準管理システム）を、
 既存の python-web-tools（梱包資材総合ツール）の基盤に載せて Web システムとして移植するためのリポジトリです。
 
-現在の状態: **Phase 0〜8 の実装・検証・文書まで完了（0.1.0）。** 起動と使い方は [docs/05_起動と使い方.md](docs/05_起動と使い方.md)、VBA との照合結果と意図した差異は [docs/06_検証結果と意図した差異.md](docs/06_検証結果と意図した差異.md)。
+現在の状態: **Phase 0〜8 の実装・検証・文書まで完了。0.2.0 で一覧を Web の表に作り直し、参照・出力・帳票を Excel 前提から外した。** 起動と使い方は [docs/05_起動と使い方.md](docs/05_起動と使い方.md)、VBA との照合結果と意図した差異は [docs/06_検証結果と意図した差異.md](docs/06_検証結果と意図した差異.md)。
 
 ## ドキュメント
 
@@ -31,7 +31,7 @@ Excel VBA + Access（.accdb）で動いている「汎用システム」（現�
 ```
 Start.vbs                                      # 現場 PC(ブラウザが開く)
 start.bat --check                              # 環境確認だけ
-python3 -m unittest discover -s tests -t .     # 全テスト(106 件)
+python3 -m unittest discover -s tests -t .     # 全テスト(109 件)
 ```
 
 初回は 設定 → Access 取り込み で `.accdb` を `.sqlite3` にします（Windows の cscript + ACE）。

@@ -6,7 +6,7 @@
   @media (max-width:900px){ .ms { grid-template-columns:1fr; } }
   .ms__list { border:1px solid var(--rule); border-radius:var(--radius-xs); background:var(--surface); max-height:60vh; overflow:auto; }
   .ms__list div { padding:4px 10px; cursor:pointer; font-size:var(--fs-sm); white-space:nowrap; }
-  .ms__list div:hover { background:var(--accent-soft); } .ms__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+  .ms__list div:hover { background:var(--accent-soft); } .ms__list div[aria-selected="true"] { background:var(--accent); color:var(--on-accent); }
   .ms__main { min-width:0; display:flex; flex-direction:column; gap:8px; }
   .table td.l, .table th.l { text-align:left; }
   .table tbody tr { cursor:pointer; }
@@ -20,15 +20,15 @@
   .input.is-changed { background:rgb(255,165,0) !important; }
   .input.is-auto { background:rgb(220,220,220) !important; }
   .helper { width:min(720px, 94vw); } .helper .tablewrap { max-height:50vh; }
-  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:#fff; }
-  .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); } .helper__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
+  .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); } .helper__list div[aria-selected="true"] { background:var(--accent); color:var(--on-accent); }
 </style>
 {% endblock %}
 {% block content %}
 <div class="pane">
   <div class="pane__head">
     <div><span class="eyebrow">Step 2</span><h2 id="msTitle">マスタメンテナンス</h2></div>
-    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。行をダブルクリックで修正。閉じると一覧のフィルタは消えます(VBA と同じ)。</p></div>
+    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。行をダブルクリックで修正。</p></div>
   </div>
   <span class="dimline" aria-hidden="true"></span>
   <p class="status status--ng" id="msProblem" hidden></p>

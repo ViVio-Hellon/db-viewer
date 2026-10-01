@@ -40,7 +40,7 @@ class WebFlowTest(unittest.TestCase):
 
     def test_gate(self):
         self.assertEqual(self.c.get("/list").status_code, 302)
-        self.assertEqual(self.c.post("/api/list", json={}, headers=self.h).status_code, 401)
+        self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 401)
         self.assertEqual(self.c.get("/settings").status_code, 200)
         self.assertEqual(self.c.get("/login").status_code, 200)
         r = self.login("nobody")
@@ -54,10 +54,14 @@ class WebFlowTest(unittest.TestCase):
 
     def test_list_and_edit_cycle(self):
         self.login()
-        d = self.c.post("/api/list", json={"filters": {"3": "B"}, "event_no": 3}, headers=self.h).get_json()
-        self.assertEqual(d["page"]["rows"], 100)
-        self.assertEqual(d["where"], "[危険度分類ランク]='B'")
-        f = self.c.post("/api/record/form", json={"mode": "修正", "key": "2"}, headers=self.h).get_json()
+        d = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
+        self.assertEqual(d["count"], 327)
+        rank = [c["name"] for c in d["columns"]].index("危険度分類ランク")
+        self.assertEqual(sum(1 for r in d["rows"] if r[rank] == "B"), 100)   # 画面で絞ると 100 件(VBA と同じ)
+        # ▲▼ は一覧に並んでいる順(画面で並べ替えたあと)を辿る
+        f = self.c.post("/api/record/form", json={"mode": "修正", "key": "2", "list_keys": ["9", "2", "5"]},
+                        headers=self.h).get_json()
+        self.assertEqual(f["keys"], ["9", "2", "5"])
         originals = {x["name"]: x["original"] for x in f["fields"]}
         body = {"mode": "修正", "key": "2", "values": {"作業名": "改"}, "originals": originals}
         r = self.c.post("/api/record/execute", json=body, headers=self.h).get_json()
@@ -123,7 +127,7 @@ class OperationTest(unittest.TestCase):
         h = self.c.get("/api/health").get_json()
         self.assertAlmostEqual(h["db_mtime"], self.path.stat().st_mtime, places=3)
         self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
-        d = self.c.post("/api/list", json={}, headers=self.h).get_json()
+        d = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
         self.assertEqual(d["db_mtime"], h["db_mtime"])
         # 他の端末が書いた → 心拍の db_mtime が進む(画面はこれを見て「更新されました」を出す)
         os.utime(self.path, (self.path.stat().st_atime, self.path.stat().st_mtime + 10))
@@ -159,3 +163,57 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(len(lines[0].split("\t")), 6)
         self.assertTrue(lines[0].split("\t")[5].startswith("VER"))
         self.assertEqual(access_log.write.__doc__.split("。")[0], "1 行追記する")
+
+
+class ListGridTest(unittest.TestCase):
+    """一覧(Web の表): 全行・列の種類・列の見せ方の保存"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        path = fresh_db_path(Path(self.tmp.name))
+        user_settings.save(config.KEY_ONLINE, False)
+        user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
+        user_settings.save(config.KEY_DB_FILE, path.name)
+        auth.end()
+        self.addCleanup(auth.end)
+        auth.start(auth.LoginResult(True, user_id="t", level=5))
+        self.c = make_client()
+        self.h = {"X-Tool-Token": TOKEN}
+
+    def test_data(self):
+        d = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
+        kinds = {c["name"]: c["kind"] for c in d["columns"]}
+        self.assertEqual((kinds["管理番号"], kinds["Ⅰ"], kinds["作業NO"], kinds["更新日"], kinds["作業名"]),
+                         ("num", "num", "text", "date", "text"))
+        self.assertEqual(d["key_index"], 0)
+        self.assertEqual(len(d["rows"]), 327)
+        self.assertEqual(d["view"]["order"][:3], ["管理番号", "作業名", "作業NO"])
+        self.assertEqual((d["view"]["hidden"], d["view"]["widths"]), ([], {}))
+        self.assertFalse(d["setup"]["report_flag"] is None)
+
+    def test_view_saved_and_reset(self):
+        body = {"order": ["作業NO", "作業名", "無い列"], "hidden": ["A", "B", "C"], "widths": {"作業名": 999, "作業NO": "80"}}
+        v = self.c.post("/api/list/view", json=body, headers=self.h).get_json()["view"]
+        self.assertEqual(v["order"][:3], ["作業NO", "作業名", "管理番号"])     # 残りは元の順で後ろに
+        self.assertNotIn("無い列", v["order"])
+        self.assertEqual(v["widths"], {"作業名": 800, "作業NO": 80})
+        self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).get_json()["view"], v)
+        v = self.c.post("/api/list/view", json={"reset": True}, headers=self.h).get_json()["view"]
+        self.assertEqual((v["order"][0], v["hidden"]), ("管理番号", []))
+
+    def test_column_kind_rules(self):
+        from dbviewer import grid_data as g
+        self.assertEqual(g.column_kind(["1", "2.5", "", "-3"]), "num")
+        self.assertEqual(g.column_kind(["007", "1"]), "text")          # 先頭 0 は番号
+        self.assertEqual(g.column_kind(["0-1-1"]), "text")
+        self.assertEqual(g.column_kind(["2014/04/13", "2021/1/25 10:00:00", ""]), "date")
+        self.assertEqual(g.column_kind(["", ""]), "text")
+        cols, rows = g.pick(["k", "a", "b"], [["1", "x", "p"], ["2", "y", "q"], ["3", "z", "r"]],
+                            keys=["3", "1", "9"], key_index=0, names=["b", "k"])
+        self.assertEqual((cols, rows), (["b", "k"], [["r", "3"], ["p", "1"]]))
+
+    def test_page_has_grid(self):
+        page = self.c.get("/list", headers=self.h).get_data(as_text=True)
+        for marker in ('id="grid"', 'id="actPrint"', 'id="outCopy"', 'id="detail"'):
+            self.assertIn(marker, page)

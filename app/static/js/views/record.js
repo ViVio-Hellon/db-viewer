@@ -10,7 +10,7 @@ import { toast, toastError } from "../toast.js";
 import { createHelpers, isDateVba, isNumericVba } from "../helpers.js";
 
 const el = {};
-const state = { mode: "参照", key: "", click: "ButtonClick", fields: [], keys: [], level: 0, listSql: "" };
+const state = { mode: "参照", key: "", click: "ButtonClick", fields: [], keys: [], level: 0, listKeys: null };
 
 // VBA の色名(vb*/rgb*)→ CSS の色名
 function cssColor(name) {
@@ -24,7 +24,7 @@ function problem(text) { el.recProblem.hidden = !text; el.recProblem.textContent
 
 async function loadForm(mode, key) {
   try {
-    const view = await api.post("/api/record/form", { mode, key, click: state.click, list_sql: state.listSql });
+    const view = await api.post("/api/record/form", { mode, key, click: state.click, list_keys: state.listKeys });
     state.mode = view.mode; state.key = view.key; state.fields = view.fields; state.keys = view.keys; state.level = view.level;
     problem("");
     render();
@@ -214,7 +214,6 @@ async function execute() {
     }
     if (res.ok) {
       toast(res.message, "ok");
-      if (res.reset_filters) sessionStorage.removeItem("dbviewer.list");
       location.href = "/list";
       return;
     }
@@ -233,10 +232,11 @@ export function start(mode, key, click) {
   for (const id of ["recTitle", "recFields", "recProblem", "recNav", "navPrev", "navNext", "navKeys", "btnBack", "btnExe", "recMode",
                     "helper", "helperTitle", "helperNote", "helperBody", "helperOk", "helperClear"]) el[id] = document.getElementById(id);
   state.click = click || "ButtonClick";
-  try { state.listSql = JSON.parse(sessionStorage.getItem("dbviewer.list") || "{}").sql || ""; } catch (e) { state.listSql = ""; }
+  // 一覧に並んでいる順(絞り込み・並べ替えのあと)。▲▼ はこの順に辿る
+  try { state.listKeys = JSON.parse(sessionStorage.getItem("dbviewer.list.keys") || "null"); } catch (e) { state.listKeys = null; }
   el.btnBack.addEventListener("click", () => { location.href = "/list"; });
   el.btnExe.addEventListener("click", execute);
-  helpers = createHelpers({ listSql: () => state.listSql, parent: "MF1" });
+  helpers = createHelpers({ parent: "MF1" });
   el.navKeys.addEventListener("change", () => loadForm(state.mode, el.navKeys.value));
   el.navPrev.addEventListener("click", () => { const i = state.keys.indexOf(state.key); if (i > 0) loadForm(state.mode, state.keys[i - 1]); });
   el.navNext.addEventListener("click", () => { const i = state.keys.indexOf(state.key); if (i >= 0 && i < state.keys.length - 1) loadForm(state.mode, state.keys[i + 1]); });

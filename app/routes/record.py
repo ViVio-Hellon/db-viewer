@@ -46,11 +46,17 @@ def _open():
     return conn, setup, None
 
 
+def ref_base() -> Path:
+    """参照形式の**相対パスの起点**。設定「参照ファイルの起点」、空なら VBA と同じ SrvPath。"""
+    ref = str(user_settings.get(config.KEY_REF_DIR, "") or "").strip()
+    server = shared_db.server_dir()
+    return config.resolve_dir(ref, server) if ref else server
+
+
 def _dirs() -> dict:
-    db_dir = shared_db.db_path().parent
-    ref = user_settings.get(config.KEY_REF_DIR, "") or ""
-    return {"base_dir": config.BASE_DIR, "server_dir": shared_db.server_dir(),
-            "ref_dir": config.resolve_dir(ref, db_dir) if ref else db_dir}
+    base = ref_base()
+    # server_dir = 相対パスの起点(VBA `SrvPath & "\" & 相対パス`)。設定で変えられる
+    return {"base_dir": config.BASE_DIR, "server_dir": base, "ref_dir": base}
 
 
 @bp.get("/record")
@@ -76,7 +82,10 @@ def form():
     if mode != "新規" and key == "":
         return _refuse("not_selected", editing.MSG_NOT_SELECTED)
     d = _dirs()
+    raw_keys = body.get("list_keys")
+    list_keys = [str(x) for x in raw_keys][:50_000] if isinstance(raw_keys, list) else None
     form = editing.build_form(conn, setup, mode, key, list_sql=str(body.get("list_sql") or ""),
+                              list_keys=list_keys,
                               base_dir=d["base_dir"], server_dir=d["server_dir"])
     out = form.to_dict()
     out["level"] = auth.level()
@@ -136,13 +145,13 @@ def record_choices():
     elif kind == "link":
         m = choices.master_link(conn, str(body.get("ms_join") or ""), multi=bool(body.get("multi")))
     elif kind == "field":
+        # 一覧の列(マスタ結合・追加表示の列も)。VBA は「いまの一覧の列名」
         list_sql = str(body.get("list_sql") or "")
         cols = list(setup.main_columns)
-        if list_sql:
-            try:
-                cols, _ = records.run_query(conn, list_sql)
-            except (records.ListError, TypeError):
-                pass
+        try:
+            cols, _ = records.run_query(conn, list_sql) if list_sql else records.full_list(conn, setup)
+        except (records.ListError, TypeError):
+            pass
         return jsonify({"kind": kind, "items": cols})
     elif kind == "folder":
         d = _dirs()

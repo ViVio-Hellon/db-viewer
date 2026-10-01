@@ -1,16 +1,18 @@
-"""一覧(VBA MF1 の一覧ページ): フィルタ・一覧・ページ・集計・SQL 表示
+"""一覧
+
+VBA MF1 の一覧ページ(フィルタ列・ListView・ページ)は捨て、Web の表(グリッド)にした。
+全行をまとめて渡し、絞り込み・並べ替え・列の表示/並び/幅は画面の中で行う。
 
 - `GET  /list`             … 画面
-- `POST /api/list`         … 一覧ぜんぶ(フィルタ候補・行・ページ・SQL)
-- `POST /api/list/summary` … 集計モード(フィルタ見出しのダブルクリック)
+- `POST /api/list/data`    … 全行・列の種類・この PC で保存した列の見せ方
+- `POST /api/list/view`    … 列の見せ方を保存する(`{"reset": true}` で初期に戻す)
 """
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, render_template, request
 
-from dbviewer import records, session_setup, settings_tables, shared_db
+from dbviewer import config, grid_data, records, session_setup, settings_tables, shared_db
 from dbviewer.logging_utils import get_logger
-from dbviewer.presenters import list as list_presenter
 
 from .. import get_db
 from ..shell import shell_context
@@ -45,39 +47,44 @@ def page():
     return render_template("list.html", **shell_context("list"))
 
 
-@bp.post("/api/list")
-def api_list():
+def _view_key(setup) -> str:
+    return grid_data.view_key("list", shared_db.current_profile().prog_no, setup.general.main_table)
+
+
+@bp.post("/api/list/data")
+def api_data():
     conn, setup, err = _open()
     if err:
         return err
-    body = request.get_json(silent=True) or {}
     try:
-        view = list_presenter.build(
-            conn, setup,
-            values=list_presenter.parse_filter_values(body.get("filters") or {}),
-            page_no=int(body.get("page") or 1),
-            per_page=int(body.get("per_page") or records.DEFAULT_PAGE_ROWS),
-            page_flag=bool(body.get("page_flag")),
-            event_no=int(body.get("event_no") or 0),
-            reset=bool(body.get("reset")))
+        columns, rows = records.full_list(conn, setup)
     except records.ListError as exc:
         return _refuse("list", str(exc))
-    view["setup"] = _setup_dict(setup)
-    view["db_mtime"] = shared_db.probe().get("mtime")
-    return jsonify(view)
+    key_index = columns.index(config.KEY_ITEM) if config.KEY_ITEM in columns else -1
+    return jsonify({
+        "columns": grid_data.columns_meta(columns, rows),
+        "rows": rows,
+        "key_index": key_index,
+        "count": len(rows),
+        "view": grid_data.load_view(_view_key(setup), columns),
+        "db_mtime": shared_db.probe().get("mtime"),
+        "setup": _setup_dict(setup),
+    })
 
 
-@bp.post("/api/list/summary")
-def api_summary():
+@bp.post("/api/list/view")
+def api_view():
     conn, setup, err = _open()
     if err:
         return err
-    body = request.get_json(silent=True) or {}
     try:
-        view = list_presenter.summary_view(conn, setup, str(body.get("item") or ""))
+        columns, _rows = records.full_list(conn, setup)
     except records.ListError as exc:
-        return _refuse("summary", str(exc))
-    return jsonify(view)
+        return _refuse("list", str(exc))
+    body = request.get_json(silent=True) or {}
+    if body.get("reset"):
+        return jsonify({"view": grid_data.reset_view(_view_key(setup), columns)})
+    return jsonify({"view": grid_data.save_view(_view_key(setup), columns, body)})
 
 
 def _setup_dict(setup) -> dict:

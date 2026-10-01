@@ -138,7 +138,7 @@ def browse(path_text: str, *, access: bool = False) -> BrowseView:
                                     is_dir=False))
 
     if view.files:
-        view.message = f"取り込み元ファイル {len(view.files)} 件が見つかりました。"
+        view.message = f"このフォルダに 本体・Access・Excel のファイルが {len(view.files)} 件あります。"
     elif not view.dirs:
         view.message = "このフォルダは空です。"
     if view.truncated:

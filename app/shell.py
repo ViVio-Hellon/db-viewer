@@ -29,7 +29,7 @@ class NavItem:
 NAV: tuple[tuple[str, str, str, str], ...] = (
     ("list", "一覧", "/list", "絞り込んで探す・登録する"),
     ("master", "マスタ管理", "/master", "設定表とマスタ表を直す"),
-    ("browse", "閲覧・出力", "/browse", "表を見る・xlsx/csv に出す"),
+    ("browse", "閲覧・出力", "/browse", "表を見る・コピー・保存・印刷"),
     ("settings", "設定", "/settings", "接続先・パス・この端末"),
 )
 

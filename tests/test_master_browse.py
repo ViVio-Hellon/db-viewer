@@ -62,17 +62,23 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(table_browse.browse_tables("A"), ["A"])
         self.assertEqual(table_browse.browse_tables("A/B"), ["A", "B"])
 
-    def test_txt_csv_like_vba(self):
+    def test_csv_tsv_xlsx(self):
+        """ふつうの CSV / TSV(VBA の「行末にも区切り」はやめた。docs/06)。上書きはしない。"""
         with tempfile.TemporaryDirectory() as tmp:
-            data = [["a", "b"], ["1", "x,y"], ["0-1-1", "2014/04/13"]]
-            p = table_browse.export(data, Path(tmp), "t", "txt")
-            self.assertEqual(p.read_bytes(), "a\tb\t\r\n1\tx,y\t\r\n0-1-1\t2014/04/13\t\r\n".encode("cp932"))
-            p = table_browse.export(data, Path(tmp), "t", "csv")
-            self.assertEqual(p.read_bytes(), "a,b,\r\n1,x,y,\r\n0-1-1,2014/04/13,\r\n".encode("cp932"))
-            p = table_browse.export(data, Path(tmp), "", "xlsx")
-            self.assertTrue(p.name.endswith(".xlsx") and p.stat().st_size > 1000)
+            cols, rows = ["a", "b"], [["1", "x,y"], ["0-1-1", '言う"'], ["ﾊﾝﾏｰ", "2014/04/13"]]
+            p = table_browse.export(cols, rows, Path(tmp), "t", "tsv")
+            self.assertEqual(p.name, "t.txt")
+            self.assertEqual(p.read_bytes(), 'a\tb\r\n1\tx,y\r\n0-1-1\t"言う"""\r\nﾊﾝﾏｰ\t2014/04/13\r\n'.encode("cp932"))
+            p = table_browse.export(cols, rows, Path(tmp), "t", "csv")
+            self.assertEqual(p.read_bytes(), 'a,b\r\n1,"x,y"\r\n0-1-1,"言う"""\r\nﾊﾝﾏｰ,2014/04/13\r\n'.encode("cp932"))
+            p2 = table_browse.export(cols, rows, Path(tmp), "t", "csv", "utf-8-sig")
+            self.assertEqual(p2.name, "t_2.csv")
+            self.assertTrue(p2.read_bytes().startswith(b"\xef\xbb\xbfa,b"))
+            p = table_browse.export(cols, rows, Path(tmp), "a/b:c", "xlsx")
+            self.assertEqual(p.name, "a_b_c.xlsx")
+            self.assertGreater(p.stat().st_size, 1000)
             with self.assertRaises(ValueError):
-                table_browse.export(data, Path(tmp), "t", "pdf")
+                table_browse.export(cols, rows, Path(tmp), "t", "pdf")
 
     def test_number_rule(self):
         self.assertEqual(table_browse._number("123"), 123)
@@ -118,11 +124,35 @@ class WebMasterTest(unittest.TestCase):
         r = self.c.post("/api/master/delete", json={"table": "タイプ", "row": [key, "新", ""], "confirmed": True, "answer": True}, headers=self.h).get_json()
         self.assertTrue(r["ok"])
 
-    def test_export_list(self):
-        r = self.c.post("/api/export", json={"source": "list", "ext": "csv", "name": "x"}, headers=self.h).get_json()
-        self.assertTrue(r["ok"])
-        self.assertEqual(r["rows"], 327)
-        self.assertTrue(Path(r["path"]).exists())
+    def test_export_what_is_on_screen(self):
+        body = {"columns": ["作業NO", "作業名"], "rows": [["0-1-1", "ﾊﾝﾏｰの取り扱い"], ["0-1-2", "x"]],
+                "name": "一覧", "format": "csv"}
+        r = self.c.post("/api/export", json=body, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        d = r.get_json()
+        self.assertEqual(d["rows"], 2)
+        path = Path(d["path"])
+        self.assertEqual(path.parent, Path(self.tmp.name) / "out")
+        self.assertEqual(path.read_bytes().decode("cp932"), "作業NO,作業名\r\n0-1-1,ﾊﾝﾏｰの取り扱い\r\n0-1-2,x\r\n")
+        self.assertEqual(self.c.post("/api/export", json={**body, "rows": []}, headers=self.h).status_code, 422)
+        info = self.c.get("/api/export/settings", headers=self.h).get_json()
+        self.assertEqual((info["format"], info["encoding"], info["dir"]), ("csv", "cp932", str(Path(self.tmp.name) / "out")))
+
+    def test_browse_data_and_view(self):
+        from dbviewer import shared_db
+        with shared_db.open_current() as conn:
+            conn.execute(f"INSERT INTO [{config.SET_TABLE}] ([管理番号],[{config.ITEM_NAME}],[{config.PRESET}],[備考]) "
+                         "VALUES (5,?,?,'')", (config.GS_TABLE_BROWSE, "タイプ/フィルタ"))
+            conn.commit()
+        self.assertEqual(self.c.post("/api/browse/tables", json={}, headers=self.h).get_json()["tables"], ["タイプ", "フィルタ"])
+        d = self.c.post("/api/browse/data", json={"table": "タイプ"}, headers=self.h).get_json()
+        self.assertEqual((d["count"], d["key_index"]), (7, -1))
+        self.assertEqual([c["kind"] for c in d["columns"]], ["num", "text", "text"])
+        v = self.c.post("/api/browse/view", json={"table": "タイプ", "order": ["タイプ", "管理番号"], "hidden": ["備考"]},
+                        headers=self.h).get_json()["view"]
+        self.assertEqual(v["order"], ["タイプ", "管理番号", "備考"])
+        self.assertEqual(self.c.post("/api/browse/data", json={"table": "タイプ"}, headers=self.h).get_json()["view"], v)
+        self.assertEqual(self.c.post("/api/browse/data", json={"table": "ID"}, headers=self.h).status_code, 403)
 
 
 if __name__ == "__main__":

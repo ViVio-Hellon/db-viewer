@@ -1,5 +1,6 @@
 """一覧の読み側(VBA `LV1Reflesh` / `LabelDblClickEvents` / `GetTableArr` の移植)
 
+- (画面では使っていない。VBA の一覧と同じ結果になることの記録として、試験から呼ぶ)
 - `list_view()`  … 一覧 SQL を組み、全行を読み(候補づくりのため)、ページぶんを切り出す
 - `summary()`    … 集計モード(列の値 × 件数)
 - `table_array()`… 出力・帳票用の 2 次元配列(1 行目が列名)
@@ -50,6 +51,17 @@ def run_query(conn: sqlite3.Connection, sql: str) -> tuple[list[str], list[list[
     columns = [d[0] for d in cur.description]
     rows = [[_text(v) for v in r] for r in cur.fetchall()]
     return columns, rows
+
+
+def full_list(conn: sqlite3.Connection, setup: SystemSetup) -> tuple[list[str], list[list[str]]]:
+    """一覧の全行(Web 版の一覧・帳票・出力の元)。
+
+    VBA の CODESQL(マスタ結合・追加表示・金額の書式・並び・全般設定の初期フィルタ)は
+    そのまま通す。画面での絞り込み・並べ替えは画面の中で行う(`grid_data`)。
+    """
+    built = sql_builder.build(setup.conv, setup.general.main_table,
+                              init_filter=setup.general.init_filter)
+    return run_query(conn, built.sql)
 
 
 def list_view(conn: sqlite3.Connection, setup: SystemSetup, states: list[flt.FilterState], *,

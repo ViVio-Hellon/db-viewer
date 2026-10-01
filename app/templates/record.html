@@ -13,21 +13,22 @@
   .rec__val { display:flex; gap:4px; align-items:flex-start; min-width:0; position:relative; }
   .rec__val .input { flex:1; min-width:0; font-family:inherit; }
   .rec__val textarea.input { resize:vertical; }
-  .input.is-changed { background:rgb(255,165,0) !important; }
+  .input.is-changed { background:rgb(255,165,0) !important; color:#1b1300; }
   .input.is-locked { background:var(--surface); }
-  .input.is-auto { background:rgb(220,220,220) !important; }
+  /* 自動項目・表示だけの欄。地は沈め、字は読める濃さに(暗い配色でも) */
+  .input.is-auto { background:var(--sunken) !important; color:var(--muted); }
   .input.is-required-ng { background:rgb(255,0,0) !important; color:#fff; }
   .rec__badge { font-size:var(--fs-xs); border-radius:var(--pill); padding:0 6px; line-height:1.6; white-space:nowrap; }
-  .badge--must { background:#fde2e2; color:#b4232a; } .badge--his { background:#e2ecfd; color:#1d4ed8; }
-  .rec__join { flex:0 0 40%; background:whitesmoke; color:dimgray; border:1px solid var(--rule); padding:3px 6px; font-size:var(--fs-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .badge--must { background:var(--warn-bg); color:var(--warn-fg); } .badge--his { background:var(--info-bg); color:var(--info-fg); }
+  .rec__join { flex:0 0 40%; background:var(--sunken); color:var(--muted); border:1px solid var(--rule); padding:3px 6px; font-size:var(--fs-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .rec__icons { display:flex; gap:2px; flex-wrap:wrap; } .rec__icons img { width:18px; height:18px; cursor:pointer; border:1px solid var(--rule); }
   .rec__nav { display:flex; gap:6px; align-items:center; }
   .rec__nav select { width:8em; }
   .helper { width:min(720px, 94vw); }
   .helper .tablewrap { max-height:50vh; }
-  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:#fff; }
+  .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
   .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); }
-  .helper__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
+  .helper__list div[aria-selected="true"] { background:var(--accent); color:var(--on-accent); }
 </style>
 {% endblock %}
 {% block content %}

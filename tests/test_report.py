@@ -10,14 +10,12 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 import unittest
-import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from dbviewer import auth, config, printing, records, reports, shared_db, sql_builder, user_settings, xlsx_append
+from dbviewer import auth, config, printing, records, reports, shared_db, sql_builder, user_settings
 from dbviewer.reports import others, render, sagyo_hyojun
 from dbviewer.settings_tables import load_setup
 from dbviewer.vba_compat import to_narrow
@@ -25,7 +23,6 @@ from tests._fixture_db import FIXTURES, connect, fresh_db_path
 from tests._web import TOKEN, make_client
 
 EXPECTED_TSV = FIXTURES / "expected" / "帳票出力例_2024-03-28.tsv"
-TEMPLATE_XLSX = FIXTURES / "expected" / "出力原紙.xlsx"
 
 
 def _expected_rows() -> list[list[str]]:
@@ -164,54 +161,14 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(w[5], render.MIN_WIDTH)
 
 
-class XlsxAppendTest(unittest.TestCase):
-    def test_unique_sheet_name(self):
-        self.assertEqual(xlsx_append.unique_sheet_name(["作業標準"], "2024-03-28"), "2024-03-28")
-        self.assertEqual(xlsx_append.unique_sheet_name(["2024-03-28", "2024-03-28_1"], "2024-03-28"), "2024-03-28_2")
-        self.assertEqual(xlsx_append.col_letter(1), "A")
-        self.assertEqual(xlsx_append.col_letter(27), "AA")
-
-    def test_append_to_template(self):
-        grid = _build_golden()
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "出力原紙.xlsx"
-            shutil.copy(TEMPLATE_XLSX, target)
-            before = xlsx_append.sheet_names(target)
-            # 受領した原紙には VBA が出した 2024-03-28 が残っている → _1, _2 と付く
-            self.assertEqual(before[:2], ["作業標準", "2024-03-28"])
-            n1 = reports.xlsx_append_report(target, grid, "2024-03-28", template_sheet="作業標準")
-            n2 = reports.xlsx_append_report(target, grid, "2024-03-28", template_sheet="作業標準")
-            self.assertEqual((n1, n2), ("2024-03-28_1", "2024-03-28_2"))
-            names = xlsx_append.sheet_names(target)
-            self.assertEqual(names, before + [n1, n2])
-            with zipfile.ZipFile(target) as z:
-                self.assertIsNone(z.testzip())
-                wb = z.read("xl/workbook.xml").decode("utf-8")
-                rels = z.read("xl/_rels/workbook.xml.rels").decode("utf-8")
-                types = z.read("[Content_Types].xml").decode("utf-8")
-                sheets = sorted(n for n in z.namelist() if n.startswith("xl/worksheets/sheet"))
-                self.assertEqual(len(sheets), len(names))
-                new = z.read(sheets[-1]).decode("utf-8")
-                styles = z.read("xl/styles.xml").decode("utf-8")
-            self.assertIn("メイリオ", styles)
-            self.assertEqual(wb.count("<sheet "), len(names))
-            self.assertEqual(rels.count("worksheets/sheet"), len(names))
-            self.assertEqual(types.count("worksheets/sheet"), len(names))
-            self.assertIn(f'<dimension ref="A1:N{len(grid.rows)}"/>', new)
-            self.assertIn("GrandTotal", new)
-            self.assertIn("<v>1705</v>", new)
-
-
 class ReportWebTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         path = fresh_db_path(Path(self.tmp.name))
-        shutil.copy(TEMPLATE_XLSX, path.parent / "出力原紙.xlsx")
         user_settings.save(config.KEY_ONLINE, False)
         user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
         user_settings.save(config.KEY_DB_FILE, path.name)
-        user_settings.save(config.KEY_REPORT_DIR, "")
         auth.end()
         self.addCleanup(auth.end)
         self.env = {k: os.environ.get(k) for k in ("USERNAME", "COMPUTERNAME")}
@@ -220,7 +177,6 @@ class ReportWebTest(unittest.TestCase):
         self.addCleanup(self._restore_env)
         self.c = make_client()
         self.h = {"X-Tool-Token": TOKEN}
-        self.template = path.parent / "出力原紙.xlsx"
 
     def _restore_env(self):
         for k, v in self.env.items():
@@ -229,45 +185,56 @@ class ReportWebTest(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_run_and_preview(self):
+    def test_run_without_excel_template(self):
+        """原紙(出力原紙.xlsx)が無くても帳票が出る。Excel は使わない。"""
         self.assertEqual(self.c.post("/api/report/run", json={}, headers=self.h).status_code, 401)
         self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
+        self.assertFalse(any(Path(self.tmp.name).glob("*.xlsx")))
         r = self.c.post("/api/report/run", json={}, headers=self.h)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         d = r.get_json()
-        self.assertEqual(Path(d["path"]), self.template)
         self.assertEqual(d["sheet"], render.default_sheet_name())
-        self.assertEqual(d["rows"], 346)       # 全 327 件 + 見出し + 小計 17 + 空行 + Total
-        self.assertIn(d["sheet"], xlsx_append.sheet_names(self.template))
+        self.assertEqual((d["rows"], d["source_rows"]), (346, 327))   # 全件 + 見出し + 小計 17 + 空行 + Total
+        self.assertFalse(any(Path(self.tmp.name).glob("*.xlsx")))
         p = self.c.get(d["preview"], headers=self.h)
         self.assertEqual(p.status_code, 200)
         self.assertIn("GrandTotal", p.get_data(as_text=True))
         self.assertEqual(self.c.get("/report/preview?id=zzz", headers=self.h).status_code, 404)
-        # 一覧の絞り込み SQL を渡すと、その結果で作る
-        r = self.c.post("/api/list", json={"filters": {"3": "B"}, "event_no": 3}, headers=self.h).get_json()
-        r2 = self.c.post("/api/report/run", json={"sql": r["sql"]}, headers=self.h).get_json()
-        self.assertEqual(r2["sheet"], render.default_sheet_name() + "_1")
-        self.assertLess(r2["rows"], 346)
 
-    def test_missing_template(self):
+    def test_run_with_keys_in_screen_order(self):
+        """画面で絞り込んだ行(管理番号)で作る。VBA の出力例と同じ 319 件で照合。"""
         self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
-        self.template.unlink()
-        r = self.c.post("/api/report/run", json={}, headers=self.h)
+        keys = [str(k) for k in range(1, 320)]
+        d = self.c.post("/api/report/run", json={"keys": keys}, headers=self.h).get_json()
+        self.assertEqual(d["source_rows"], 319)
+        html = self.c.get(d["preview"], headers=self.h).get_data(as_text=True)
+        self.assertIn(">1705<", html)                                   # GrandTotal は VBA と同じ
+        d = self.c.post("/api/report/run", json={"keys": ["3", "1", "999"]}, headers=self.h).get_json()
+        self.assertEqual(d["source_rows"], 2)
+        # 画面で逆順に並べ替えていても、帳票の並び(小計の区切り)は VBA と同じ
+        rev = list(reversed(keys))
+        html2 = self.c.get(self.c.post("/api/report/run", json={"keys": rev}, headers=self.h).get_json()["preview"],
+                           headers=self.h).get_data(as_text=True)
+        self.assertEqual(html2.count("小計"), html.count("小計"))
+        self.assertLess(html2.index("ﾊﾝﾏｰの取り扱い"), html2.index("ﾃﾞｨｽｸｸﾞﾗｲﾝﾀﾞｰ"))
+        r = self.c.post("/api/report/run", json={"keys": []}, headers=self.h)
         self.assertEqual(r.status_code, 422)
-        self.assertIn(reports.MSG_NO_FILE, r.get_json()["error"]["message"])
 
-    def test_table_print(self):
+    def test_print_view(self):
         self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
-        # 基準データの 全般設定「テーブル閲覧」は空 → どの表も 403
-        self.assertEqual(self.c.get("/report/table?table=タイプ", headers=self.h).status_code, 403)
-        with shared_db.open_current() as conn:
-            conn.execute(f"INSERT INTO [{config.SET_TABLE}] ([管理番号],[{config.ITEM_NAME}],[{config.PRESET}],[備考]) "
-                         "VALUES (5,?,?,'')", (config.GS_TABLE_BROWSE, "タイプ/フィルタ"))
-            conn.commit()
-        r = self.c.get("/report/table?table=タイプ", headers=self.h)
-        self.assertEqual(r.status_code, 200)
-        self.assertIn("A4 landscape", r.get_data(as_text=True))
-        self.assertEqual(self.c.get("/report/table?table=ID", headers=self.h).status_code, 403)
+        body = {"title": "作業標準管理", "note": "327 件中 2 件", "columns": ["作業NO", "Ⅰ"],
+                "rows": [["0-1-1", "0"], ["0-1-2", "7"]], "numeric": [False, True]}
+        d = self.c.post("/api/print", json=body, headers=self.h).get_json()
+        html = self.c.get(d["preview"], headers=self.h).get_data(as_text=True)
+        self.assertIn("A4 landscape", html)
+        self.assertIn("margin: 6.0mm", html)
+        self.assertIn("327 件中 2 件", html)
+        self.assertIn('<td class="n">7</td>', html)
+        self.assertNotIn("zoom:", html)
+        wide = {**body, "columns": [f"列{i}" for i in range(40)], "rows": [["あいうえおかきくけこ"] * 40]}
+        html = self.c.get(self.c.post("/api/print", json=wide, headers=self.h).get_json()["preview"], headers=self.h).get_data(as_text=True)
+        self.assertIn("zoom:0.", html)                                  # 紙の幅に縮める
+        self.assertEqual(self.c.post("/api/print", json={**body, "rows": []}, headers=self.h).status_code, 422)
 
 
 if __name__ == "__main__":

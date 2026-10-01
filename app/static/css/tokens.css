@@ -51,7 +51,7 @@
   --ink:#17232d; --muted:#5b6d79; --faint:#7d8f9a;
   --rule:#dde5ea; --hairline:#e9eff2;
   /* 骨格のアクセント。**操作の色とは別系統**(§3.5) */
-  --accent:#0b6d86; --accent-soft:#e7f2f5; --accent-line:#bcdde5;
+  --accent:#0b6d86; --accent-soft:#e7f2f5; --accent-line:#bcdde5; --on-accent:#ffffff;
   --focus:#0b6d86;
   /* 入力欄・押せる部品の輪郭。`--rule`(装飾の罫線)より濃い。
      WCAG 1.4.11 は部品の輪郭に 3:1 を求める */
@@ -228,7 +228,7 @@
     --ground:#101820; --surface:#182129; --sunken:#141c23; --raised:#1f2a33;
     --ink:#e2eaef; --muted:#95a7b2; --faint:#7a8d99;
     --rule:#28343d; --hairline:#212c34;
-    --accent:#5cc2d4; --accent-soft:#152b33; --accent-line:#2d4d58;
+    --accent:#5cc2d4; --accent-soft:#152b33; --accent-line:#2d4d58; --on-accent:#0b1a20;
     --focus:#5cc2d4;
     --field-line:#7a8d99;
 
@@ -286,7 +286,7 @@
   --ground:#101820; --surface:#182129; --sunken:#141c23; --raised:#1f2a33;
   --ink:#e2eaef; --muted:#95a7b2; --faint:#7a8d99;
   --rule:#28343d; --hairline:#212c34;
-  --accent:#5cc2d4; --accent-soft:#152b33; --accent-line:#2d4d58;
+  --accent:#5cc2d4; --accent-soft:#152b33; --accent-line:#2d4d58; --on-accent:#0b1a20;
   --focus:#5cc2d4;
   --field-line:#7a8d99;
 

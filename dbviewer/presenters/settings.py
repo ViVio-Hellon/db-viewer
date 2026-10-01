@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 import re
 
-from .. import app_config, config, jobs, shared_db, user_settings
+from .. import app_config, config, jobs, settings_tables, shared_db, table_browse, user_settings
 from ..logging_utils import get_logger
 
 log = get_logger("presenters.settings")
@@ -37,7 +37,7 @@ LEVEL_LABEL = {OK: "問題なし", WARN: "要確認", NG: "足りません", INF
 TABS: tuple[tuple[str, str], ...] = (
     ("status", "いまの状態"),
     ("source", "接続先"),
-    ("paths", "参照・出力・帳票"),
+    ("paths", "参照・出力"),
     ("behavior", "動作"),
     ("access", "Access 取り込み"),
     ("terminal", "この端末"),
@@ -94,12 +94,17 @@ class SettingsViewModel:
     db_file: str
     db_file_default: str
     db_path: str
-    report_dir: str
-    report_dir_real: str
     export_dir: str
     export_dir_real: str
+    export_dir_state: dict[str, str]
+    export_format: str
+    export_encoding: str
+    can_open: bool
     ref_dir: str
     ref_dir_real: str
+    ref_dir_state: dict[str, str]
+    ref_uses: list[dict[str, str]]
+    report: dict[str, Any]
     access_log: bool
     relogin_minutes: int
     accdb_source: str
@@ -126,7 +131,6 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
     server_dir = str(user_settings.get(config.KEY_SERVER_DIR, "") or "")
     local_dir = str(user_settings.get(config.KEY_LOCAL_DIR, "") or "")
     db_file = str(user_settings.get(config.KEY_DB_FILE, "") or "")
-    report_dir = str(user_settings.get(config.KEY_REPORT_DIR, "") or "")
     export_dir = str(user_settings.get(config.KEY_EXPORT_DIR, "") or "")
     ref_dir = str(user_settings.get(config.KEY_REF_DIR, "") or "")
 
@@ -147,17 +151,100 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
         db_file=db_file,
         db_file_default=prof.db_file,
         db_path=str(db_path),
-        report_dir=report_dir,
-        report_dir_real=_real(report_dir, db_path.parent),
         export_dir=export_dir,
-        export_dir_real=_real(export_dir, app_config.local_dir("work")),
+        export_dir_real=str(table_browse.export_dir()),
+        export_dir_state=_folder_state(table_browse.export_dir(), create_later=True),
+        export_format=_choice(config.KEY_EXPORT_FORMAT, table_browse.FORMATS, table_browse.DEFAULT_FORMAT),
+        export_encoding=_choice(config.KEY_EXPORT_ENCODING, table_browse.ENCODINGS, table_browse.DEFAULT_ENCODING),
+        can_open=os.name == "nt",
         ref_dir=ref_dir,
-        ref_dir_real=_real(ref_dir, db_path.parent),
+        ref_dir_real=str(_ref_base(ref_dir)),
+        ref_dir_state=_folder_state(_ref_base(ref_dir)),
+        ref_uses=_ref_uses(db_path),
+        report=_report_info(db_path),
         access_log=bool(user_settings.get(config.KEY_ACCESS_LOG, True)),
         relogin_minutes=int(user_settings.get(config.KEY_RELOGIN_MIN, 0) or 0),
         accdb_source=str(user_settings.get(config.KEY_ACCDB_SOURCE, "") or ""),
         terminal=_terminal_values(),
     )
+
+
+def _choice(key: str, allowed, default: str) -> str:
+    v = str(user_settings.get(key, "") or "")
+    return v if v in allowed else default
+
+
+def _ref_base(ref_dir: str) -> Path:
+    """参照形式の相対パスの起点(空なら VBA と同じ共有フォルダ = 本体のある場所)。"""
+    server = shared_db.server_dir()
+    return config.resolve_dir(ref_dir, server) if ref_dir.strip() else server
+
+
+def _folder_state(path: Path, *, create_later: bool = False) -> dict[str, str]:
+    """フォルダがあるか・書けるか。画面に一言で出す。"""
+    try:
+        if path.is_dir():
+            return ({"level": OK, "text": "あります(書けます)"} if os.access(path, os.W_OK)
+                    else {"level": WARN, "text": "ありますが、書き込めません"})
+        if create_later:
+            return {"level": INFO, "text": "まだ無い(最初の保存で作ります)"}
+        return {"level": WARN, "text": "見つかりません"}
+    except OSError as exc:
+        return {"level": WARN, "text": f"確かめられません({exc})"}
+
+
+_REF_KINDS = ("PDF", "ICON", "TXT", "XLS", "ZIP", "CSV", "DOCX")
+
+
+def _ref_uses(db_path: Path) -> list[dict[str, str]]:
+    """メインテーブルの `_設定`「参照形式」でファイルを開く列(PDF・ICON など)。"""
+    try:
+        conn = shared_db.connect(db_path)
+    except Exception:                                  # noqa: BLE001 - 無ければ空
+        return []
+    try:
+        general = settings_tables.load_general(conn)
+        if not general.main_table:
+            return []
+        conv = settings_tables.load_conv(conn, general.conv_table)
+    except Exception:                                  # noqa: BLE001
+        return []
+    finally:
+        conn.close()
+    out = []
+    for r in conv.rows:
+        kind = r.dsp_type.split("/")[0].upper() if r.dsp_type else ""
+        if kind in _REF_KINDS:
+            parts = r.dsp_type.split("/")
+            where = ("相対: " + parts[2]) if len(parts) >= 3 and parts[2] else (
+                "絶対: " + parts[1] if len(parts) >= 2 and parts[1] else "アプリのフォルダ")
+            out.append({"item": r.item, "kind": kind, "where": where})
+    return out
+
+
+def _report_info(db_path: Path) -> dict[str, Any]:
+    """全般設定「帳票」の読み方。Excel の原紙は使わない。"""
+    from .. import reports
+    try:
+        conn = shared_db.connect(db_path)
+        try:
+            text = settings_tables.load_general(conn).report_str
+        finally:
+            conn.close()
+    except Exception:                                  # noqa: BLE001
+        text = ""
+    if not text:
+        return {"setting": "", "proc": "", "level": INFO,
+                "text": "全般設定「帳票」が空なので、一覧に「帳票」ボタンは出ません(「印刷」はいつでも使えます)。"}
+    try:
+        spec = reports.parse(text)
+        reports.builder_for(spec.proc)
+    except reports.ReportError as exc:
+        return {"setting": text, "proc": "", "level": WARN, "text": str(exc)}
+    template = "/".join(p for p in (spec.folder, spec.file, spec.sheet) if p)
+    return {"setting": text, "proc": spec.proc, "level": OK,
+            "text": f"帳票 {spec.proc} を印刷用の画面で出します。"
+                    + (f"原紙({template})は使いません。" if template else "")}
 
 
 def _real(text: str, base: Optional[Path] = None) -> str:
@@ -311,12 +398,18 @@ def to_dict(view: SettingsViewModel) -> dict[str, Any]:
         "db_file": view.db_file,
         "db_file_default": view.db_file_default,
         "db_path": view.db_path,
-        "report_dir": view.report_dir,
-        "report_dir_real": view.report_dir_real,
         "export_dir": view.export_dir,
         "export_dir_real": view.export_dir_real,
+        "export_dir_state": view.export_dir_state,
+        "export_format": view.export_format,
+        "export_encoding": view.export_encoding,
+        "encodings": table_browse.ENCODINGS,
+        "can_open": view.can_open,
         "ref_dir": view.ref_dir,
         "ref_dir_real": view.ref_dir_real,
+        "ref_dir_state": view.ref_dir_state,
+        "ref_uses": view.ref_uses,
+        "report": view.report,
         "access_log": view.access_log,
         "relogin_minutes": view.relogin_minutes,
         "accdb_source": view.accdb_source,
@@ -341,7 +434,6 @@ _TEXT_KEYS = {
     "server_dir": config.KEY_SERVER_DIR,
     "local_dir": config.KEY_LOCAL_DIR,
     "db_file": config.KEY_DB_FILE,
-    "report_dir": config.KEY_REPORT_DIR,
     "export_dir": config.KEY_EXPORT_DIR,
     "ref_dir": config.KEY_REF_DIR,
     "accdb_source": config.KEY_ACCDB_SOURCE,
@@ -386,6 +478,16 @@ def save(body: dict[str, Any]) -> SaveResult:
                 return SaveResult(False, "本体ファイルはファイル名だけを入れてください(フォルダは接続先で)。",
                                   REFUSE_BAD_INPUT, key)
             user_settings.save(setting, text)
+    if "export_format" in body:
+        fmt = str(body["export_format"] or "")
+        if fmt not in table_browse.FORMATS:
+            return SaveResult(False, "形式は csv / tsv / xlsx のどれかにしてください。", REFUSE_BAD_INPUT, "export_format")
+        user_settings.save(config.KEY_EXPORT_FORMAT, fmt)
+    if "export_encoding" in body:
+        enc = str(body["export_encoding"] or "")
+        if enc not in table_browse.ENCODINGS:
+            return SaveResult(False, "文字コードの指定が正しくありません。", REFUSE_BAD_INPUT, "export_encoding")
+        user_settings.save(config.KEY_EXPORT_ENCODING, enc)
     if "access_log" in body:
         user_settings.save(config.KEY_ACCESS_LOG, bool(body["access_log"]))
     if "relogin_minutes" in body:

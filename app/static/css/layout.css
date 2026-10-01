@@ -263,7 +263,7 @@ a.role-chip .gl { font-size: var(--fs-sm); opacity: 0.8; }
   color: var(--muted); background: var(--sunken);
 }
 .rail a[aria-current="page"] .n {
-  background: var(--accent); color: #fff;
+  background: var(--accent); color: var(--on-accent);
 }
 
 /* ================================================================

@@ -88,11 +88,14 @@ function render(state) {
   showReal(el.localDirReal, state.local_dir_real);
   showReal(el.dbPath, state.db_path);
   el.refDir.value = state.ref_dir;
-  el.reportDir.value = state.report_dir;
   el.exportDir.value = state.export_dir;
   showReal(el.refDirReal, state.ref_dir_real);
-  showReal(el.reportDirReal, state.report_dir_real);
   showReal(el.exportDirReal, state.export_dir_real);
+  for (const [node, st] of [[el.exportDirState, state.export_dir_state], [el.refDirState, state.ref_dir_state]]) {
+    if (node && st) { node.className = `lv lv--${st.level}`; node.textContent = st.text; }
+  }
+  for (const r of document.querySelectorAll("input[name=exportFormat]")) r.checked = r.value === state.export_format;
+  if (el.exportEncoding) el.exportEncoding.value = state.export_encoding;
   el.accessLog.checked = !!state.access_log;
   el.reloginMinutes.value = state.relogin_minutes;
   el.accdbSource.value = state.accdb_source;
@@ -455,9 +458,10 @@ function startBring() {
 export function start(state) {
   for (const id of ["statusGrid", "progNo", "online", "serverDir", "serverDirReal", "serverDirDefault",
                     "localDir", "localDirReal", "dbFile", "dbPath",
-                    "refDir", "refDirReal", "reportDir", "reportDirReal", "exportDir", "exportDirReal",
+                    "refDir", "refDirReal", "exportDir", "exportDirReal", "exportDirState", "refDirState", "exportEncoding",
+                    "saveExport", "openExport", "saveRef",
                     "accessLog", "reloginMinutes", "accdbSource",
-                    "saveSource", "savePaths", "saveBehavior", "saveAccess", "runAccess", "refresh", "settingsTabs",
+                    "saveSource", "saveBehavior", "saveAccess", "runAccess", "refresh", "settingsTabs",
                     "accessJob", "accessJobLabel", "accessJobState", "accessJobPct", "accessJobBar",
                     "accessJobMessage", "accessJobResult"]) {
     el[id] = document.getElementById(id);
@@ -472,9 +476,15 @@ export function start(state) {
     prog_no: Number(el.progNo.value), online: el.online.checked,
     server_dir: el.serverDir.value, local_dir: el.localDir.value, db_file: el.dbFile.value,
   }));
-  el.savePaths.addEventListener("click", () => save({
-    ref_dir: el.refDir.value, report_dir: el.reportDir.value, export_dir: el.exportDir.value,
+  el.saveExport.addEventListener("click", () => save({
+    export_dir: el.exportDir.value,
+    export_format: document.querySelector("input[name=exportFormat]:checked")?.value || "csv",
+    export_encoding: el.exportEncoding.value,
   }));
+  el.saveRef.addEventListener("click", () => save({ ref_dir: el.refDir.value }));
+  el.openExport.addEventListener("click", async () => {
+    try { await api.post("/api/export/open", {}); } catch (err) { toastError(err); }
+  });
   el.saveBehavior.addEventListener("click", () => save({
     access_log: el.accessLog.checked, relogin_minutes: Number(el.reloginMinutes.value || 0),
   }));

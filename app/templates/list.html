@@ -3,50 +3,60 @@
 
 {% block head %}
 <style>
-  /* フィルタ列: VBA の L(見出し) / FL(選択中) / FLL(候補) を縦に積む */
-  .flt { display:flex; gap:4px; align-items:stretch; overflow-x:auto; padding-bottom:4px; }
-  .flt__col { display:flex; flex-direction:column; min-width:4.5em; flex:1 1 0; }
-  .flt__head { background:var(--raised); color:var(--ink); font-size:var(--fs-xs); font-weight:700;
-               padding:3px 6px; border:1px solid var(--rule); border-radius:var(--radius-xs) var(--radius-xs) 0 0;
-               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; user-select:none; }
-  .flt__head--master { background:var(--accent-soft); }
-  .flt__sel { border:1px solid var(--rule); border-top:0; padding:2px 6px; min-height:1.6em;
-              color:var(--state-error); font-size:var(--fs-sm); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .flt__list { border:1px solid var(--rule); border-top:0; height:10.5em; overflow:auto; background:var(--surface);
-               border-radius:0 0 var(--radius-xs) var(--radius-xs); font-size:var(--fs-sm); }
-  .flt__list div { padding:1px 6px; white-space:nowrap; cursor:pointer; }
-  .flt__list div:hover { background:var(--accent-soft); }
-  .flt__list div[aria-selected="true"] { background:var(--accent); color:#fff; }
-  .flt__list div:empty::before { content:"\00a0"; }
-  /* 一覧 */
-  .lst { display:grid; grid-template-columns:1fr auto; gap:12px; margin-top:10px; min-height:0; }
-  .lst__side { display:flex; flex-direction:column; gap:6px; min-width:9em; }
-  .lst__side .btn { justify-content:flex-start; }
-  .table td.c { text-align:center; } .table td.l { text-align:left; } .table td.r { text-align:right; }
-  .table th.c { text-align:center; } .table th.l { text-align:left; } .table th.r { text-align:right; }
-  .table tbody tr { cursor:pointer; }
-  .sqlbox { font-family:var(--mono); font-size:var(--fs-xs); color:var(--muted); white-space:pre-wrap;
-            word-break:break-all; border:1px dashed var(--rule); padding:4px 8px; margin-top:6px; max-height:5em; overflow:auto; }
-  .pager { display:flex; align-items:center; gap:8px; font-size:var(--fs-sm); }
-  .pager .num { font-family:var(--mono); min-width:5em; text-align:center; }
-  .modechip { font-size:var(--fs-xs); padding:2px 8px; border-radius:var(--pill); background:var(--raised); }
+  /* 一覧は画面の高さいっぱいに表を出す(表の中だけがスクロールする) */
+  .lview { display:flex; flex-direction:column; gap:8px; overflow:hidden; }
+  .lv__head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .lv__title { display:flex; align-items:baseline; gap:10px; min-width:0; }
+  .lv__title h2 { font-size:var(--fs-xl); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lv__act { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .lv__sep { width:1px; align-self:stretch; background:var(--rule); margin:0 4px; }
+  .lv__body { display:grid; grid-template-columns:minmax(0,1fr) 21rem; gap:12px; flex:1; min-height:0; }
+  .lv__body.no-detail { grid-template-columns:minmax(0,1fr); }
+  .lv__body.no-detail .lv__detail { display:none; }
+  .lv__grid { display:flex; min-height:0; min-width:0; }
+  @media (max-width:1100px) { .lv__body { grid-template-columns:minmax(0,1fr); }
+                              .lv__detail { max-height:40vh; } }
+  /* 選んだ行の詳細(すべての列。隠した列も) */
+  .lv__detail { border:1px solid var(--rule); border-radius:var(--radius-xs); background:var(--surface);
+                overflow:auto; min-height:0; display:flex; flex-direction:column; }
+  .dt__head { position:sticky; top:0; background:var(--raised); padding:8px 12px; border-bottom:1px solid var(--rule);
+              display:flex; flex-direction:column; gap:2px; }
+  .dt__head small { color:var(--muted); font-size:var(--fs-xs); }
+  .dt__head b { font-size:var(--fs-md); overflow-wrap:anywhere; }
+  .dt__list { margin:0; padding:6px 12px 12px; display:grid; grid-template-columns:minmax(6em, 40%) 1fr; gap:4px 10px; font-size:var(--fs-sm); }
+  .dt__list dt { color:var(--muted); overflow-wrap:anywhere; }
+  .dt__list dd { margin:0; color:var(--ink); overflow-wrap:anywhere; white-space:pre-wrap; }
+  .dt__list .is-hidden { opacity:.65; }
+  .dt__list .dt__sep { grid-column:1 / -1; border-top:1px dashed var(--rule); margin:6px 0 2px; color:var(--faint); font-size:var(--fs-xs); padding-top:4px; }
+  .dt__empty { padding:16px 12px; color:var(--muted); font-size:var(--fs-sm); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="pane">
-  <div class="pane__head">
-    <div>
-      <span class="eyebrow">Step 1</span>
+<div class="pane lview">
+  <div class="lv__head">
+    <div class="lv__title">
       <h2 id="listTitle">一覧</h2>
+      <span class="why" style="margin:0">見出しを押すと並べ替え、▾ で絞り込み、行をダブルクリックで修正</span>
     </div>
-    <div class="nextstep">
-      <span class="modechip" id="modeChip">選択</span>
-      <p class="why" id="listNote">見出しをダブルクリックすると集計。候補を押すと絞り込み。行をダブルクリックで修正。</p>
+    <div class="lv__act">
+      <button class="btn btn--commit" type="button" id="actNew"><span class="gl">＋</span>新規</button>
+      <button class="btn btn--find" type="button" id="actEdit" disabled>修正</button>
+      <button class="btn btn--find" type="button" id="actView" disabled>参照</button>
+      <button class="btn btn--danger" type="button" id="actDelete" disabled>削除</button>
+      <span class="lv__sep" aria-hidden="true"></span>
+      <button class="btn btn--find" type="button" id="actReport" hidden title="全般設定「帳票」の帳票を、いま絞り込んでいる行で作ります(並びは帳票の決まりどおり)">帳票</button>
+      <button class="btn btn--find" type="button" id="actPrint" title="いま見えている表をそのまま印刷(A4 横)">印刷</button>
+      <div class="menu">
+        <button class="btn btn--find" type="button" id="actOut" aria-haspopup="true" aria-expanded="false">出力 ▾</button>
+        <div class="menu__list" id="outMenu" hidden>
+          <button type="button" id="outCopy">表をコピー<small>見えている行・列を、Excel やメールに貼り付けられる形で</small></button>
+          <button type="button" id="outSave">ファイルに保存…<small>CSV など。設定の「出力先」フォルダに書きます</small></button>
+        </div>
+      </div>
+      <button class="btn btn--find" type="button" id="actDetail" aria-pressed="true" title="選んだ行の中身を右に出す">詳細</button>
     </div>
   </div>
-
-  <span class="dimline" aria-hidden="true"></span>
 
   <p class="status status--ng" id="listProblem" hidden></p>
   <p class="status status--warn" id="listUpdated" hidden>
@@ -54,38 +64,11 @@
     <button class="btn btn--find" type="button" id="listReload" style="margin-left:8px">再読込</button>
   </p>
 
-  <div class="flt" id="filters" aria-label="フィルタ"></div>
-
-  <div class="lst">
-    <div style="min-width:0; display:flex; flex-direction:column; gap:6px">
-      <div class="pager">
-        <button class="btn btn--find" type="button" id="pagePrev">◀</button>
-        <span class="num" id="pageLabel">1 / 1</span>
-        <button class="btn btn--find" type="button" id="pageNext">▶</button>
-        <span class="why" style="margin:0" id="rowCount"></span>
-        <label class="field" style="margin-left:auto">行/頁
-          <select class="input" id="perPage" style="width:5em">
-            <option>12</option><option selected>24</option><option>50</option><option>100</option><option>500</option>
-          </select>
-        </label>
-      </div>
-      <div class="tablewrap" style="max-height:60vh">
-        <table class="table" id="listTable"><thead></thead><tbody></tbody></table>
-      </div>
-      <div class="sqlbox" id="sqlBox" title="VBA の SQL 欄と同じ内容"></div>
-    </div>
-    <div class="lst__side" id="sideButtons">
-      <button class="btn btn--commit" type="button" data-cmd="新規" id="btnNew">新規</button>
-      <button class="btn btn--commit" type="button" data-cmd="修正" id="btnEdit">修正</button>
-      <button class="btn btn--danger" type="button" data-cmd="削除" id="btnDelete">削除</button>
-      <button class="btn btn--find" type="button" data-cmd="参照" id="btnView">参照</button>
-      <span class="dimline" aria-hidden="true"></span>
-      <button class="btn btn--find" type="button" id="btnReport" hidden>帳票</button>
-      <button class="btn btn--find" type="button" id="btnBrowse" hidden>閲覧</button>
-      <button class="btn btn--find" type="button" id="btnSetting">設定</button>
-      <button class="btn btn--find" type="button" id="btnOutput">出力</button>
-      <button class="btn btn--find" type="button" id="btnBack" hidden>戻る</button>
-    </div>
+  <div class="lv__body" id="lvBody">
+    <div class="lv__grid" id="grid"></div>
+    <aside class="lv__detail" id="detail" aria-label="選んだ行の詳細">
+      <p class="dt__empty">行を選ぶと、ここに全部の列が出ます。</p>
+    </aside>
   </div>
 </div>
 {% endblock %}
