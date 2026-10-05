@@ -4,8 +4,9 @@
 - `POST /api/master/tables`     … このレベルで直せる表(VBA の L1)
 - `POST /api/master/rows`       … 表の全行(1 ページ)
 - `POST /api/master/form`       … 新規/修正の欄(入力形式つき)
-- `POST /api/master/execute`    … 実行(質問 → はい/いいえ → 書く)
+- `POST /api/master/execute`    … 実行(質問 → はい/いいえ → 書く)。行を追加 = mode ADDNEW
 - `POST /api/master/delete`     … 削除(「削除しますか？」→ 全列一致の先頭 1 行)
+- `POST /api/master/add-column` … 列を追加(Level 5。本体なら <メイン>_設定 にも行)
 """
 from __future__ import annotations
 
@@ -63,7 +64,17 @@ def _masked(values):
 
 
 def _allowed(conn, setup, table: str):
+    """行を直せる表か(新規・修正・削除)。"""
     if table not in master_admin.editable_tables(conn, setup, auth.level()):
+        if table == setup.general.main_table:
+            return _refuse("main_rows", master_admin.MSG_ROWS_IN_LIST, 403)
+        return _refuse("table", master_admin.MSG_NOT_EDITABLE, 403)
+    return None
+
+
+def _listed(conn, setup, table: str):
+    """見てよい表か(左に並ぶ表。本体は Level 5 で列の追加のため)。"""
+    if table not in master_admin.listed_tables(conn, setup, auth.level()):
         return _refuse("table", master_admin.MSG_NOT_EDITABLE, 403)
     return None
 
@@ -80,10 +91,15 @@ def tables():
         return err
     lv = auth.level()
     from dbviewer import table_bring
-    return jsonify({"level": lv, "tables": master_admin.editable_tables(conn, setup, lv),
+    listed = master_admin.listed_tables(conn, setup, lv)
+    why = dict(master_admin.used_tables(conn, setup))
+    why[setup.general.main_table] = "業務データ(列の追加だけ)"
+    return jsonify({"level": lv, "tables": listed,
+                    # その表でできること(行を直す・列を足す)と、ひとこと
+                    "caps": {t: master_admin.capabilities(setup, t, lv, conn) for t in listed},
                     # 「表を持ってくる」で足した表(一覧に「足」の印を付ける)
                     "brought": sorted(table_bring.brought_tables(conn)),
-                    "why": dict(master_admin.used_tables(conn, setup)),
+                    "why": why,
                     "title": f"マスタメンテナンス アクセスレベル:{lv}"})
 
 
@@ -93,11 +109,15 @@ def rows():
     if err:
         return err
     table = str((request.get_json(silent=True) or {}).get("table") or "")
-    if (e := _allowed(conn, setup, table)):
+    if (e := _listed(conn, setup, table)):
         return e
     v = master_admin.rows_of(conn, table)
+    caps = master_admin.capabilities(setup, table, auth.level(), conn)
     return jsonify({"table": v.table, "columns": v.columns, "rows": v.rows,
-                    "read_only": v.read_only, "page": v.page_label, "count": len(v.rows)})
+                    "read_only": not caps["rows"], "caps": caps,
+                    # 並びに意味がある(文字が既定)ので、辞書でなく並びで渡す(JSON は鍵を並べ替える)
+                    "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()],
+                    "page": v.page_label, "count": len(v.rows)})
 
 
 @bp.post("/api/master/form")
@@ -135,10 +155,17 @@ def execute():
     key = str(body.get("key") or (values[0] if values else ""))
     seen = body.get("seen")
     answer = body.get("answer")
-    r = master_admin.execute(conn, table, mode, values, key, confirmed=bool(body.get("confirmed")),
-                             answer=None if answer is None else bool(answer),
-                             seen=[str(v) for v in seen] if seen else None)
-    status = 200 if r.ok or r.reason == "question" else (409 if r.reason == "conflict" else 422)
+    confirmed = bool(body.get("confirmed"))
+    answer = None if answer is None else bool(answer)
+    if table == setup.general.conv_table and mode == "ADDNEW":
+        # <メイン>_設定 に行を足す = 本体に項目(列)を足す
+        r = master_admin.add_item(conn, setup, values, level=auth.level(), confirmed=confirmed, answer=answer)
+    else:
+        r = master_admin.guard_setting_change(conn, setup, table, mode, values, key) or \
+            master_admin.execute(conn, table, mode, values, key, confirmed=confirmed, answer=answer,
+                                 seen=[str(v) for v in seen] if seen else None)
+    status = 200 if r.ok or r.reason == "question" else (
+        409 if r.reason == "conflict" else 403 if r.reason == master_admin.REFUSE_LEVEL else 422)
     if r.reason != "question":
         trace.event("master.save", r.message, level="INFO" if r.ok else "WARN",
                     data={"table": table, "mode": mode, "key": key, "executed": r.executed,
@@ -161,10 +188,34 @@ def delete():
     if not row:
         return _refuse("no_target", master_admin.MSG_NO_TARGET_DELETE)
     answer = body.get("answer")
-    r = master_admin.delete(conn, table, row, confirmed=bool(body.get("confirmed")),
+    r = master_admin.guard_setting_change(conn, setup, table, "DELETE", row, row[0]) or \
+        master_admin.delete(conn, table, row, confirmed=bool(body.get("confirmed")),
                             answer=None if answer is None else bool(answer))
     status = 200 if r.ok or r.reason in ("question", "cancelled") else 422
     if r.reason != "question":
         trace.event("master.delete", r.message, level="INFO" if r.ok or r.reason == "cancelled" else "WARN",
                     data={"table": table, "row": _masked(row), "reason": r.reason})
     return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason}), status
+
+
+@bp.post("/api/master/add-column")
+def add_column():
+    """列を追加。本体に足すときは <メイン>_設定 にも同じ名前の行を足す(同じ取引)。"""
+    conn, setup, err = _open()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    table = str(body.get("table") or "")
+    if (e := _listed(conn, setup, table)):
+        return e
+    r = master_admin.add_column(conn, setup, table, str(body.get("name") or ""),
+                                kind=str(body.get("kind") or "text"), fill=str(body.get("fill") or ""),
+                                level=auth.level())
+    trace.event("master.add_column", r.message, level="INFO" if r.ok else "WARN",
+                data={"table": table, "name": body.get("name"), "kind": body.get("kind"),
+                      "fill": body.get("fill"), "reason": r.reason, "setting_table": r.setting_table,
+                      "setting_key": r.setting_key, "backup": r.backup})
+    status = 200 if r.ok else 403 if r.reason == master_admin.REFUSE_LEVEL else 422
+    return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason, "column": r.column,
+                    "setting_table": r.setting_table, "setting_key": r.setting_key,
+                    "backup": r.backup}), status

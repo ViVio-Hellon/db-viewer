@@ -131,10 +131,19 @@ class WebMasterTest(unittest.TestCase):
                 os.environ[k] = v
 
     def test_master_cycle_and_main_table_refused(self):
-        self.assertEqual(self.c.post("/api/master/rows", json={"table": "作業標準管理"}, headers=self.h).status_code, 403)
+        # 本体は見られる(列の追加のため)が、行はここでは直せない(一覧で)
+        main = self.c.post("/api/master/rows", json={"table": "作業標準管理"}, headers=self.h).get_json()
+        self.assertTrue(main["read_only"])
+        for path, body in (("/api/master/form", {"table": "作業標準管理", "mode": "ADDNEW"}),
+                           ("/api/master/execute", {"table": "作業標準管理", "mode": "ADDNEW", "values": ["999"]}),
+                           ("/api/master/delete", {"table": "作業標準管理", "row": main["rows"][0], "confirmed": True})):
+            r = self.c.post(path, json=body, headers=self.h)
+            self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (403, "main_rows"), path)
         self.assertEqual(self.c.post("/api/master/rows", json={"table": "タイプ"}, headers=self.h).status_code, 403)
         t = self.c.post("/api/master/tables", json={}, headers=self.h).get_json()
-        self.assertEqual(t["tables"], ["ID", "全般設定", "作業標準管理_設定"])
+        # Level 5 では本体も並ぶ(列の追加だけ)
+        self.assertEqual(t["tables"], ["ID", "全般設定", "作業標準管理", "作業標準管理_設定"])
+        self.assertEqual((t["caps"]["作業標準管理"]["rows"], t["caps"]["作業標準管理"]["columns"]), (False, True))
         self.assertEqual(t["why"]["ID"], "ログイン")
         f = self.c.post("/api/master/form", json={"table": "全般設定", "mode": "ADDNEW"}, headers=self.h).get_json()
         key = f["fields"][0]["value"]

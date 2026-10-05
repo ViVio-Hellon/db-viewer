@@ -347,7 +347,7 @@ def _create_sql(src: Path, table: str) -> tuple[str, list[tuple[str, str]]]:
     return create, indexes
 
 
-def _backup(dest: Path, why: str = "表を持ってくる前") -> Path:
+def backup_copy(dest: Path, why: str = "表を持ってくる前") -> Path:
     """書く前に本体を手元へ写す。戻したいときの頼り。"""
     folder = app_config.local_dir("backup")
     folder.mkdir(parents=True, exist_ok=True)
@@ -393,7 +393,7 @@ def bring(source_path: str, tables: list[str]) -> BringResult:
                                   f"{', '.join(already)}", REFUSE_EXISTS)
 
     try:
-        backup = _backup(dest)
+        backup = backup_copy(dest)
     except OSError as exc:
         return BringResult(False, f"書く前の控えを取れませんでした({exc})。"
                                   "何も変えていません。", REFUSE_WRITE_FAILED)
@@ -601,7 +601,7 @@ def refresh(source_path: str, tables: list[str]) -> BringResult:
     wanted = list(dict.fromkeys(named))
 
     try:
-        backup = _backup(dest, "中身を入れ替える前")
+        backup = backup_copy(dest, "中身を入れ替える前")
     except OSError as exc:
         return BringResult(False, f"書く前の控えを取れませんでした({exc})。"
                                   "何も変えていません。", REFUSE_WRITE_FAILED)

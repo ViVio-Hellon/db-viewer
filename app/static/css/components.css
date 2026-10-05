@@ -416,7 +416,7 @@ select.input { cursor: pointer; }
 .toast--ok    { border-left-color: var(--state-ok); }
 .toast--warn  { border-left-color: var(--state-warn); }
 .toast--error { border-left-color: var(--state-error); }
-.toast .btn { min-height: 32px; padding: 4px 10px; font-size: var(--fs-sm); white-space: nowrap; }
+.toast .btn { min-height: 32px; padding: 4px 10px; font-size: var(--fs-sm); white-space: nowrap; flex: none; }
 .toast a.btn { text-decoration: none; }
 .toast__text { min-width: 0; overflow-wrap: anywhere; }
 /* 記録番号。設定「記録」で引く鍵なので、写しやすい字で */

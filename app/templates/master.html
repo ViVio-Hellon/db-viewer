@@ -25,6 +25,16 @@
   /* 選んだ行は一覧と同じくはっきり(暗い配色でも分かるように) */
   #msTable tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
   .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
+  /* 列を追加 */
+  .coldlg { width:min(560px, 94vw); }
+  .colform { display:grid; grid-template-columns:11em minmax(0,1fr); gap:10px 12px; align-items:center; margin-top:6px; }
+  .colform > label, .colform > span { color:var(--muted); font-size:var(--fs-sm); }
+  @media (max-width:560px){ .colform { grid-template-columns:1fr; } }
+  .opts { display:flex; flex-wrap:wrap; gap:4px 16px; }
+  .colnotes { margin:10px 0 0; padding-left:1.2em; font-size:var(--fs-xs); }
+  /* 足したばかりの列・行 */
+  #msTable td.is-new { background:var(--accent-soft); }
+  #msTable th.is-new { box-shadow:inset 0 -3px 0 var(--accent); color:var(--ink); }
   .helper__list div { padding:2px 8px; cursor:pointer; } .helper__list div:hover { background:var(--accent-soft); } .helper__list div[aria-selected="true"] { background:var(--accent); color:var(--on-accent); }
 </style>
 {% endblock %}
@@ -32,7 +42,7 @@
 <div class="pane">
   <div class="pane__head">
     <div><span class="eyebrow">Step 2</span><h2 id="msTitle">マスタメンテナンス</h2></div>
-    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。列名を押すと並べ替え。行をダブルクリックで修正。</p></div>
+    <div class="nextstep"><p class="why" id="msNote">左の表を選ぶと中身が出ます。列名を押すと並べ替え。行をダブルクリックで修正。「＋ 行を追加」「＋ 列を追加」で足せます。</p></div>
   </div>
   <span class="dimline" aria-hidden="true"></span>
   <p class="status status--ng" id="msProblem" hidden></p>
@@ -43,18 +53,40 @@
         <b id="msName" style="min-width:10em"></b>
         <span class="why" id="msPage" style="margin:0"></span>
         <span style="margin-left:auto"></span>
-        <button class="btn btn--commit" type="button" id="msNew" hidden>新規</button>
-        <button class="btn btn--commit" type="button" id="msEdit" hidden>修正</button>
+        <button class="btn btn--commit" type="button" id="msNew" hidden>＋ 行を追加</button>
+        <button class="btn btn--commit" type="button" id="msAddCol" hidden>＋ 列を追加</button>
+        <button class="btn" type="button" id="msEdit" hidden>修正</button>
         <button class="btn btn--danger" type="button" id="msDelete" hidden>削除</button>
         <button class="btn btn--find" type="button" id="msBack" hidden>戻る</button>
         <button class="btn btn--commit" type="button" id="msExe" hidden>実行</button>
         <button class="btn btn--find" type="button" id="msClose">閉じる</button>
       </div>
+      <p class="why" id="msCapNote" hidden style="margin:0"></p>
       <div class="tablewrap" id="msGrid" style="max-height:60vh"><table class="table" id="msTable"><thead></thead><tbody></tbody></table></div>
       <div class="rec" id="msFields" hidden></div>
     </div>
   </div>
 </div>
+{# 列を追加。本体に足すときは <メイン>_設定 にも行を足す(サーバが同じ取引で) #}
+<dialog id="colDialog" class="browser coldlg" aria-labelledby="colTitle">
+  <form method="dialog" class="browser__head">
+    <b id="colTitle">列を追加</b>
+    <button class="btn btn--danger" value="cancel">やめる</button>
+  </form>
+  <div class="colform">
+    <label for="colName">列名</label>
+    <input class="input" id="colName" maxlength="64" spellcheck="false" autocomplete="off" placeholder="例: 部署">
+    <span>種類</span>
+    <div class="opts" id="colKinds" role="radiogroup" aria-label="種類"></div>
+    <label for="colFill">いまある行に入れる値</label>
+    <input class="input" id="colFill" spellcheck="false" autocomplete="off" placeholder="空のままでよい">
+  </div>
+  <ul class="why colnotes" id="colNotes"></ul>
+  <p class="status status--ng" id="colProblem" hidden></p>
+  <div class="btn-row" style="margin-top:8px">
+    <button class="btn btn--commit" type="button" id="colRun">列を追加する</button>
+  </div>
+</dialog>
 <dialog id="helper" class="browser helper">
   <form method="dialog" class="browser__head">
     <b id="helperTitle"></b><span class="why" id="helperNote" style="margin-left:auto"></span>

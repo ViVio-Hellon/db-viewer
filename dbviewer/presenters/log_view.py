@@ -26,6 +26,7 @@ EV_LABEL = {
     "record.save": "レコードを保存",
     "master.save": "マスタを保存",
     "master.delete": "マスタを削除",
+    "master.add_column": "列を追加",
     "settings.save": "設定を保存",
     "settings.reset_mode": "起動モードを初期化",
     "db.open": "接続先を開いた",
