@@ -159,6 +159,19 @@ class AddRowToSettingTest(_DbCase):
         self.assertEqual(self.problem(), "")
 
 
+class DeleteNullTest(_DbCase):
+    def test_row_with_null_cells_can_be_deleted(self):
+        """Access から写した行(空の欄が NULL)も、マスタ管理で消せる。"""
+        rows = self.c.post("/api/master/rows", json={"table": "ID"}, headers=self.h).get_json()["rows"]
+        target = rows[-1]
+        self.assertIn("", target)                                     # 画面では空(本体は NULL)
+        before = len(self.q("SELECT * FROM ID"))
+        r = self.c.post("/api/master/delete", json={"table": "ID", "row": target, "confirmed": True,
+                                                    "answer": True}, headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(len(self.q("SELECT * FROM ID")), before - 1)
+
+
 class LowerLevelTest(_DbCase):
     level = 4
 

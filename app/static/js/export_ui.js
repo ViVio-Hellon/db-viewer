@@ -6,6 +6,7 @@
 */
 import { api, tokenUrl } from "./api.js";
 import { toast, toastError } from "./toast.js";
+import { openWindow } from "./desktop.js";
 
 function stamp() {
   const d = new Date();
@@ -42,7 +43,8 @@ export async function copyTable(columns, rows) {
 export async function printTable({ title, note = "", columns, rows, numeric = [] }) {
   try {
     const res = await api.post("/api/print", { title, note, columns, rows, numeric });
-    window.open(tokenUrl(res.preview), "_blank", "noopener");
+    // 印刷の画面は別の窓で(デスクトップ版は外枠が窓を開く)
+    if (!openWindow(tokenUrl(res.preview), "印刷")) toast("別の窓を開けませんでした。ポップアップの許可を確認してください。", "warn");
   } catch (err) { toastError(err); }
 }
 

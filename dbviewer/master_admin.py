@@ -170,8 +170,17 @@ def build_fields(conn: sqlite3.Connection, setup: SystemSetup, table: str, mode:
 
 
 def click_filter(columns: list[str], row: list[str]) -> str:
-    """VBA `GetClickDataSQLFORM`: 全列が一致する行。"""
-    return " AND ".join(f"[{c}]='{str(v).replace(chr(39), chr(39) * 2)}'" for c, v in zip(columns, row))
+    """VBA `GetClickDataSQLFORM`: 全列が一致する行。
+
+    **空の欄は NULL とも一致させる。** 画面は NULL を "" で見せるので、`[備考]=''` だけだと
+    Access から写した行(空の欄が NULL)は「登録されていないか、既に削除済みです」で消せなかった。
+    """
+    def one(c: str, v: str) -> str:
+        text = str(v)
+        if text == "":
+            return f"([{c}]='' OR [{c}] IS NULL)"
+        return f"[{c}]='{text.replace(chr(39), chr(39) * 2)}'"
+    return " AND ".join(one(c, v) for c, v in zip(columns, row))
 
 
 def execute(conn: sqlite3.Connection, table: str, mode: str, values: list[str], key: str, *,

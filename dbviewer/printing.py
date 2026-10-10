@@ -151,11 +151,30 @@ table.form th { background: #f0f0f0; font-weight: bold; }
 @media print { .screen-only { display: none; } }
 """
 
-# 画面で見たときだけ出る操作案内(印刷はされない)
+# 画面で見たときだけ出る操作の帯(印刷はされない)。
+# **「印刷する」「閉じる」をボタンで持つ。** デスクトップ版(Tauri)の窓にはブラウザの
+# メニューもタブの × も無いので、Ctrl+P を知らない人は印刷も閉じることもできなかった。
+# 閉じるのはデスクトップ版なら外枠に頼む(python-web-tools と同じ)。
+# 帳票は独立したページ(別窓で開く)なので、アプリ本体の JS は使わずここで完結させる
 _PRINT_HINT = (
-    '<p class="screen-only">この画面で <b>Ctrl+P</b> を押すと印刷できます。'
-    "印刷ダイアログで用紙・余白がページ設定どおりか確認してください"
-    "(「背景のグラフィック」を有効にすると網掛けも印刷されます)。</p>"
+    '<div class="screen-only printbar" role="toolbar" aria-label="印刷">'
+    '<button type="button" id="printNow">⎙ 印刷する</button>'
+    '<button type="button" id="printClose">閉じる</button>'
+    '<span>(<b>Ctrl+P</b> でも印刷できます)印刷の窓で用紙・余白がページ設定どおりか確認してください'
+    "(「背景のグラフィック」を有効にすると網掛けも印刷されます)。"
+    '<span id="printCloseNote"></span></span></div>'
+    "<style>@media screen{.printbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}"
+    ".printbar button{font:inherit;font-size:13px;padding:6px 14px;cursor:pointer}"
+    "#printNow{font-weight:bold}}</style>"
+    "<script>(function(){"
+    'document.getElementById("printNow").addEventListener("click",function(){'
+    "var a=document.activeElement;if(a&&a.closest&&a.closest(\"[data-edit]\"))a.blur();window.print();});"
+    'document.getElementById("printClose").addEventListener("click",function(){'
+    "var desk=window.__TAURI__&&window.__TAURI__.core;"
+    'if(desk){desk.invoke("close_window");return;}'
+    "window.close();window.setTimeout(function(){if(!window.closed)"
+    'document.getElementById("printCloseNote").textContent="(この窓はブラウザの × で閉じてください)";},300);});'
+    "}());</script>"
 )
 
 

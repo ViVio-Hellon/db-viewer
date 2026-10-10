@@ -4,6 +4,7 @@
 
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
+import { confirmBox } from "../askbox.js";
 import * as tabs from "../tabs.js";
 import * as jobs from "../jobs.js";
 import * as logTab from "./log_tab.js";
@@ -431,13 +432,13 @@ async function runRefresh() {
   const rebuild = boxes.filter((b) => b.dataset.action === "rebuild").map((b) => b.value);
   const loses = boxes.filter((b) => b.dataset.loses).map((b) => `${b.value}(${b.dataset.loses})`);
   // **消して入れ直す。** 控えは取るが、押す前に何が起きるかを言う
-  if (!window.confirm(
+  if (!await confirmBox(
     (swap.length ? `中身を Access の中身に入れ替える表:\n${swap.join("、")}\n\n` : "")
     + (rebuild.length ? `Access の定義で作り直す表(今の表は名前を変えて残します):\n`
                         + `${rebuild.join("、")}\n\n` : "")
     + (loses.length ? `⚠ 設定で使っている列が消えます: ${loses.join("、")}\n\n` : "")
     + "本体にある今の行は消えます(書く前に控えを取ります)。"
-    + "ほかの端末にもすぐ見えます。よろしいですか？")) return;
+    + "ほかの端末にもすぐ見えます。よろしいですか？", { ok: "入れ替える", danger: true })) return;
   try {
     showDone(await api.post("/api/settings/table-refresh",
                             { path: bring.path.value.trim(), tables }));

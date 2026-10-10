@@ -1,0 +1,35 @@
+# DBビューア デスクトップ版の外枠(Rust/Tauri)。業務の処理は Python(`bridge.py`)が持つ。
+# ここが持つのは: 窓・Python の起動と監視・多重起動の防止・ブラウザ版との同時起動の断り・
+# 終了の確認・帳票の窓。python-web-tools(梱包資材総合ツール)の外枠と同じ作り。
+# 詳しくは docs/08_デスクトップ版.md
+[package]
+name = "dbviewer-desktop"
+version = "0.6.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "DBViewer"
+path = "src/main.rs"
+
+[features]
+# `cargo build --release` だけで配れる exe にする(Tauri の作法)
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

@@ -8,6 +8,7 @@
 */
 import { api, tokenUrl } from "../api.js";
 import { toast, toastError } from "../toast.js";
+import { openWindow } from "../desktop.js";
 import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
 import { createHelpers } from "../helpers.js";
@@ -138,7 +139,8 @@ async function runReport() {
   if (!keys.length) { toast("帳票にする行がありません。", "warn"); return; }
   try {
     const res = await api.post("/api/report/run", { keys });
-    window.open(tokenUrl(res.preview), "_blank", "noopener");
+    // 帳票は別の窓で(デスクトップ版は外枠が窓を開く)
+    if (!openWindow(tokenUrl(res.preview), "帳票")) toast("別の窓を開けませんでした。ポップアップの許可を確認してください。", "warn");
   } catch (err) { toastError(err); }
 }
 

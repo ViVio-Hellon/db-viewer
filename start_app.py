@@ -50,12 +50,20 @@ LISTEN_TIMEOUT_SEC = 15
 AUTO = "auto"
 
 
-class StartupError(RuntimeError):
-    """利用者に見せる、次の行動が分かる形のエラー。"""
+# デスクトップ版(`bridge.py`)は待ち受けないので waitress は要らない
+BRIDGE_PACKAGES = (("flask", "Flask"),)
 
-    def __init__(self, message: str, hint: str = "") -> None:
+# もう一方の版(ブラウザ版 / デスクトップ版)が動いているので止まった
+CODE_OTHER_RUNNING = "other_running"
+
+
+class StartupError(RuntimeError):
+    """利用者に見せる、次の行動が分かる形のエラー。`code` は外枠(exe)が見分けに使う。"""
+
+    def __init__(self, message: str, hint: str = "", code: str = "") -> None:
         super().__init__(message)
         self.hint = hint
+        self.code = code
 
 
 # ------------------------------------------------------------------
@@ -69,11 +77,16 @@ def check_python_version() -> None:
             "https://www.python.org/downloads/ から新しいPythonを入れてください。")
 
 
-def check_packages() -> None:
-    """必須パッケージの有無。**入れ方まで示す**(基盤仕様書 ステップ5)。"""
+def check_packages(packages=None) -> None:
+    """必須パッケージの有無。**入れ方まで示す**(基盤仕様書 ステップ5)。
+
+    既定(`None`)はブラウザ版の一覧。
+    """
     import importlib.util
 
-    missing = [pip_name for module, pip_name in REQUIRED_PACKAGES
+    if packages is None:
+        packages = REQUIRED_PACKAGES
+    missing = [pip_name for module, pip_name in packages
                if importlib.util.find_spec(module) is None]
     if missing:
         raise StartupError(
@@ -170,10 +183,10 @@ def check_config() -> None:
         log().warning("%s", problem)
 
 
-def run_environment_checks() -> Path:
+def run_environment_checks(*, bridge: bool = False) -> Path:
     """順に確認する。落ちたところで理由が分かるように分けてある。"""
     check_python_version()
-    check_packages()
+    check_packages(BRIDGE_PACKAGES if bridge else None)
     root = check_writable()
     check_config()
     return root
@@ -261,6 +274,11 @@ def start(mode: str, *, open_browser: bool = True) -> int:
     # ここから先の失敗は**必ずロックを手放してから**投げる。
     # 残すと、次の起動が「起動中のまま応答がない」を待つことになる
     try:
+        # --- デスクトップ版が動いていれば止まる(同時に動かさない)---
+        if launch_guard.hold_app_lock(launch_guard.KIND_BROWSER) is None:
+            message, hint = launch_guard.other_running_message(launch_guard.KIND_BROWSER)
+            raise StartupError(message, hint, CODE_OTHER_RUNNING)
+
         # --- ポート選び ---
         port = launch_guard.pick_port(mode)
         if port is None:
@@ -321,6 +339,7 @@ def start(mode: str, *, open_browser: bool = True) -> int:
         return 0
     finally:
         launch_guard.remove_lock(mode)
+        launch_guard.release_app_lock()
         log().info("終了しました: mode=%s", mode)
 
 
@@ -366,7 +385,47 @@ def _hard_exit() -> None:
     os._exit(0)
 
 
-def _initialize(srv) -> None:
+def start_bridge(mode: str, *, token: str = "", server_factory) -> int:
+    """デスクトップ版の起動(`bridge.py` から)。**ポートを使わない。**
+
+    窓・多重起動の防止・終了は外枠(Rust/Tauri)が持つ。ここでするのはブラウザ版と同じ
+    「待機画面 → 本体を組み立てる → 初期化」だけで、中身(`_initialize`)は共有する
+    (python-web-tools と同じ作り)。**ブラウザ版が動いていれば止まる。**
+    """
+    import secrets
+
+    import launch_guard
+    import server as server_module
+
+    mode = resolve_mode(mode)
+    log_environment(mode)
+    if launch_guard.hold_app_lock(launch_guard.KIND_DESKTOP) is None:
+        message, hint = launch_guard.other_running_message(launch_guard.KIND_DESKTOP)
+        raise StartupError(message, hint, CODE_OTHER_RUNNING)
+    try:
+        srv = server_factory(mode, token or secrets.token_urlsafe(24))
+        thread = server_module.run_in_background(srv)
+        # stop.bat・状態表示が「デスクトップ版が動いている」と分かるように
+        launch_guard.write_desktop_marker(mode)
+        log().info("待機画面まで %.2f秒(デスクトップ版)", time.monotonic() - _BOOT_AT)
+        try:
+            srv.build()
+        except Exception as exc:                  # noqa: BLE001 - 画面に出して継続
+            log().exception("アプリを組み立てられませんでした")
+            srv.boot.mark_error(f"アプリを組み立てられませんでした: {exc}")
+            _hold_until_stopped(srv, thread)
+            return 1
+        # 窓を閉じたら外枠が終わらせるので、心拍による自動終了は使わない
+        _initialize(srv, watch_idle=False)
+        _hold_until_stopped(srv, thread)
+        log().info("終了しました: mode=%s(デスクトップ版)", mode)
+        return 0
+    finally:
+        launch_guard.remove_desktop_marker()
+        launch_guard.release_app_lock()
+
+
+def _initialize(srv, *, watch_idle: bool = True) -> None:
     """重い初期化。サーバが立ってから行う。
 
     ここで失敗しても**サーバは落とさない**。落とすと利用者のブラウザには
@@ -388,8 +447,9 @@ def _initialize(srv) -> None:
         srv.mark_error(f"初期化に失敗しました: {exc}")
         return
 
-    # 画面が居なくなったら終わる(基盤仕様書 2.8)
-    _watch_for_idle(srv)
+    # 画面が居なくなったら終わる(基盤仕様書 2.8)。デスクトップ版は窓が閉じたら終わる
+    if watch_idle:
+        _watch_for_idle(srv)
     srv.mark_ready(True)
 
 

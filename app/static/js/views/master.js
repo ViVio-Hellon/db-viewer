@@ -1,6 +1,7 @@
 /* マスタメンテナンス(VBA MF2)。判断はサーバ。 */
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
+import { confirmBox } from "../askbox.js";
 import { createHelpers, isNumericVba } from "../helpers.js";
 import { makeSortable } from "../sort_table.js";
 
@@ -157,7 +158,7 @@ function renderFields() {
       if ((event.key === "Delete" || event.key === "Backspace") && inp.readOnly && !f.is_key) {
         event.preventDefault();
         if (f.kind === "auto" || f.kind === "view") { toast("編集禁止項目です。", "info"); return; }
-        if (confirm("入力制限がある項目です。削除しますか?")) { inp.value = ""; inp.classList.toggle("is-changed", inp.value !== f.original); }
+        confirmBox("入力制限がある項目です。削除しますか?", { ok: "削除する", danger: true }).then((yes) => { if (yes) { inp.value = ""; inp.classList.toggle("is-changed", inp.value !== f.original); } });
       }
     });
     val.appendChild(inp);
@@ -191,7 +192,7 @@ async function execute() {
   try {
     let res = await api.post("/api/master/execute", { ...base, confirmed: false });
     if (res.reason === "question") {
-      const yes = confirm(res.message);
+      const yes = await confirmBox(res.message, { ok: "はい", cancel: "いいえ" });
       res = await api.post("/api/master/execute", { ...base, confirmed: true, answer: yes });
     }
     toast(res.message, res.ok ? "ok" : "warn");
@@ -259,7 +260,7 @@ async function openSettingRow(conv, key) {
 async function remove() {
   if (state.selected < 0) { toast("削除対象データがありません。", "info"); return; }
   const row = state.rows[state.selected];
-  if (!confirm("削除しますか？")) { toast("キャンセルしました。", "info"); return; }
+  if (!(await confirmBox("削除しますか？", { ok: "削除する", danger: true }))) { toast("キャンセルしました。", "info"); return; }
   try {
     const res = await api.post("/api/master/delete", { table: state.table, row, confirmed: true, answer: true });
     toast(res.message, res.ok ? "warn" : "warn");

@@ -1,6 +1,7 @@
 /* ログイン画面。判定はサーバ(VBA と同じ文言)。 */
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
+import { confirmBox } from "../askbox.js";
 
 export function start(nextUrl) {
   const form = document.getElementById("loginForm");
@@ -24,7 +25,8 @@ export function start(nextUrl) {
   // VBA Login.LOCKBT_DblClick: 起動モード設定情報の初期化
   const resetMode = document.getElementById("resetMode");
   if (resetMode) resetMode.addEventListener("click", async () => {
-    if (!confirm(resetMode.dataset.ask || "起動モード設定情報を初期化しますか？")) return;
+    if (!(await confirmBox(resetMode.dataset.ask || "起動モード設定情報を初期化しますか？",
+                           { ok: "初期化する", danger: true }))) return;
     try {
       const res = await api.post("/api/settings/reset-mode", {});
       toast(res.message, "ok");

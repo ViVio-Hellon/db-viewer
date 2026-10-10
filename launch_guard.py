@@ -503,3 +503,169 @@ def build_lock_info(mode: str, port: int, token: str = "") -> LockInfo:
         app_root=str(app_config.APP_ROOT),
         token=token,
     )
+
+
+# ------------------------------------------------------------------
+# ブラウザ版とデスクトップ版を同時に動かさない
+# ------------------------------------------------------------------
+# 2つが同時に動くと、同じ本体(.sqlite3)・同じ設定・同じ記録に 2 つの Python が書きに行く。
+# **後から開いたほうが止まる**(理由を出す)。
+#
+# 錠は OS のファイルロック(`runtime/app.lock`)。ブラウザ版(start_app.py)も
+# デスクトップ版(bridge.py)も、業務を始める前にこれを取り、終わるまで握る。
+# プロセスが落ちれば OS が外すので、残らない。誰が握っているかは `app_owner.json` に書く
+# (止まる側が理由の文に使う)。
+APP_LOCK = "app.lock"
+APP_OWNER = "app_owner.json"
+KIND_BROWSER = "browser"
+KIND_DESKTOP = "desktop"
+KIND_LABEL = {KIND_BROWSER: "ブラウザ版", KIND_DESKTOP: "デスクトップ版"}
+
+_held_app_lock = None
+
+
+def _app_runtime(name: str) -> Path:
+    return app_config.local_dir("runtime") / name
+
+
+def _os_lock(fp) -> bool:
+    """開いたファイルに、待たない排他の錠をかける。取れたら True。"""
+    try:
+        if os.name == "nt":
+            import msvcrt
+            fp.seek(0)
+            msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def hold_app_lock(kind: str):
+    """この版で動いてよいか。よければ錠を握ったまま返す(終わるまで離さない)。
+
+    戻り値: 錠のファイル(取れた)/ `None`(もう一方の版が動いている)。
+    錠のファイルを作れない事情(権限など)では起動を止めない(守りは弱まるが、動かないよりよい)。
+    """
+    global _held_app_lock
+    if _held_app_lock is not None:
+        return _held_app_lock
+    path = _app_runtime(APP_LOCK)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fp = open(path, "a+b")
+    except OSError as exc:
+        log.warning("同時起動の錠を作れませんでした (%s): %s", path, exc)
+        return True
+    if not _os_lock(fp):
+        fp.close()
+        return None
+    _held_app_lock = fp
+    try:
+        _app_runtime(APP_OWNER).write_text(json.dumps({
+            "kind": kind, "pid": os.getpid(), "started_at": time.time(),
+            "app_root": str(app_config.APP_ROOT)}, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        log.warning("同時起動の持ち主を書けませんでした: %s", exc)
+    log.info("同時起動の錠を取りました: %s (%s)", path, KIND_LABEL.get(kind, kind))
+    return fp
+
+
+def release_app_lock() -> None:
+    """錠を離す(試験と、終わるとき)。プロセスが終われば OS が離すので、呼ばなくても残らない。"""
+    global _held_app_lock
+    fp, _held_app_lock = _held_app_lock, None
+    if fp is None or fp is True:
+        return
+    try:
+        raw = json.loads(_app_runtime(APP_OWNER).read_text(encoding="utf-8"))
+        if int(raw.get("pid", 0)) == os.getpid():
+            _app_runtime(APP_OWNER).unlink()
+    except (OSError, ValueError):
+        pass
+    try:
+        fp.close()
+    except OSError:
+        pass
+
+
+def app_owner() -> Optional[dict]:
+    """いま錠を握っている版(書いてあれば)。"""
+    try:
+        return json.loads(_app_runtime(APP_OWNER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def other_running_message(kind: str) -> tuple[str, str]:
+    """止まる側が出す文(理由, 次にすること)。"""
+    other = KIND_DESKTOP if kind == KIND_BROWSER else KIND_BROWSER
+    owner = app_owner() or {}
+    if owner.get("kind") in KIND_LABEL:
+        other = owner["kind"]
+    started = owner.get("started_at")
+    since = (f"({time.strftime('%H:%M', time.localtime(started))} から)"
+             if isinstance(started, (int, float)) else "")
+    if other == KIND_DESKTOP:
+        hint = ("いま開いている DBビューア の窓(デスクトップ版)で使ってください。\n"
+                "ブラウザ版で使いたいときは、デスクトップ版の窓を閉じて(「終了」)から開き直してください。")
+    else:
+        hint = ("いま開いているブラウザの DBビューア(ブラウザ版)で使ってください。\n"
+                "デスクトップ版で使いたいときは、ブラウザ版の「終了」を押してから開き直してください。")
+    return (f"DBビューアの{KIND_LABEL[other]}がもう動いています{since}。"
+            f"{KIND_LABEL[kind]}とは同時に使えないので、開くのをやめました。", hint)
+
+
+# ------------------------------------------------------------------
+# デスクトップ版が動いているか(stop.bat・状態表示から)
+# ------------------------------------------------------------------
+# python-web-tools と同じ作り。デスクトップ版の多重起動は外枠(exe)が `runtime/desktop.lock`
+# を OS のロックで握って防ぐ。その錠は外から確かめない(確かめると一瞬錠を取ることになり、
+# ちょうど起動した exe が「もう動いている」と見て黙って終わる)。代わりに、中の Python
+# (bridge.py)が動いているあいだ、この印を置く。
+DESKTOP_MARKER = "desktop.json"
+
+
+def desktop_marker_path() -> Path:
+    return _app_runtime(DESKTOP_MARKER)
+
+
+def write_desktop_marker(mode: str) -> None:
+    """デスクトップ版の Python が動き始めた。書けなくても起動は止めない。"""
+    path = desktop_marker_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "app_id": app_config.app_id(), "mode": mode, "pid": os.getpid(),
+            "exe_pid": os.getppid(), "started_at": time.time(),
+            "app_root": str(app_config.APP_ROOT)}, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        log.warning("デスクトップ版の印を書けませんでした (%s): %s", path, exc)
+
+
+def remove_desktop_marker() -> None:
+    """自分の印だけを消す(あとから起動した別の Python の印は消さない)。"""
+    path = desktop_marker_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if int(raw.get("pid", 0)) == os.getpid():
+            path.unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def desktop_running() -> Optional[dict]:
+    """デスクトップ版が動いていれば、その印の中身。動いていなければ `None`。"""
+    try:
+        raw = json.loads(desktop_marker_path().read_text(encoding="utf-8"))
+        pid = int(raw.get("pid", 0))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not is_process_alive(pid):
+        return None
+    command = process_command_line(pid)
+    if command and "bridge.py" not in command:
+        return None
+    return raw

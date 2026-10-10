@@ -7,6 +7,7 @@
 */
 import { api, tokenUrl } from "../api.js";
 import { toast, toastError } from "../toast.js";
+import { confirmBox } from "../askbox.js";
 import { createHelpers, isDateVba, isNumericVba } from "../helpers.js";
 
 const el = {};
@@ -83,7 +84,8 @@ function onKey(event, inp, f) {
   if (del && inp.readOnly && !f.is_key) {
     event.preventDefault();
     if (f.kind === "auto" || f.kind === "view") { toast("編集禁止項目です。", "info"); return; }
-    if (confirm("入力制限がある項目です。削除しますか?")) { inp.value = ""; markChanged(inp, f); }
+    confirmBox("入力制限がある項目です。削除しますか?", { ok: "削除する", danger: true })
+      .then((yes) => { if (yes) { inp.value = ""; markChanged(inp, f); } });
   }
 }
 
@@ -209,7 +211,7 @@ async function execute() {
   try {
     let res = await api.post("/api/record/execute", { ...base, confirmed: false });
     if (res.reason === "question") {
-      const yes = confirm(res.message);
+      const yes = await confirmBox(res.message, { ok: "はい", cancel: "いいえ", danger: state.mode === "削除" });
       res = await api.post("/api/record/execute", { ...base, confirmed: true, answer: yes });
     }
     if (res.ok) {

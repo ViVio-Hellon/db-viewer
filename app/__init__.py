@@ -276,6 +276,11 @@ def _login_required():
     return None
 
 
+# デスクトップ版(`bridge.py`)の画面の宛先。Windows(WebView2)は http://app.localhost、
+# ほか(WebKitGTK など)は app://localhost(`src-tauri/src/main.rs` の `origin`)
+BRIDGE_HOSTS = ("app.localhost", "localhost")
+
+
 def _register_security(app: Flask) -> None:
     @app.before_request
     def _check_request():                       # noqa: ANN202 - Flaskのフック
@@ -283,7 +288,12 @@ def _register_security(app: Flask) -> None:
         # 攻撃者のドメインを 127.0.0.1 に向けられても、Hostヘッダが
         # 一致しないので弾ける
         host = (request.host or "").split(":")[0]
-        if host not in ("127.0.0.1", "localhost"):
+        allowed = ("127.0.0.1", "localhost")
+        if app.config.get("BRIDGE"):
+            # デスクトップ版: 外枠(Tauri)の窓の宛先。TCP を通らないので
+            # リバインディングの心配は無いが、知らない宛先は今までどおり断る
+            allowed = allowed + BRIDGE_HOSTS
+        if host not in allowed:
             log.warning("Host不一致で拒否: %s", request.host)
             return jsonify(_error("bad_host", "このアドレスからは利用できません")), 400
 

@@ -72,8 +72,8 @@ class StepCeilingTest(unittest.TestCase):
         # helpers.js は画面の部品を読み込むので、関数だけを取り出して動かす
         src = (ROOT / "app/static/js/helpers.js").read_text(encoding="utf-8")
         start = src.index("function decimals(")
-        end = src.index("\n}\n", src.index("export function ceilToStep(")) + 3
-        body = src[start:end].replace("export function", "function")
+        end = src.index("\n}\n", src.index("function ceilToStep(")) + 3
+        body = src[start:end]
         cases = [[0.07, 0.01], [1.11, 0.01], [0.3, 0.1], [0.7, 0.1], [1.05, 0.1], [7, 5], [2.51, 0.5], [12, 1]]
         js = body + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(([v, s]) => ceilToStep(v, s))));"
         out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)

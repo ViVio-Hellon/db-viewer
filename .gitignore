@@ -5,3 +5,9 @@ __pycache__/
 /logs/
 *.sqlite3-journal
 Access.log
+
+# デスクトップ版の外枠(Rust/Tauri)を作ったときにできるもの
+src-tauri/target/
+src-tauri/gen/
+# 配るときに直下へ置く exe(GitHub Actions の成果物)。リポジトリには入れない
+/DBViewer.exe

@@ -273,7 +273,13 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     targets = list(modes.KEYS) if args.all else [modes.normalize(args.mode)]
 
+    import launch_guard
+
+    desktop = launch_guard.desktop_running()
     if args.status:
+        if desktop is not None:
+            print(f"[稼働] デスクトップ版(exe の窓): pid={desktop.get('pid')} "
+                  f"mode={desktop.get('mode')}")
         for mode in targets:
             health = status(mode)
             if health is None:
@@ -285,11 +291,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     failed = False
+    # **止めなかった理由を先に出す**(python-web-tools と同じ)。「起動していません」が先に来ると、
+    # デスクトップ版が動いているのに止めたように読める
+    if desktop is not None:
+        print(DESKTOP_MESSAGE)
+        failed = True
     for mode in targets:
         result = stop(mode, force=args.force)
         print(result)
         failed = failed or not result.stopped
     return 1 if failed else 0
+
+
+# デスクトップ版(exe の窓)は止めない。窓の × か画面の「終了」で閉じる
+# (閉じるときに実行中の処理を訊くため)。**「起動していません」で 0 を返さない**
+DESKTOP_MESSAGE = ("[--] デスクトップ版(exe の窓)が動いています。stop.bat では止めません。\n"
+                   "    窓の × か画面の「終了」で閉じてください(実行中の処理があれば訊きます)")
 
 
 if __name__ == "__main__":

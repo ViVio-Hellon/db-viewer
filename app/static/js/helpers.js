@@ -149,7 +149,7 @@ function decimals(x) {
  * 刻み 0.1 のとき 0.3 が 0.30000000000000004 になって本体に書かれていた(違う数値が入る)。
  * 桁をそろえた整数で割り算し、刻みの桁で書く。
  */
-export function ceilToStep(v, step) {
+function ceilToStep(v, step) {
   const d = Math.min(12, Math.max(decimals(step), decimals(v)));
   const k = 10 ** d;
   const vi = Math.round(v * k);

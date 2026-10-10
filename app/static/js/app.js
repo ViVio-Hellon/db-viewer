@@ -7,6 +7,8 @@
 import { api } from "./api.js";
 import { startHeartbeat } from "./health.js";
 import { toast, toastError, addRecordNo } from "./toast.js";
+import { confirmBox } from "./askbox.js";
+import * as desktop from "./desktop.js";
 import * as errlog from "./errlog.js";
 import * as busy from "./busy.js";
 import * as nav from "./nav.js";
@@ -16,6 +18,8 @@ import * as unsaved from "./unsaved.js";
 // **押されたボタンを覚えておく。** `api.js` が送信を始めるときに、
 // そのボタンを待機の姿にする(無言で待たせない)
 busy.watchClicks();
+// デスクトップ版: 別窓で開くリンクを外枠に頼む(ブラウザ版では何もしない)
+desktop.watchLinks();
 
 // 拾われなかった画面のエラーを記録へ送り、番号を知らせる
 errlog.install((rid) => {
@@ -65,7 +69,7 @@ function wireQuit(button) {
       if (err.status === 409) {
         // 中断してよいか・保存せずに終えてよいかは利用者が決める。
         // **聞く文はサーバが持つ**(実行中の処理か、保存していない図か)
-        if (confirm(err.message || "終了しますか?")) {
+        if (await confirmBox(err.message || "終了しますか?", { ok: "終了する", danger: true })) {
           // 捨ててよいと答えたので、閉じるときにもう一度は聞かない
           unsaved.allowLeave();
           try {
