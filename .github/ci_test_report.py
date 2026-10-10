@@ -14,10 +14,20 @@ done = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "test
 out = done.stdout + done.stderr
 print(out)
 blocks = re.split(r"^={50,}\n", out, flags=re.M)
-count = 0
+# 注釈は 1 段につき 10 件まで。先に「落ちた試験の全部」を 1 件にまとめて出す
+listing = []
 for block in blocks:
     m = re.match(r"(FAIL|ERROR): (.+)", block)
-    if not m or count >= 40:
+    if m:
+        last = [ln for ln in block.strip().splitlines() if ln.strip()][-1]
+        listing.append(f"{m.group(1)} {m.group(2)[:120]} → {last[:160]}")
+if listing:
+    text = "\n".join(listing).replace("%", "%25").replace("\n", "%0A")
+    print(f"::error title=落ちた試験の一覧({len(listing)} 件)::{text[:60000]}")
+count = 1
+for block in blocks:
+    m = re.match(r"(FAIL|ERROR): (.+)", block)
+    if not m or count >= 10:
         continue
     count += 1
     body = block.split("-" * 70, 1)[-1].strip().splitlines()

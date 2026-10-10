@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import socket
+from contextlib import closing
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -280,7 +281,7 @@ def _db_section(db_path: Path, prof: config.Profile, online: bool) -> Section:
         return section
     try:
         st = db_path.stat()
-        with shared_db.connect(db_path, read_only=True) as conn:
+        with closing(shared_db.connect(db_path, read_only=True)) as conn:
             names = [r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
         section.checks.append(Check("本体ファイル", str(db_path), OK,
@@ -315,7 +316,7 @@ def _setup_section(db_path: Path) -> Section:
         section.checks.append(Check("検査", "本体ファイルが無いので確かめられません", INFO))
         return section
     try:
-        with shared_db.connect(db_path, read_only=True) as conn:
+        with closing(shared_db.connect(db_path, read_only=True)) as conn:
             setup = settings_tables.load_setup(conn)
     except settings_tables.SetupError as exc:
         section.checks.append(Check("必須テーブル", "足りません", NG, str(exc)))

@@ -66,6 +66,27 @@ for _var, _name in (("DBVIEWER_CONFIG_PATH", "user_config.json"),
 # --- 3. コンソールへの出力を止める -----------------------------------
 # 出力先をぜんぶ決めたあとに import する(`config` は読み込み時に
 # 環境変数を1度だけ読むため、順序を入れ替えてはいけない)
+# --- Windows: 試験の一時フォルダを消せないことで落とさない -------------------
+# Windows は開いたままのファイルを消せない(WinError 32)。試験の中で開いた接続が
+# まだ片づいていない(ガベージコレクタ待ち)うちに一時フォルダを消すと、試験の中身とは
+# 関係なく ERROR になる(GitHub Actions の Windows で 24 件起きた)。消す前に片づけを促し、
+# それでも消せないものは残す(一時フォルダなので OS が後で片づける)。
+if os.name == "nt":
+    import gc
+
+    _TemporaryDirectory = tempfile.TemporaryDirectory
+
+    class _WinTemporaryDirectory(_TemporaryDirectory):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("ignore_cleanup_errors", True)
+            super().__init__(*args, **kwargs)
+
+        def cleanup(self):
+            gc.collect()
+            super().cleanup()
+
+    tempfile.TemporaryDirectory = _WinTemporaryDirectory
+
 from dbviewer import logging_utils  # noqa: E402
 
 logging_utils.silence_console()
