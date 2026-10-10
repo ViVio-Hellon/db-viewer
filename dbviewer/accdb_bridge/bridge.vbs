@@ -26,6 +26,11 @@ Const adDBDate = 133
 Const adDBTime = 134
 Const adDBTimeStamp = 135
 Const adBoolean = 11
+Const adSingle = 4
+Const adDouble = 5
+Const adCurrency = 6
+Const adDecimal = 14
+Const adNumeric = 131
 Const adLongVarBinary = 205
 Const adBinary = 128
 Const adVarBinary = 204
@@ -157,9 +162,16 @@ Function CellText(fld)
       If v Then CellText = "-1" Else CellText = "0"
     Case adLongVarBinary, adBinary, adVarBinary
       CellText = "\N"
+    Case adSingle, adDouble, adCurrency, adDecimal, adNumeric
+      ' CStr follows the PC's regional settings (2,5 on some PCs). Always write a dot.
+      CellText = Replace(CStr(v), DecimalMark(), ".")
     Case Else
       CellText = Esc(CStr(v))
   End Select
+End Function
+
+Function DecimalMark()
+  DecimalMark = Mid(CStr(0.5), 2, 1)
 End Function
 
 Function Esc(s)

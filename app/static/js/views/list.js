@@ -159,7 +159,19 @@ function onCellEdit(row, name, td) {
   }
   const key = keyOf(row);
   const names = data.columns.map((c) => c.name);
-  const seen = row[names.indexOf(name)] ?? "";
+  const shown = row[names.indexOf(name)] ?? "";
+  if (spec.money) {
+    // 金額は一覧で "#,##0"(丸め)で見せている。丸めた数から直し始めない(本体の値を取ってくる)
+    api.post("/api/list/value", { key, column: name })
+      .then((res) => beginEdit(td, key, name, String(res.value ?? ""), spec, row))
+      .catch((err) => toastError(err));
+    return true;
+  }
+  beginEdit(td, key, name, shown, spec, row);
+  return true;
+}
+
+function beginEdit(td, key, name, seen, spec, row) {
   if (spec.inline === "pick") {
     // マスタ・日付・数値などは、登録画面と同じ選ぶ窓で
     const inp = document.createElement("input");
@@ -167,10 +179,9 @@ function onCellEdit(row, name, td) {
     helpers.open({ ...spec, value: seen, original: seen }, inp).then((res) => {
       if (res !== undefined) saveCell(key, name, res.value, seen, row);
     });
-    return true;
+    return;
   }
   startTextEdit(td, key, name, seen, spec, row);
-  return true;
 }
 
 function startTextEdit(td, key, name, seen, spec, row) {
@@ -188,7 +199,8 @@ function startTextEdit(td, key, name, seen, spec, row) {
     done = true;
     const v = input.value;
     td.classList.remove("is-editing");
-    td.textContent = commit ? v : seen;
+    // やめたときは一覧の見せ方(金額ならカンマ付き)に描き直す
+    if (commit) td.textContent = v; else grid.updateRow(key, row);
     if (commit && v !== seen) saveCell(key, name, v, seen, row);
     grid.focus();
   };

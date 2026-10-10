@@ -17,6 +17,7 @@ Web 版はふつうの CSV/TSV にした(意図した差異、docs/06)。
 from __future__ import annotations
 
 import csv
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -99,6 +100,10 @@ def _number(value: str):
     try:
         n = float(s)
     except ValueError:
+        return value
+    # Excel が数として持てるのは有効 15 桁まで。それより長い数字(番号など)を数にすると、
+    # 開いたときに下の桁が 0 に化ける(12345678901234567 → 12345678901234500)。文字のまま出す
+    if len(re.sub(r"[^0-9]", "", s.split("e")[0].split("E")[0]).lstrip("0")) > 15:
         return value
     return int(n) if n.is_integer() and "." not in s and "e" not in s.lower() else n
 

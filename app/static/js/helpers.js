@@ -121,15 +121,43 @@ async function numHelper(f, inp) {
   box.append(n, r);
   return openDialog(`数値入力(形式 ${mode})`, `${min} 〜 ${max}、刻み ${step}`, box, () => {
     // VBA BENT_Click: Ceiling(値, 刻み)。範囲外は最大/最小に直して知らせる
-    let v = n.value === "" ? Number(inp.value) || 0 : Number(n.value);
-    if (step > 0) v = Math.ceil(v / step) * step;
+    let v = n.value === "" ? Number(String(inp.value).replace(/,/g, "")) || 0 : Number(n.value);
+    if (step > 0) v = ceilToStep(v, step);
     if (v > max) { toast(`最大値 ${max} を超えているので、最大値に変換されました。`, "info"); v = max; }
     if (v < min) { toast(`最小値 ${min} を超えているので、最小値に変換されました。`, "info"); v = min; }
     return { value: String(v) };
   });
 }
 
-function clampNum(v, min, max) { const x = Number(v) || 0; return Math.min(Math.max(x, min), max); }
+function clampNum(v, min, max) {
+  const x = Number(String(v ?? "").replace(/,/g, "")) || 0;
+  return Math.min(Math.max(x, min), max);
+}
+
+/** 小数点以下の桁数(1e-7 のような書き方も)。 */
+function decimals(x) {
+  const s = String(x).toLowerCase();
+  const [m, e] = s.split("e");
+  const d = (m.split(".")[1] || "").length - (e ? Number(e) : 0);
+  return Math.max(0, d);
+}
+
+/**
+ * 刻みの倍数に切り上げる(VBA の Ceiling)。**10 進の桁で計算する。**
+ *
+ * `Math.ceil(v / step) * step` は 2 進の誤差で、刻み 0.01 のとき 0.07 が 0.08 に・1.11 が 1.12 に、
+ * 刻み 0.1 のとき 0.3 が 0.30000000000000004 になって本体に書かれていた(違う数値が入る)。
+ * 桁をそろえた整数で割り算し、刻みの桁で書く。
+ */
+export function ceilToStep(v, step) {
+  const d = Math.min(12, Math.max(decimals(step), decimals(v)));
+  const k = 10 ** d;
+  const vi = Math.round(v * k);
+  const si = Math.round(step * k);
+  if (!si) return v;
+  const q = Math.ceil(vi / si) * si;
+  return Number((q / k).toFixed(d));
+}
 
 async function calendarHelper(f, inp) {
   const box = document.createElement("div"); box.className = "field";

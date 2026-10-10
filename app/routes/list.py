@@ -104,6 +104,22 @@ def api_cell():
                     "db_mtime": shared_db.probe().get("mtime")}), status
 
 
+@bp.post("/api/list/value")
+def api_value():
+    """本体の 1 マスの値(一覧の見せ方の前)。`{"key", "column"}` → `{"value"}`
+
+    金額の列は一覧で丸めて見せているので、その場で直すときはこの値から始める。
+    """
+    conn, setup, err = _open()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    value = cell_edit.raw_value(conn, setup, str(body.get("key") or ""), str(body.get("column") or ""))
+    if value is None:
+        return _refuse("gone", "その行はもうありません(ほかの端末が消しました)。", 404)
+    return jsonify({"value": value})
+
+
 @bp.post("/api/list/view")
 def api_view():
     conn, setup, err = _open()

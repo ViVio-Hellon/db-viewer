@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..vba_compat import val
+from ..vba_compat import number_text, val
 
 # 出力例の見出し = 出す列(この順)
 COLUMNS = ("作業名", "作業NO", "Ⅰ", "Ⅱ", "Ⅲ", "Ⅳ", "RA", "PC化", "危険度分類ランク",
@@ -64,7 +64,8 @@ class Grid:
 
 
 def _num_text(x: float) -> str:
-    return str(int(x)) if float(x).is_integer() else str(x)
+    # 有効 15 桁(VBA の CStr と同じ)。str() だと 0.1 + 0.2 が 0.30000000000000004 と出る
+    return number_text(x)
 
 
 def prefix(work_no: str) -> str:

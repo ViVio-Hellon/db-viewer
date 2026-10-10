@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from . import config, editing, records, sql_builder
 from .settings_tables import SystemSetup
+from .vba_compat import format_thousands, is_numeric, to_narrow
 
 # 一覧の中で直せる欄の種類。ほかは登録画面で直す
 INLINE_TEXT = ("free", "numconv")                       # その場で文字を打つ
@@ -59,6 +60,9 @@ def edit_specs(conn: sqlite3.Connection, setup: SystemSetup) -> dict[str, dict[s
             why = "この形式は修正画面で直してください。"
         d["inline"] = "" if why else ("text" if kind in INLINE_TEXT else "pick")
         d["why"] = why
+        # 一覧は 金額 を "#,##0"(丸め・カンマ)で見せている。直すときは本体の値から始める
+        conv = setup.conv.by_item(f.name)
+        d["money"] = bool(conv and conv.ind_type == "金額")
         out[f.name] = d
     return out
 
@@ -73,9 +77,37 @@ def list_row(conn: sqlite3.Connection, setup: SystemSetup, key: str) -> Optional
 
 
 def _same(a: str, b: str, money: bool) -> bool:
-    if money:                                   # 一覧は 金額 を "#,##0" で見せている
-        a, b = a.replace(",", ""), b.replace(",", "")
-    return a.replace("\r\n", "\n") == b.replace("\r\n", "\n")
+    """画面が見ていた値と本体の値が同じか。
+
+    金額の列は、一覧では "#,##0"(カンマ・**整数に丸め**)で見せている。本体の値(1234.5)と
+    見せた形(1,235)のどちらで来ても同じとみなす。以前はカンマだけ外して比べていたので、
+    小数のある金額は「ほかの端末が変えた」と誤って断っていた。
+    """
+    a, b = a.replace("\r\n", "\n"), b.replace("\r\n", "\n")
+    if a == b:
+        return True
+    if money:
+        return a.replace(",", "") == b.replace(",", "") or format_thousands(a) == b
+    return False
+
+
+def money_value(value: str) -> str:
+    """金額の欄に打った値。"1,500" のようにカンマ入りで打っても、**数として**書く。
+
+    そのまま書くと "1,500" という文字で本体に入り、合計・並べ替え・帳票で数として扱えなくなる。
+    数でないものは打ったまま(登録の決まりの数値変換などに任せる)。
+    """
+    plain = to_narrow(value.strip()).replace(",", "")
+    return plain if plain and is_numeric(plain) else value
+
+
+def raw_value(conn: sqlite3.Connection, setup: SystemSetup, key: str, column: str) -> Optional[str]:
+    """本体の値(一覧の見せ方の前)。金額の列を直し始めるとき、丸めた数から始めないため。"""
+    if not str(key).strip().lstrip("-").isdigit():
+        return None
+    form = editing.build_form(conn, setup, "修正", str(key))
+    target = next((f for f in form.fields if f.name == column), None)
+    return None if target is None else target.original
 
 
 def save_cell(conn: sqlite3.Connection, setup: SystemSetup, key: str, column: str, value: str,
@@ -95,6 +127,8 @@ def save_cell(conn: sqlite3.Connection, setup: SystemSetup, key: str, column: st
     money = bool(conv and conv.ind_type == "金額")
     if not _same(target.original, seen, money):
         return CellResult(False, MSG_CONFLICT, "conflict", row=list_row(conn, setup, str(key)))
+    if money:
+        value = money_value(value)
     target.value = value
     if _same(target.original, value, False):
         return CellResult(True, "", "unchanged", row=list_row(conn, setup, str(key)))

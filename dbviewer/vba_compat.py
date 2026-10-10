@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
 # VBA `IsDate` が真になる代表的な書き方。Windows の日本語ロケールで
@@ -175,10 +176,29 @@ def format_thousands(value: object) -> str:
     if value is None:
         return ""
     try:
-        num = float(value)
-    except (TypeError, ValueError):
+        num = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
         return str(value)
-    return f"{int(round(num)):,}"
+    if not num.is_finite():
+        return str(value)
+    # VBA の Format は 0.5 を**0 から遠い側**へ(2.5 → 3)。Python の round は偶数の側(2.5 → 2)で、
+    # 金額の見せ方と帳票が 1 ずれていた。文字のまま 10 進で丸める(2 進の誤差も入れない)
+    return f"{int(num.quantize(Decimal(1), rounding=ROUND_HALF_UP)):,}"
+
+
+def number_text(x: float) -> str:
+    """数を VBA の `CStr` と同じく**有効 15 桁**で書く(合計・小計)。
+
+    `str(0.1 + 0.2)` は "0.30000000000000004" になり、帳票の小計にそのまま出ていた。
+    """
+    x = float(x)
+    if x.is_integer() and abs(x) < 1e15:
+        return str(int(x))
+    s = f"{x:.15g}"
+    if "e" in s:
+        mant, exp = s.split("e")
+        s = f"{mant}E{'+' if int(exp) >= 0 else '-'}{abs(int(exp))}"
+    return s
 
 
 def format_000(n: int) -> str:

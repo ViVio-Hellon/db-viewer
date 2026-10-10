@@ -282,9 +282,12 @@ def _convert(value: Optional[str], column: Column) -> object:
             return int(s)
         except ValueError:
             try:
-                return int(float(s))
+                f = float(s)
             except ValueError:
                 return value
+            # **切り捨てない。** 整数の列に小数が来たら(地域の設定・型の食い違い)小数のまま入れる。
+            # 以前は int(float(s)) で 2502.5 → 2502 と黙って書いていた(python-web-tools と同じ失敗)
+            return int(f) if f.is_integer() else f
     if t == "REAL":
         s = value.strip()
         if s == "":
