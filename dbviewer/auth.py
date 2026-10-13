@@ -32,7 +32,7 @@ from typing import Optional
 
 from . import access_log, config, user_settings
 from .logging_utils import get_logger
-from .settings_tables import field_dic, read_table
+from .settings_tables import field_dic, read_table, table_exists
 from .vba_compat import to_narrow, val_int
 
 log = get_logger("auth")
@@ -48,6 +48,10 @@ MSG_NO_PAIR = "IDと使用PCの登録で一致するものがありません。"
 MSG_BAD_PASS = "入力パスワード「{pw}」が違います。"
 MSG_TEMP_LEVEL = "登録がないので最低権限で仮設定されます。"
 MSG_NEED_LOGIN = "ログインしてください。"
+# ID の表が無い DB(設定の無い DB をそのまま開いたとき)。誰のものか分からないので見るだけ
+MSG_NO_ID_TABLE = ("この DB には ID の表が無いので、閲覧だけで開きます。"
+                   "直したいときは 設定 → かんたん設定 →「編集を始める」で自分を登録してください。")
+VIEW_ONLY_LEVEL = 1
 MSG_NO_LEVEL = "使用中の権限レベルは{lv}です。権限がありません。"
 
 
@@ -85,6 +89,13 @@ def authenticate(conn: sqlite3.Connection, inp_id: str, inp_pass: str, *,
     use_id = network_id() if use_id is None else use_id
     use_pc = pc_name() if use_pc is None else use_pc
     inp_pass_n = to_narrow((inp_pass or "").lower())
+
+    if not table_exists(conn, config.ID_TABLE):
+        dev = is_developer(use_id, use_pc)
+        access_log.write("認証成功")
+        user_settings.save(config.KEY_LAST_USER, inp_id or use_id)
+        return LoginResult(True, note="" if dev else MSG_NO_ID_TABLE, user_id=inp_id or use_id,
+                           level=config.DEVELOP_LV if dev else VIEW_ONLY_LEVEL, developer=dev)
 
     cols, rows = read_table(conn, config.ID_TABLE)
     fj = field_dic(cols)

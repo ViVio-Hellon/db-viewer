@@ -700,5 +700,7 @@ export function createGrid(root, opts = {}) {
     },
     total: () => st.rows.length,
     focus: () => wrap.focus(),
+    /** いちばん右まで見せる(列を足したあと)。 */
+    scrollToEnd: () => { wrap.scrollLeft = wrap.scrollWidth; },
   };
 }

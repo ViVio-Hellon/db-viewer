@@ -39,6 +39,7 @@ LEVEL_LABEL = {OK: "問題なし", WARN: "要確認", NG: "足りません", INF
 
 TABS: tuple[tuple[str, str], ...] = (
     ("status", "いまの状態"),
+    ("easy", "かんたん設定"),
     ("source", "接続先"),
     ("paths", "参照・出力"),
     ("behavior", "動作"),
@@ -293,25 +294,24 @@ def _db_section(db_path: Path, prof: config.Profile, online: bool) -> Section:
 
 
 def _required_tables_check(section: Section, names: list[str]) -> None:
-    """VBA `MasterFileCheck` と同じ必須テーブルの有無。"""
-    required = settings_tables.REQUIRED_TABLES
-    missing = [t for t in required if t not in names]
+    """設定の表(全般設定・ID)の有無。0.7.0 から無くても開ける(閲覧だけ・表は自動)。"""
+    wanted = (config.SET_TABLE, config.ID_TABLE)
+    missing = [t for t in wanted if t not in names]
     if missing:
-        section.checks.append(Check("必須テーブル", "足りません", NG,
-                                    "無い表: " + "、".join(missing)))
+        section.checks.append(Check("設定の表", "無い表があります(開けます)", WARN,
+                                    "無い表: " + "、".join(missing) + "。かんたん設定で作れます。"))
     else:
-        section.checks.append(Check("必須テーブル", "そろっています", OK,
-                                    "、".join(required)))
+        section.checks.append(Check("設定の表", "そろっています", OK, "、".join(wanted)))
 
 
-FIX_MASTER = ("マスタ管理で直す", "master")
+FIX_EASY = ("かんたん設定で直す", "easy")
 
 
 def _setup_section(db_path: Path) -> Section:
     """VBA 起動時の整合性検査(CheckColumns / MasterFileCheck / formatCheck)と同じ判定。"""
     from .. import settings_tables
 
-    section = Section(title="設定テーブル(起動時の検査)", mark="設", action=FIX_MASTER)
+    section = Section(title="表示する表と列の決まり", mark="設", action=FIX_EASY)
     if not db_path.is_file():
         section.checks.append(Check("検査", "本体ファイルが無いので確かめられません", INFO))
         return section
@@ -319,30 +319,37 @@ def _setup_section(db_path: Path) -> Section:
         with closing(shared_db.connect(db_path, read_only=True)) as conn:
             setup = settings_tables.load_setup(conn)
     except settings_tables.SetupError as exc:
-        section.checks.append(Check("必須テーブル", "足りません", NG, str(exc)))
+        section.checks.append(Check("表示する表", "ありません", NG, str(exc)))
         return section
     except Exception as exc:                          # noqa: BLE001
         section.checks.append(Check("検査", "読めません", NG, str(exc)))
         return section
     g = setup.general
-    section.checks.append(Check("メインテーブル名", g.main_table or "(未設定)", OK if g.main_table else NG))
-    section.checks.append(Check("初期表示", g.init_view or "(空 = 行数制限なし)", INFO))
-    section.checks.append(Check("初期フィルタ", g.init_filter or "(なし)", INFO))
-    section.checks.append(Check("帳票", g.report_str or "(なし)", INFO))
-    section.checks.append(Check("テーブル閲覧", g.browse_str or "(なし)", INFO))
-    if setup.master_problem:
-        section.checks.append(Check("MasterFileCheck", "NG", NG,
-                                    setup.master_problem + " マスタファイルに修正が必要です。"))
-    else:
-        section.checks.append(Check("MasterFileCheck", "OK", OK,
-                                    f"メイン {len(setup.main_columns)} 列 = 設定 {setup.conv.count} 行、フィルタ {len(setup.active_filters)} 件"))
+    section.checks.append(Check("表示する表", g.main_table + ("(自動)" if setup.auto_main else ""),
+                                INFO if setup.auto_main else OK,
+                                "全般設定に決まりが無いので自動で選んでいます" if setup.auto_main
+                                else "全般設定の「メインテーブル名」"))
+    section.checks.append(Check(
+        "列の決まり", "自動(どの列も自由入力)" if setup.auto_conv else f"[{g.conv_table}] で決めています",
+        INFO if setup.auto_conv else OK, f"本体 {len(setup.main_columns)} 列"))
+    section.checks.append(Check("直せる人", "ID で登録した人" if setup.has_id else "いません(閲覧だけ)",
+                                OK if setup.has_id else INFO))
+    for note in setup.notices:
+        if "自動" in note and setup.auto_main and note.startswith("表示する表"):
+            continue
+        section.checks.append(Check("お知らせ", "", WARN, note))
+    if setup.has_general:
+        section.checks.append(Check("初期表示", g.init_view or "(空 = 行数制限なし)", INFO))
+        section.checks.append(Check("初期フィルタ", g.init_filter or "(なし)", INFO))
+        section.checks.append(Check("帳票", g.report_str or "(なし)", INFO))
+        section.checks.append(Check("テーブル閲覧", g.browse_str or "(空 = 全部の表)", INFO))
     if setup.column_problems:
-        section.checks.append(Check("CheckColumns", "要確認", WARN, "\n".join(setup.column_problems)))
-    else:
-        section.checks.append(Check("CheckColumns", "OK", OK, "各表の 2 列目が表名と一致"))
-    section.checks.append(Check("formatCheck(_設定 の 11 列)", "OK" if setup.format_ok else "要確認",
-                                OK if setup.format_ok else WARN,
-                                "" if setup.format_ok else "ﾃﾞｰﾀﾃｰﾌﾞﾙのﾌｫｰﾏｯﾄに問題があります。最新の書式になっているか確認してください。"))
+        # VBA 版の決まり(マスタの 2 列目 = 表名)。Web 版は合っていなくても動く(選ぶ窓は 2 列目を使う)
+        section.checks.append(Check("CheckColumns(VBA 版の決まり)", "合っていない表があります", INFO,
+                                    "\n".join(setup.column_problems)))
+    if not setup.auto_conv and not setup.format_ok:
+        section.checks.append(Check("formatCheck(_設定 の 11 列)", "要確認", WARN,
+                                    "ﾃﾞｰﾀﾃｰﾌﾞﾙのﾌｫｰﾏｯﾄに問題があります。最新の書式になっているか確認してください。"))
     return section
 
 

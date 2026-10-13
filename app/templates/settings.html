@@ -80,6 +80,79 @@
         </div>
       </section>
 
+      {# かんたん設定(0.7.0): 設定の表を手で書かずに、画面で選ぶ。中身は views/easy.js が描く #}
+      <section class="tabpanel tabpanel--scroll" id="panel-easy" role="tabpanel" aria-labelledby="tab-easy" hidden>
+        <p class="status status--warn" id="easyLogin" hidden>
+          ログインすると、ここで決められます。
+          <a class="btn btn--find" href="/login?next=%2Fsettings%3Ftab%3Deasy" style="margin-left:8px">ログイン</a>
+        </p>
+        <p class="status status--ng" id="easyProblem" hidden></p>
+        <div class="pathcards" id="easyBody" hidden>
+          <section class="card">
+            <header>
+              <i class="ib ib--sm" aria-hidden="true">表</i>
+              <h3>表示する表</h3>
+              <span class="eyebrow">一覧に出す表</span>
+            </header>
+            <div class="pad">
+              <div class="easyrow">
+                <select class="input" id="easyMain" aria-label="表示する表" style="width:22em"></select>
+                <button class="btn btn--commit" type="button" id="easyMainSave">この表を表示する</button>
+              </div>
+              <p class="why" id="easyMainNote"></p>
+            </div>
+          </section>
+
+          <section class="card" id="easyStartCard" hidden>
+            <header>
+              <i class="ib ib--sm ib--warn" aria-hidden="true">始</i>
+              <h3>編集を始める</h3>
+              <span class="eyebrow">いまは閲覧だけ</span>
+            </header>
+            <div class="pad">
+              <p class="why">この DB には ID の表が無いので、誰も直せません。あなたを Level 5(管理者)で登録すると、
+                直す・列を足す・この画面の設定ができるようになります。ほかの人はあとで マスタ管理 の ID で足します。</p>
+              <div class="optgrid">
+                <span>ログイン ID</span><b id="easyStartId"></b>
+                <label for="easyStartName">名前</label>
+                <input class="input" id="easyStartName" autocomplete="off" placeholder="空なら ID と同じ" style="width:16em">
+                <label for="easyStartPass">パスワード</label>
+                <input class="input" id="easyStartPass" type="password" autocomplete="new-password" style="width:16em">
+              </div>
+              <div class="btn-row" style="margin-top:8px">
+                <button class="btn btn--commit" type="button" id="easyStart">自分を Level 5 で登録して編集を始める</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card easycols">
+            <header>
+              <i class="ib ib--sm" aria-hidden="true">列</i>
+              <h3>列ごとの決まり</h3>
+              <span class="eyebrow" id="easyColsWhere"></span>
+            </header>
+            <div class="pad">
+              <p class="why">入力の種類・必須・金額で見せる・並べる列 を選んで保存します。ほかの決まり(参照形式・マスタ結合・履歴・追加表示)は
+                今までどおり マスタ管理 の <span id="easyConvName"></span> で直せます。</p>
+              <p class="status status--warn" id="easyKeyNote" hidden>
+                <span>この表には「管理番号」の列が無いので、一覧で行を直す・足す・消すができません。</span>
+                <button class="btn btn--find" type="button" id="easyKey" style="margin-left:8px">管理番号を足す</button>
+              </p>
+              <div class="tablewrap easytable">
+                <table class="table">
+                  <thead><tr><th>列</th><th>入力の種類</th><th>必須</th><th>金額で見せる</th><th>この列で並べる</th></tr></thead>
+                  <tbody id="easyCols"></tbody>
+                </table>
+              </div>
+              <div class="btn-row" style="margin-top:8px">
+                <button class="btn btn--commit" type="button" id="easyColsSave">列の決まりを保存</button>
+                <span class="why" id="easyColsHint" style="margin:0"></span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="tabpanel tabpanel--scroll" id="panel-source" role="tabpanel" aria-labelledby="tab-source" hidden>
         <section class="card">
           <header>
@@ -507,6 +580,18 @@
   .optgrid { display:grid; grid-template-columns:8em 1fr; gap:8px 10px; align-items:center; margin-top:10px; font-size:var(--fs-sm); }
   .optgrid > span, .optgrid > label { color:var(--muted); }
   .opts { display:flex; flex-wrap:wrap; gap:4px 16px; }
+  /* かんたん設定 */
+  .easyrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .easyrow .input { max-width:100%; }
+  .easytable { max-height:60vh; }
+  .easytable td, .easytable th { text-align:left !important; vertical-align:middle; }
+  .easytable td.name b { color:var(--ink); overflow-wrap:anywhere; }
+  .easytable td.name small { display:block; color:var(--faint); font-family:var(--mono); font-size:var(--fs-2xs); }
+  .easytable .pick { display:flex; gap:6px; flex-wrap:wrap; }
+  .easytable .pick .input { min-width:0; }
+  .easytable tr.is-changed td { background:var(--accent-soft); }
+  .easycols { grid-column:1 / -1; }
+  #easyKeyNote { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
   /* 表を持ってくる: 落とす場所。重ねている間は色を変える */
   .dropzone { border:2px dashed var(--rule); border-radius:var(--radius-xs);
               padding:18px; margin:8px 0; display:flex; flex-direction:column;
@@ -559,6 +644,8 @@
 {% block scripts %}
 <script type="module">
   import { start } from "{{ url_for('static', filename='js/views/settings.js') }}";
+  import { start as startEasy } from "{{ url_for('static', filename='js/views/easy.js') }}";
   start({{ state | tojson }});
+  startEasy();
 </script>
 {% endblock %}

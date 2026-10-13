@@ -6,12 +6,14 @@ VBA MF1 の一覧ページ(フィルタ列・ListView・ページ)は捨て、We
 - `GET  /list`             … 画面
 - `POST /api/list/data`    … 全行・列の種類・この PC で保存した列の見せ方
 - `POST /api/list/view`    … 列の見せ方を保存する(`{"reset": true}` で初期に戻す)
+- `POST /api/list/add-column` … 本体に列を足す(Level 5。マスタ管理の「列を追加」と同じ決まり)
 """
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, render_template, request
 
-from dbviewer import auth, cell_edit, config, grid_data, records, session_setup, settings_tables, shared_db
+from dbviewer import (auth, cell_edit, config, grid_data, master_admin, records, session_setup, settings_tables,
+                      shared_db)
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 
@@ -120,6 +122,26 @@ def api_value():
     return jsonify({"value": value})
 
 
+@bp.post("/api/list/add-column")
+def api_add_column():
+    """一覧の表(本体)の末尾に列を足す。<メイン>_設定 があれば行も足す(マスタ管理と同じ決まり・Level 5)。"""
+    conn, setup, err = _open()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    table = setup.general.main_table
+    r = master_admin.add_column(conn, setup, table, str(body.get("name") or ""),
+                                kind=str(body.get("kind") or "text"), fill=str(body.get("fill") or ""),
+                                level=auth.level())
+    trace.event("list.add_column", r.message, level="INFO" if r.ok else "WARN",
+                data={"table": table, "name": body.get("name"), "kind": body.get("kind"),
+                      "reason": r.reason, "setting_table": r.setting_table, "backup": r.backup})
+    status = 200 if r.ok else 403 if r.reason == master_admin.REFUSE_LEVEL else 422
+    return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason, "column": r.column,
+                    "setting_table": r.setting_table, "setting_key": r.setting_key,
+                    "backup": r.backup}), status
+
+
 @bp.post("/api/list/view")
 def api_view():
     conn, setup, err = _open()
@@ -136,8 +158,15 @@ def api_view():
 
 
 def _setup_dict(setup) -> dict:
+    conn = get_db()
     return {
         "main_table": setup.general.main_table,
+        "key_ok": setup.key_ok,
+        "notices": setup.notices,
+        "auto_main": setup.auto_main,
+        "can_add_column": auth.level() >= master_admin.COLUMN_LEVEL,
+        "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()],
+        "setting_table": setup.general.conv_table if settings_tables.table_exists(conn, setup.general.conv_table) else "",
         "report_flag": setup.general.report_flag,
         "browse_flag": setup.general.browse_flag,
         "column_problems": setup.column_problems,

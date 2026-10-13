@@ -95,7 +95,8 @@ def build(conv: ConvTable, main_table: str, *, sql_filter: str = "",
             add_arr[cnt][2] += " AS " + ms_arr[2]
 
     # 2. 表示・ソート・追加表示
-    sort_str = key_item
+    # 既定の並びは 管理番号。その列が無い表(設定の無い DB)は 1 列目
+    sort_str = key_item if any(r.item == key_item for r in rows) or not rows else rows[0].item
     sort_mode = "ASC"
     for i in range(1, loopcnt + 1):
         r = rows[i - 1]

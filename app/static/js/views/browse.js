@@ -1,5 +1,7 @@
-/* 閲覧・出力。全般設定「テーブル閲覧」の表を、一覧と同じ表(grid.js)で見る。 */
+/* 閲覧・出力。全般設定「テーブル閲覧」の表(空なら業務の表ぜんぶ)を、一覧と同じ表(grid.js)で見る。
+   Level 5 なら、見ている表に列を足せる(addcolumn.js)。 */
 import { api } from "../api.js";
+import { openAddColumn } from "../addcolumn.js";
 import { toast, toastError } from "../toast.js";
 import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
@@ -8,6 +10,7 @@ const el = {};
 let grid = null;
 let data = null;
 let table = "";
+let caps = { can_add_column: false, kinds: [] };
 
 async function loadTables() {
   try {
@@ -18,9 +21,11 @@ async function loadTables() {
       b.addEventListener("click", () => selectTable(t));
       return b;
     }));
-    if (!d.browse_flag) {
-      el.brNote.textContent = "全般設定「テーブル閲覧」が空なので、閲覧する表はありません(マスタ管理の 全般設定 で足せます)。一覧の表は一覧画面の「出力」から出せます。";
+    caps = d;
+    if (!d.configured) {
+      el.brNote.textContent = "DB の表をぜんぶ並べています(全般設定「テーブル閲覧」で絞れます)。一覧と同じ表で見て、コピー・保存・印刷します。";
     }
+    if (!d.tables.length) el.brNote.textContent = "見られる表がありません。";
     let last = "";
     try { last = sessionStorage.getItem("dbviewer.browse.table") || ""; } catch { /* なし */ }
     if (d.tables.includes(last)) selectTable(last);
@@ -39,6 +44,7 @@ async function selectTable(t) {
     data = await api.post("/api/browse/data", { table: t });
     el.brName.textContent = t;
     el.brPrint.disabled = false; el.brOut.disabled = false;
+    el.brAddCol.hidden = !caps.can_add_column;
     if (!grid) {
       grid = createGrid(el.brGrid, {
         onViewChange: async (view) => {
@@ -62,7 +68,8 @@ function visibleTable() {
 }
 
 export function start() {
-  for (const id of ["brTables", "brName", "brNote", "brProblem", "brGrid", "brPrint", "brOut", "brMenu", "brCopy", "brSave"]) {
+  for (const id of ["brTables", "brName", "brNote", "brProblem", "brGrid", "brPrint", "brOut", "brMenu", "brCopy", "brSave",
+                    "brAddCol"]) {
     el[id] = document.getElementById(id);
   }
   out.wireMenu(el.brOut, el.brMenu);
@@ -77,5 +84,9 @@ export function start() {
     if (!t.rows.length) { toast("出す行がありません。", "warn"); return; }
     out.openSaveDialog({ title: table, columns: t.cols, rows: t.rows });
   });
+  el.brAddCol.addEventListener("click", () => openAddColumn({
+    table, url: "/api/browse/add-column", kinds: caps.kinds,
+    onDone: async (res) => { toast(res.message, "ok"); await selectTable(table); grid.scrollToEnd(); },
+  }));
   loadTables();
 }

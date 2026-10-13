@@ -33,8 +33,8 @@ from typing import Any, Optional
 
 from . import ado_sql, config, input_types, numbering
 from .logging_utils import get_logger
-from .settings_tables import (SystemSetup, column_names, field_dic, master_file_check, q, read_table,
-                              table_exists, table_names)
+from .settings_tables import (SystemSetup, column_names, field_dic, q, read_table, table_exists, table_names,
+                              user_tables)
 from .vba_compat import val_int
 
 log = get_logger("master_admin")
@@ -57,6 +57,7 @@ def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str,
       <メイン>_設定      … 登録画面の決まり(入力形式・必須・履歴・マスタ結合…)
       <メイン>_設定 が参照するマスタ(入力形式 s/m、マスタ結合)… 選ぶ窓の中身
       「表を持ってくる」で足した表
+      設定の無い DB なら、そのほかの業務の表ぜんぶ(0.7.0。どの表の行も足せるように)
       <メイン>_設定 の「履歴」に書いた H_ 表(見るだけ)
     """
     from . import table_bring
@@ -79,6 +80,11 @@ def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str,
             add(r.ms_join.split("/")[0], f"「{r.item}」に結合するマスタ")
     for name in sorted(table_bring.brought_tables(conn)):
         add(name, "表を持ってくるで足した表")
+    # 0.7.0: 設定の無い DB(表示する表・列の決まりが自動)では、業務の表をぜんぶ並べる
+    # (どの表の行も足せる・直せるように)。設定のある DB は今までどおり「使っている表だけ」
+    if setup.auto_main or setup.auto_conv:
+        for name in user_tables(conn):
+            add(name, "DB の表")
     for r in setup.conv.rows:
         if r.his_rec:
             add(r.his_rec, f"「{r.item}」の変更履歴(見るだけ)")
@@ -145,9 +151,40 @@ def setting_table_for(conn: sqlite3.Connection, setup: SystemSetup, table: str) 
     return name if name in pool else None
 
 
+# 1 列目を番号(鍵)とみなす列名。VBA の DB の表はどれもこれ
+_KEY_NAMES = (config.KEY_ITEM, "番号")
+
+
+def numbered_key(conn: sqlite3.Connection, table: str) -> bool:
+    """1 列目が番号の鍵か(新規で自動の番号を振り、修正で変えない)。
+
+    VBA のマスタ管理は 1 列目を必ず鍵にしていた。設定の無い DB の表(1 列目が 名前 など)では
+    それだと名前を打てず、同じ名前の行を上書きしてしまう。1 列目が 管理番号・番号 か、中身が
+    ぜんぶ整数(空の表なら型が整数)のときだけ鍵にする。そうでなければ**行の中身で**行を決める。
+    """
+    info = list(conn.execute(f"PRAGMA table_info({q(table)})"))
+    if not info:
+        return False
+    name, decl = info[0][1], (info[0][2] or "").upper()
+    if name in _KEY_NAMES:
+        return True
+    values = [r[0] for r in conn.execute(f"SELECT {q(name)} FROM {q(table)} LIMIT 5000")]
+    if not values:
+        return "INT" in decl
+    for v in values:
+        if v is None or isinstance(v, bool):
+            return False
+        if isinstance(v, int) or (isinstance(v, float) and v.is_integer()):
+            continue
+        if not (isinstance(v, str) and v.strip().isdigit()):
+            return False
+    return True
+
+
 def build_fields(conn: sqlite3.Connection, setup: SystemSetup, table: str, mode: str,
                  row: Optional[list[str]] = None) -> list[MasterField]:
     cols = column_names(conn, table)
+    keyed = numbered_key(conn, table)
     conv_name = setting_table_for(conn, setup, table)
     specs: dict[int, input_types.InputSpec] = {}
     if conv_name:
@@ -157,15 +194,14 @@ def build_fields(conn: sqlite3.Connection, setup: SystemSetup, table: str, mode:
         for k, r in enumerate(crows, start=1):
             specs[k] = input_types.parse(r[j - 1] if j else "")
     fields = []
-    if mode == "ADDNEW":
-        key = str(numbering.get_new_no(conn, table))
+    key = str(numbering.get_new_no(conn, table)) if mode == "ADDNEW" and keyed else ""
     for k, name in enumerate(cols, start=1):
         spec = specs.get(k, input_types.parse(""))
         if mode == "ADDNEW":
             val = key if k == 1 else ""
         else:
             val = row[k - 1] if row and k - 1 < len(row) else ""
-        fields.append(MasterField(k, name, val, val, spec, is_key=(k == 1)))
+        fields.append(MasterField(k, name, val, val, spec, is_key=(k == 1 and keyed)))
     return fields
 
 
@@ -186,8 +222,24 @@ def click_filter(columns: list[str], row: list[str]) -> str:
 def execute(conn: sqlite3.Connection, table: str, mode: str, values: list[str], key: str, *,
             confirmed: bool = False, answer: Optional[bool] = None,
             seen: Optional[list[str]] = None) -> ado_sql.AdoResult:
-    """VBA `マスタ実行`。`mode` は ADDNEW / UPDATE。"""
+    """VBA `マスタ実行`。`mode` は ADDNEW / UPDATE。
+
+    1 列目が番号の鍵でない表(`numbered_key`)は、新規はいつも足し、修正は**見ていた行**(全列が一致する
+    はじめの行)を直す。見ていた行が無ければ(ほかの端末が変えた)書かない。
+    """
     cols = column_names(conn, table)
+    if not numbered_key(conn, table):
+        if mode == "ADDNEW":
+            return ado_sql.ado_sql(conn, table, mode, values, "", key_filter="1=0",
+                                   confirmed=confirmed, answer=answer)
+        if not seen:
+            return ado_sql.AdoResult(False, MSG_NO_TARGET_EDIT, REFUSE_NO_ROW)
+        hit = conn.execute(f"SELECT rowid FROM {q(table)} WHERE {click_filter(cols, [str(v) for v in seen])} "
+                           f"ORDER BY rowid LIMIT 1").fetchone()
+        if hit is None:
+            return ado_sql.AdoResult(False, ado_sql.MSG_CONFLICT, ado_sql.REFUSE_CONFLICT, record_found=False)
+        return ado_sql.ado_sql(conn, table, mode, values, "", key_filter=f"rowid = {int(hit[0])}",
+                               confirmed=confirmed, answer=answer, update_all=True)
     key_filter = f"[{cols[0]}]={key}" if _is_number(key) else f"[{cols[0]}]='{key.replace(chr(39), chr(39) * 2)}'"
     return ado_sql.ado_sql(conn, table, mode, values, "", key_filter=key_filter,
                            confirmed=confirmed, answer=answer, seen=seen)
@@ -222,16 +274,16 @@ def delete(conn: sqlite3.Connection, table: str, row: list[str], *,
 【なぜ要るか】脱 .accdb で本体が .sqlite3 になり、Access を開いて列を足すことができなくなった。
 
 【列を追加】選んだ表の**末尾に**列を足す(SQLite の ALTER TABLE ADD COLUMN)。
-- 本体(メインテーブル)に足すときは、`<メイン>_設定` にも同じ名前の行を**同じ取引の中で**足す。
-  本体の列と `_設定` の行は 1 対 1 で、数か並びが合わないと起動が止まる(VBA `MasterFileCheck`)。
-  足した行は入力形式などが空(= 自由入力)。あとでその行を直して決める
+- 本体(メインテーブル)に足すときは、`<メイン>_設定` があれば同じ名前の行を**同じ取引の中で**足す。
+  (0.7.0 から本体と `_設定` は項目名で合わせるので、無くても動く。足した行は入力形式などが空 = 自由入力。
+  あとでその行を直すか、かんたん設定で決める)
 - `<表>_設定` を持つマスタも同じく、その表に行を足す
 - 列が決まっている表(全般設定・_設定・H_ 履歴・タイプ・フィルタ)には足さない(システムが読む形)
 - 書けるのは Level 5(表を持ってくると同じ。表の形を変えるため)。書く前に本体の控えを取る
 
 【行を追加】今までの「新規」(1 列目は自動の番号)。ただし `<メイン>_設定` に行を足すのは
 **本体に項目(列)を足すこと**なので、本体にも同じ名前の列を足す(Level 5)。
-`<メイン>_設定` の 項目名 の変更と行の削除は断る(本体の列と合わなくなり、起動が止まる)。
+`<メイン>_設定` の 項目名 の変更と行の削除は断る(本体の列との結びつきが外れる)。
 """
 
 COLUMN_LEVEL = 5
@@ -375,7 +427,7 @@ def _backup(conn: sqlite3.Connection, why: str) -> str:
 def _setting_table_of(conn: sqlite3.Connection, setup: SystemSetup, table: str) -> Optional[str]:
     """列を足すと一緒に行を足す設定の表。本体なら <メイン>_設定、ほかは <表>_設定(あれば)。"""
     if table == setup.general.main_table:
-        return setup.general.conv_table
+        return setup.general.conv_table if table_exists(conn, setup.general.conv_table) else None
     return setting_table_for(conn, setup, table)
 
 
@@ -402,12 +454,6 @@ def _append_setting_row(conn: sqlite3.Connection, conv: str, item: str,
     conn.execute(f"INSERT INTO {q(conv)} ({', '.join(q(c) for c in names)}) "
                  f"VALUES ({', '.join('?' for _ in names)})", [row[c] for c in names])
     return key
-
-
-def _check_main(conn: sqlite3.Connection, setup: SystemSetup) -> str:
-    """取引の中で、本体と <メイン>_設定 がまだ合っているか(合わなければ戻す)。"""
-    main = setup.general.main_table
-    return master_file_check(conn, main) if main and table_exists(conn, main) else ""
 
 
 def add_column(conn: sqlite3.Connection, setup: SystemSetup, table: str, name: str, *,
@@ -441,12 +487,10 @@ def add_column(conn: sqlite3.Connection, setup: SystemSetup, table: str, name: s
         conn.execute(f"ALTER TABLE {q(table)} ADD COLUMN {q(name)} {COLUMN_KINDS[kind][0]}")
         if value is not None:
             conn.execute(f"UPDATE {q(table)} SET {q(name)} = ?", (value,))
-        if conv:
+        if conv and table_exists(conn, conv):
             key = _append_setting_row(conn, conv, name)
-        bad = _check_main(conn, setup)
-        if bad:
-            conn.execute("ROLLBACK")
-            return ColumnResult(False, f"足すと起動できなくなるので、やめました: {bad}", REFUSE_FAILED, backup=backup)
+        else:
+            conv = ""
         conn.execute("COMMIT")
     except sqlite3.Error as exc:
         try:
@@ -458,7 +502,7 @@ def add_column(conn: sqlite3.Connection, setup: SystemSetup, table: str, name: s
     log.info("列を追加: %s.%s (%s) 設定=%s", table, name, kind, conv or "-")
     msg = f"[{table}] に列「{name}」を足しました。"
     if conv:
-        msg += f" [{conv}] にも行(番号 {key})を足しました。入力形式などはその行を直して決めます。"
+        msg += f" [{conv}] にも行(番号 {key})を足しました。入力の種類などは 設定 → かんたん設定 で決められます。"
     return ColumnResult(True, msg, column=name, setting_table=conv or "", setting_key=key, backup=backup)
 
 
@@ -488,10 +532,6 @@ def add_item(conn: sqlite3.Connection, setup: SystemSetup, values: list[str], *,
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(f"ALTER TABLE {q(main)} ADD COLUMN {q(item)} TEXT")
         key = _append_setting_row(conn, conv, item, values)
-        bad = _check_main(conn, setup)
-        if bad:
-            conn.execute("ROLLBACK")
-            return ado_sql.AdoResult(False, f"足すと起動できなくなるので、やめました: {bad}", REFUSE_FAILED)
         conn.execute("COMMIT")
     except sqlite3.Error as exc:
         try:
@@ -512,8 +552,8 @@ def guard_setting_change(conn: sqlite3.Connection, setup: SystemSetup, table: st
     if table != conv:
         return None
     if mode == "DELETE":
-        return ado_sql.AdoResult(False, f"項目の行は削除できません。本体({main})の列と 1 対 1 で対応していて、"
-                                        f"消すと起動できなくなります。", REFUSE_DELETE_ITEM)
+        return ado_sql.AdoResult(False, f"項目の行は削除できません。本体({main})の列と項目名で結びついていて、"
+                                        f"消すとその列の決まり(入力の種類・必須など)が外れます。", REFUSE_DELETE_ITEM)
     cols = column_names(conn, conv)
     fj = field_dic(cols)
     kj, ij = fj.get(config.KEY_ITEM, 1), fj.get(config.ITEM_NAME, 0)
@@ -523,6 +563,6 @@ def guard_setting_change(conn: sqlite3.Connection, setup: SystemSetup, table: st
         return ado_sql.AdoResult(False, "対象の行がありません(ほかの端末で変わったかもしれません)。", REFUSE_NO_ROW)
     new_item = str(values[ij - 1]) if ij and ij - 1 < len(values) else ""
     if ij and str(current[0] or "") != new_item:
-        return ado_sql.AdoResult(False, f"項目名は変えられません。本体({main})の列名と 1 対 1 で対応していて、"
-                                        f"変えると起動できなくなります。", REFUSE_RENAME_ITEM)
+        return ado_sql.AdoResult(False, f"項目名は変えられません。本体({main})の列名と項目名で結びついていて、"
+                                        f"変えるとその列の決まりが外れます。", REFUSE_RENAME_ITEM)
     return None

@@ -1126,3 +1126,11 @@ dialog::backdrop { background: var(--scrim); }
 .paths > small, .paths > .why { grid-column: 2; margin: -2px 0 4px; font-size: var(--fs-xs); color: var(--muted);
                                 overflow-wrap: anywhere; }
 @media (max-width: 760px) { .paths { grid-template-columns: 1fr; } .paths > small, .paths > .why { grid-column: 1; } }
+
+/* 列を追加(マスタ管理・一覧・テーブル閲覧で同じ窓。addcolumn.js) */
+.coldlg { width: min(560px, 94vw); }
+.colform { display: grid; grid-template-columns: 11em minmax(0, 1fr); gap: 10px 12px; align-items: center; margin-top: 6px; }
+.colform > label, .colform > span { color: var(--muted); font-size: var(--fs-sm); }
+@media (max-width: 560px) { .colform { grid-template-columns: 1fr; } }
+.opts { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.colnotes { margin: 10px 0 0; padding-left: 1.2em; font-size: var(--fs-xs); }

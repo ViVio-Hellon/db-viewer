@@ -12,12 +12,12 @@ import { openWindow } from "../desktop.js";
 import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
 import { createHelpers } from "../helpers.js";
+import { openAddColumn } from "../addcolumn.js";
 
 const el = {};
 const DETAIL_KEY = "dbviewer.list.detail";
 let grid = null;
 let data = null;            // サーバから受け取った一覧({columns, rows, key_index, setup, ...})
-let warned = false;
 let helpers = null;
 
 function problem(text) {
@@ -36,16 +36,36 @@ async function load() {
     if (!data.edit || !data.edit.allowed) {
       el.listHint.textContent = "見出しを押すと並べ替え、▾ で絞り込み。このレベルでは直せません(ダブルクリックで参照)";
     }
+    // 管理番号 の列が無い表(設定の無い DB)は、行を直す・足す・消すができない(かんたん設定で足せる)
+    const keyOk = data.setup.key_ok !== false;
+    el.actNew.hidden = !keyOk; el.actEdit.hidden = !keyOk; el.actDelete.hidden = !keyOk;
+    el.actAddCol.hidden = !data.setup.can_add_column;
+    showNotices(data.setup.notices || []);
     grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view });
-    if (data.setup.column_problems && data.setup.column_problems.length && !warned) {
-      warned = true;
-      toast(data.setup.column_problems.join("\n"), "warn");
-    }
   } catch (err) {
     if (err.status === 401) { location.href = "/login?next=/list"; return; }
     if (err.status === 409 || err.status === 422) problem(err.message);
     else toastError(err);
   }
+}
+
+/** 設定が無い・合わないところを、止めずに知らせる(かんたん設定へ)。 */
+function showNotices(list) {
+  el.listNotice.hidden = !list.length;
+  el.listNoticeText.textContent = list.join("\n");
+}
+
+function addColumn() {
+  if (!data) return;
+  openAddColumn({
+    table: data.setup.main_table, url: "/api/list/add-column", kinds: data.setup.kinds,
+    settingTable: data.setup.setting_table,
+    onDone: async (res) => {
+      toast(res.message, "ok");
+      await load();
+      grid.scrollToEnd();
+    },
+  });
 }
 
 // 他の端末が本体を書いた(心拍の db_mtime が、読んだときより新しい)
@@ -240,7 +260,8 @@ async function saveCell(key, name, value, seen, row) {
 export function start() {
   for (const id of ["listTitle", "listProblem", "listUpdated", "listReload", "lvBody", "grid", "detail",
                     "actNew", "actEdit", "actView", "actDelete", "actReport", "actPrint", "actOut",
-                    "outMenu", "outCopy", "outSave", "actDetail", "saveState", "listHint"]) {
+                    "outMenu", "outCopy", "outSave", "actDetail", "saveState", "listHint", "actAddCol",
+                    "listNotice", "listNoticeText"]) {
     el[id] = document.getElementById(id);
   }
   grid = createGrid(el.grid, {
@@ -266,6 +287,7 @@ export function start() {
   el.actEdit.addEventListener("click", () => command("修正"));
   el.actView.addEventListener("click", () => command("参照"));
   el.actDelete.addEventListener("click", () => command("削除"));
+  el.actAddCol.addEventListener("click", addColumn);
   el.actReport.addEventListener("click", runReport);
   el.actPrint.addEventListener("click", () => {
     const t = visibleTable();

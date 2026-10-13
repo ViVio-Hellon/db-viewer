@@ -95,18 +95,20 @@ class AddColumnTest(_DbCase):
             r = self.add(table=table, name="追加")
             self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "fixed_columns"), table)
 
-    def test_rollback_when_main_would_break(self):
-        """本体と _設定 が合わなくなるなら、足さずに戻す(同じ取引)。"""
+    def test_stray_setting_row_does_not_block(self):
+        """_設定 が本体と合っていなくても(0.7.0 から項目名で合わせる)、列は足せる。"""
         conn = shared_db.connect(self.path)
         self.addCleanup(conn.close)
-        setup = load_setup(conn)
-        conn.execute(f"INSERT INTO [{CONV}] (管理番号, 項目名) VALUES ('99', '迷子')")   # すでに合っていない
+        conn.execute(f"INSERT INTO [{CONV}] (管理番号, 項目名) VALUES ('99', '迷子')")   # 本体に無い項目
         conn.commit()
+        setup = load_setup(conn)
+        self.assertTrue(any("迷子" in n for n in setup.notices))
         r = master_admin.add_column(conn, setup, MAIN, "部署", level=5)
-        self.assertFalse(r.ok)
-        self.assertIn("やめました", r.message)
-        self.assertNotIn("部署", column_names(conn, MAIN))
-        self.assertEqual(conn.execute(f"SELECT COUNT(*) FROM [{CONV}] WHERE 項目名='部署'").fetchone()[0], 0)
+        self.assertTrue(r.ok, r.message)
+        self.assertIn("部署", column_names(conn, MAIN))
+        setup = load_setup(conn)
+        self.assertEqual(setup.conv.by_item("部署").item, "部署")
+        self.assertEqual([r.item for r in setup.conv.rows], setup.main_columns)
 
 
 class AddRowToSettingTest(_DbCase):

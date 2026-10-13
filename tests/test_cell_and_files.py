@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+from contextlib import closing
 import sqlite3
 import tempfile
 import time
@@ -98,19 +99,26 @@ class DbFilesTest(unittest.TestCase):
         shutil.copyfile(self.path, self.dir / "写し.sqlite3")
         with sqlite3.connect(self.dir / "ほか.db") as c:
             c.execute("CREATE TABLE x (a)")
+        with closing(sqlite3.connect(self.dir / "空.db")) as c:
+            c.execute("CREATE TABLE ID (a)")              # 業務の表が無い
         (self.dir / "作業標準管理システム.accdb").write_bytes(b"\0")
         (self.dir / "新しい.accdb").write_bytes(b"\0")
         (self.dir / "メモ.txt").write_text("x", encoding="utf-8")
         d = db_files.scan(self.dir, current=self.path)
         got = [(f["name"], f["kind"], f["current"]) for f in d["files"]]
-        self.assertEqual(got, [("作業標準管理システム.sqlite3", "open", True), ("写し.sqlite3", "open", False),
-                               ("作業標準管理システム.accdb", "convert", False), ("新しい.accdb", "convert", False),
-                               ("ほか.db", "other", False)])
+        self.assertEqual(sorted(got), sorted([
+            ("作業標準管理システム.sqlite3", "open", True), ("写し.sqlite3", "open", False),
+            ("ほか.db", "open", False),                          # 設定の表が無くても開ける(0.7.0)
+            ("作業標準管理システム.accdb", "convert", False), ("新しい.accdb", "convert", False),
+            ("空.db", "other", False)]))
+        self.assertEqual([k for _n, k, _c in got], ["open", "open", "open", "convert", "convert", "other"])
         notes = {f["name"]: f["note"] for f in d["files"]}
         self.assertIn("327 件", notes["写し.sqlite3"])
         self.assertIn("変換済み", notes["作業標準管理システム.accdb"])
         self.assertIn("Access 取り込み", notes["新しい.accdb"])
         self.assertIn("全般設定", notes["ほか.db"])
+        self.assertIn("閲覧だけ", notes["ほか.db"])
+        self.assertIn("表がありません", notes["空.db"])
         self.assertEqual(db_files.scan(self.dir / "無い")["exists"], False)
 
     def test_open_db_and_web(self):

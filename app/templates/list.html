@@ -9,6 +9,8 @@
   .lv__title { display:flex; align-items:baseline; gap:10px; min-width:0; }
   .lv__title h2 { font-size:var(--fs-xl); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .lv__act { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .lv__notice { white-space:pre-line; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .lv__notice > span { flex:1; min-width:0; }
   .lv__sep { width:1px; align-self:stretch; background:var(--rule); margin:0 4px; }
   .lv__body { display:grid; grid-template-columns:minmax(0,1fr) 21rem; gap:12px; flex:1; min-height:0; }
   .lv__body.no-detail { grid-template-columns:minmax(0,1fr); }
@@ -58,6 +60,7 @@
       <button class="btn btn--find" type="button" id="actEdit" disabled>修正</button>
       <button class="btn btn--find" type="button" id="actView" disabled>参照</button>
       <button class="btn btn--danger" type="button" id="actDelete" disabled>削除</button>
+      <button class="btn btn--commit" type="button" id="actAddCol" hidden title="この表のいちばん右に列を足します(Level 5)"><span class="gl">＋</span>列を追加</button>
       <span class="lv__sep" aria-hidden="true"></span>
       <button class="btn btn--find" type="button" id="actReport" hidden title="全般設定「帳票」の帳票を、いま絞り込んでいる行で作ります(並びは帳票の決まりどおり)">帳票</button>
       <button class="btn btn--find" type="button" id="actPrint" title="いま見えている表をそのまま印刷(A4 横)">印刷</button>
@@ -73,6 +76,10 @@
   </div>
 
   <p class="status status--ng" id="listProblem" hidden></p>
+  <p class="status status--warn lv__notice" id="listNotice" hidden>
+    <span id="listNoticeText"></span>
+    <a class="btn btn--find" href="/settings?tab=easy" style="margin-left:8px">かんたん設定</a>
+  </p>
   <p class="status status--warn" id="listUpdated" hidden>
     他の端末で更新されました。表示している一覧は古い可能性があります。
     <button class="btn btn--find" type="button" id="listReload" style="margin-left:8px">再読込</button>

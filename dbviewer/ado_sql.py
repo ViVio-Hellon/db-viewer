@@ -95,8 +95,11 @@ def find_rows(conn: sqlite3.Connection, table: str, where: str) -> list[tuple]:
 def ado_sql(conn: sqlite3.Connection, table: str, mode: str, values: Sequence[object],
             key_field: str = "", *, skip_msg: bool = False, key_filter: str = "",
             confirmed: bool = False, answer: Optional[bool] = None,
-            seen: Optional[Sequence[object]] = None) -> AdoResult:
-    """`values` は表の列順(0 始まり)。`answer` は質問への返事(None = まだ聞いていない)。"""
+            seen: Optional[Sequence[object]] = None, update_all: bool = False) -> AdoResult:
+    """`values` は表の列順(0 始まり)。`answer` は質問への返事(None = まだ聞いていない)。
+
+    `update_all` … 修正で 1 列目も書く(1 列目が鍵でない表。行は `key_filter` の rowid で決める)。
+    """
     exe = normalize_mode(mode)
     cancel_msg, no_rec_msg, has_rec_msg, done_msg, _ = _MSG[exe]
     columns = column_names(conn, table)
@@ -140,6 +143,9 @@ def ado_sql(conn: sqlite3.Connection, table: str, mode: str, values: Sequence[ob
             marks = ", ".join("?" for _ in columns)
             conn.execute(f"INSERT INTO {q(table)} ({', '.join(q(c) for c in columns)}) VALUES ({marks})",
                          vals[:len(columns)])
+        elif real == "UPDATE" and update_all:
+            sets = ", ".join(f"{q(c)}=?" for c in columns)
+            conn.execute(f"UPDATE {q(table)} SET {sets} WHERE rowid = ?", [*vals[:len(columns)], rows[0][0]])
         elif real == "UPDATE":
             sets = ", ".join(f"{q(c)}=?" for c in columns[1:])
             conn.execute(f"UPDATE {q(table)} SET {sets} WHERE {where}", vals[1:len(columns)])

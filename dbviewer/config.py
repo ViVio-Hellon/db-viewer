@@ -145,6 +145,7 @@ KEY_LOG_DIR = "log_dir"              # 記録(ログ)の置き場所(空なら�
 KEY_LOG_KEEP_DAYS = "log_keep_days"  # 記録を残す日数(既定 90。0 = 消さない)
 DEFAULT_LOG_KEEP_DAYS = 90
 KEY_LAST_USER = "last_user"          # 前回のログイン ID(入力欄の初期値)
+KEY_MAIN_PICK = "main_table_pick"     # 全般設定に決まりが無い DB で、この PC が選んだ「表示する表」({DB のパス: 表})
 
 
 def is_relative_setting(text: str) -> bool:

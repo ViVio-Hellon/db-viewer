@@ -1,7 +1,8 @@
 """テーブル閲覧と出力
 
 - `GET  /browse`               … 画面
-- `POST /api/browse/tables`    … 全般設定「テーブル閲覧」の表
+- `POST /api/browse/tables`    … 全般設定「テーブル閲覧」の表(空なら業務の表ぜんぶ。0.7.0)
+- `POST /api/browse/add-column` … 見ている表に列を足す(Level 5。マスタ管理の「列を追加」と同じ決まり)
 - `POST /api/browse/data`      … 表の全行・列の種類・列の見せ方(一覧と同じグリッドで見る)
 - `POST /api/browse/view`      … 列の見せ方を保存する
 - `GET  /api/export/settings`  … 出力先・既定の形式・文字コード
@@ -15,8 +16,8 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, render_template, request
 
-from dbviewer import (app_config, config, grid_data, session_setup, settings_tables, shared_db,
-                      table_browse, user_settings)
+from dbviewer import (app_config, auth, config, grid_data, master_admin, session_setup, settings_tables,
+                      shared_db, table_browse, user_settings)
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 
@@ -69,13 +70,22 @@ def tables():
     conn, setup, err = _open()
     if err:
         return err
+    names = _browse_tables(conn, setup)
+    return jsonify({"tables": names, "browse_flag": True,
+                    "configured": setup.general.browse_flag,
+                    "can_add_column": auth.level() >= master_admin.COLUMN_LEVEL,
+                    "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()]})
+
+
+def _browse_tables(conn, setup) -> list[str]:
+    """全般設定「テーブル閲覧」の表。空なら業務の表ぜんぶ(VBA は空なら閲覧なし。設定を減らすため変えた)。"""
     names = table_browse.browse_tables(setup.general.browse_str)
-    return jsonify({"tables": names, "browse_flag": setup.general.browse_flag})
+    return names or settings_tables.user_tables(conn)
 
 
 def _table(setup) -> tuple[str, object]:
     table = str((request.get_json(silent=True) or {}).get("table") or "")
-    if table not in table_browse.browse_tables(setup.general.browse_str):
+    if table not in _browse_tables(get_db(), setup):
         return table, _refuse("table", "その表は閲覧の対象ではありません。", 403)
     return table, None
 
@@ -114,6 +124,28 @@ def view():
     if body.get("reset"):
         return jsonify({"view": grid_data.reset_view(_view_key(table), v.columns)})
     return jsonify({"view": grid_data.save_view(_view_key(table), v.columns, body)})
+
+
+@bp.post("/api/browse/add-column")
+def add_column():
+    """見ている表の末尾に列を足す。本体なら <メイン>_設定 にも行を足す(マスタ管理と同じ)。"""
+    conn, setup, err = _open()
+    if err:
+        return err
+    table, err = _table(setup)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    r = master_admin.add_column(conn, setup, table, str(body.get("name") or ""),
+                                kind=str(body.get("kind") or "text"), fill=str(body.get("fill") or ""),
+                                level=auth.level())
+    trace.event("browse.add_column", r.message, level="INFO" if r.ok else "WARN",
+                data={"table": table, "name": body.get("name"), "kind": body.get("kind"),
+                      "reason": r.reason, "setting_table": r.setting_table, "backup": r.backup})
+    status = 200 if r.ok else 403 if r.reason == master_admin.REFUSE_LEVEL else 422
+    return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason, "column": r.column,
+                    "setting_table": r.setting_table, "setting_key": r.setting_key,
+                    "backup": r.backup}), status
 
 
 @bp.get("/api/export/settings")

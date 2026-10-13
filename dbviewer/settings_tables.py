@@ -11,6 +11,17 @@ VBA 版は起動のたびに `DBconnection` で各表を配列に読み、`MF1.U
     4. formatCheck … _設定 に 11 列がそろっているか(無ければ案内だけ)
 
 Web 版も同じ順・同じ文言で確かめ、結果を設定タブ「いまの状態」と一覧画面に出す。
+
+【0.7.0 から: 設定が無い・合わない DB でも開く(かんたん設定)】
+VBA 版は 4 つの表がそろって、本体と `_設定` の項目数・並びが 1 つも違わないと起動を止めていた。
+Web 版は**止めずに、足りないところを自動で補って開く**。直したいときは 設定 → かんたん設定 で選ぶ。
+
+    全般設定 が無い・メインテーブル名が空・その表が無い
+        → この PC で選んだ表、無ければ業務の表の 1 つ目を出す(`auto_main`)
+    <メイン>_設定 が無い                 → どの列も自由入力(`auto_conv`)
+    <メイン>_設定 と本体の数・並びが違う → **項目名で合わせる**。足りない列は自由入力、
+                                           本体に無い項目は使わない(どちらも `notices` で知らせる)
+    ID が無い                            → 閲覧だけでログイン(auth.py)
 """
 from __future__ import annotations
 
@@ -18,7 +29,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from . import config
+from . import config, user_settings
 from .vba_compat import clean
 
 
@@ -45,6 +56,39 @@ def table_exists(conn: sqlite3.Connection, name: str) -> bool:
 def column_names(conn: sqlite3.Connection, table: str) -> list[str]:
     """VBA `GetFieldsArr` / `adoFields`。表の定義順。"""
     return [r[1] for r in conn.execute(f"PRAGMA table_info({q(table)})")]
+
+
+# システムが読む表(業務の表ではない)。かんたん設定で「表示する表」の候補から外す
+SYSTEM_TABLES = (config.ID_TABLE, config.SET_TABLE, config.FLT_TABLE, config.TYPE_TABLE)
+
+
+def is_system_table(name: str) -> bool:
+    return (name in SYSTEM_TABLES or name.endswith(config.SETTING_SUFFIX)
+            or name.startswith(config.HISTORY_PREFIX))
+
+
+def user_tables(conn: sqlite3.Connection) -> list[str]:
+    """業務の表(システムの表・_設定・H_ 履歴を除く)。表の順。"""
+    return [n for n in table_names(conn) if not is_system_table(n)]
+
+
+def db_key(conn: sqlite3.Connection) -> str:
+    """この接続の .sqlite3 のパス(この PC で選んだ表を覚えておく鍵)。"""
+    row = conn.execute("PRAGMA database_list").fetchone()
+    return str(row[2] or "") if row else ""
+
+
+def picked_table(conn: sqlite3.Connection) -> str:
+    """全般設定に決まりが無いとき、この PC で選んだ「表示する表」。"""
+    picks = user_settings.get(config.KEY_MAIN_PICK, {}) or {}
+    return str(picks.get(db_key(conn), "") or "") if isinstance(picks, dict) else ""
+
+
+def pick_table(conn: sqlite3.Connection, table: str) -> None:
+    picks = user_settings.get(config.KEY_MAIN_PICK, {}) or {}
+    picks = dict(picks) if isinstance(picks, dict) else {}
+    picks[db_key(conn)] = table
+    user_settings.save(config.KEY_MAIN_PICK, picks)
 
 
 def field_dic(columns: list[str]) -> dict[str, int]:
@@ -107,10 +151,14 @@ class GeneralSettings:
 
 
 def load_general(conn: sqlite3.Connection) -> GeneralSettings:
-    """VBA `MF1.UserForm_Initialize` の 全般設定 の読み方そのまま。"""
+    """VBA `MF1.UserForm_Initialize` の 全般設定 の読み方そのまま。表が無ければ空。"""
+    gs = GeneralSettings()
+    if not table_exists(conn, config.SET_TABLE):
+        return gs
     cols, rows = read_table(conn, config.SET_TABLE)
     fj = field_dic(cols)
-    gs = GeneralSettings()
+    if not fj.get(config.ITEM_NAME) or not fj.get(config.PRESET):
+        return gs
     for r in rows:
         name = r[fj[config.ITEM_NAME] - 1]
         value = r[fj[config.PRESET] - 1]
@@ -229,6 +277,31 @@ def load_filters(conn: sqlite3.Connection) -> list[FilterRow]:
     return out
 
 
+def align_conv(conv: ConvTable, main_cols: list[str], *, exists: bool = True) -> tuple[ConvTable, list[str]]:
+    """`_設定` を本体の列の並びに**項目名で**合わせる。(合わせた表, 知らせること)
+
+    本体の列ごとに、同じ項目名の行(はじめの 1 つ)を使う。無ければ空の行(= 自由入力)。
+    本体に無い項目の行は使わない。並びが違っても、名前が合っていればそのまま動く。
+    """
+    by_name: dict[str, ConvRow] = {}
+    for r in conv.rows:
+        by_name.setdefault(r.item, r)
+    rows = [by_name.get(c) or ConvRow(i, c) for i, c in enumerate(main_cols, start=1)]
+    notices: list[str] = []
+    if not exists:
+        if main_cols:
+            notices.append(f"[{conv.table}] が無いので、どの列も自由入力で動いています。"
+                           f"入力の種類・必須などは 設定 → かんたん設定 で決められます。")
+        return ConvTable(conv.table, conv.columns, rows, conv.fj), notices
+    missing = [c for c in main_cols if c not in by_name]
+    extra = [r.item for r in conv.rows if r.item not in set(main_cols)]
+    if missing:
+        notices.append(f"[{conv.table}] に無い列(自由入力で動きます): {'、'.join(missing)}")
+    if extra:
+        notices.append(f"[{conv.table}] にあって本体に無い項目(使いません): {'、'.join(x or '(空)' for x in extra)}")
+    return ConvTable(conv.table, conv.columns, rows, conv.fj), notices
+
+
 # ------------------------------------------------------------------
 # 整合性検査(VBA と同じ文言)
 # ------------------------------------------------------------------
@@ -291,18 +364,27 @@ def master_file_check(conn: sqlite3.Connection, table: str) -> str:
 @dataclass
 class SystemSetup:
     general: GeneralSettings
-    conv: ConvTable
+    conv: ConvTable                   # 本体の列の並びに合わせたもの(足りない列は自由入力)
     filters: list[FilterRow]
     main_columns: list[str]
     fj: dict[str, int]                # メインテーブルの列名 → 列番号(1 始まり)
     column_problems: list[str]        # CheckColumns の案内(空なら問題なし)
-    master_problem: str               # MasterFileCheck の文言(空なら問題なし)
+    master_problem: str               # 開けない理由(0.7.0 から: 表示する表が無いときだけ)
     format_ok: bool                   # formatCheck
+    notices: list[str] = field(default_factory=list)   # 止めずに知らせること(かんたん設定で直せる)
+    auto_main: bool = False           # 全般設定に決まりが無く、表示する表を自動で選んだ
+    auto_conv: bool = False           # <メイン>_設定 が無い(どの列も自由入力)
+    has_id: bool = True               # ID の表がある(無ければ閲覧だけ)
+    has_general: bool = True          # 全般設定 の表がある
 
     @property
     def ok(self) -> bool:
-        """VBA は MasterFileCheck が NG のときだけ起動を止める。"""
         return self.master_problem == ""
+
+    @property
+    def key_ok(self) -> bool:
+        """本体に 管理番号 の列がある(一覧・登録で行を直す・足すのに要る)。"""
+        return config.KEY_ITEM in self.main_columns
 
     @property
     def filter_count(self) -> int:
@@ -319,25 +401,54 @@ class SetupError(RuntimeError):
     pass
 
 
-# 起動に要る表(ログインの ID と、メインテーブル名などの 全般設定)
-REQUIRED_TABLES = (config.SET_TABLE, config.ID_TABLE)
+MSG_NO_TABLES = "表示できる表がありません(業務の表が 1 つもありません)。"
+
+
+def resolve_main(conn: sqlite3.Connection, general: GeneralSettings) -> tuple[str, bool, list[str]]:
+    """表示する表。(表, 自動で選んだか, 知らせること)
+
+    全般設定の「メインテーブル名」があればそれ。無い・その表が無いときは、この PC で選んだ表、
+    それも無ければ業務の表の 1 つ目。
+    """
+    if general.main_table and table_exists(conn, general.main_table):
+        return general.main_table, False, []
+    tables = user_tables(conn)
+    notices = []
+    if general.main_table:
+        notices.append(f"全般設定の「メインテーブル名」の表 [{general.main_table}] がありません。")
+    if not tables:
+        raise SetupError(MSG_NO_TABLES if not general.main_table
+                         else f"メインテーブル [{general.main_table}] がありません。")
+    pick = picked_table(conn)
+    table = pick if pick in tables else tables[0]
+    notices.append(f"表示する表は [{table}] です(自動)。変えるときは 設定 → かんたん設定。")
+    return table, True, notices
 
 
 def load_setup(conn: sqlite3.Connection) -> SystemSetup:
     # 一覧を Web の表にしたので、フィルタ・タイプは要らなくなった(あっても読むだけ)
-    for need in REQUIRED_TABLES:
-        if not table_exists(conn, need):
-            raise SetupError(f"必須テーブル [{need}] がありません。マスタファイルを確認してください。")
+    has_general = table_exists(conn, config.SET_TABLE)
     general = load_general(conn)
-    if not general.main_table:
-        raise SetupError("全般設定 に「メインテーブル名」がありません。")
-    master_problem = master_file_check(conn, general.main_table)
-    column_problems = check_columns(conn, exclusion_set(conn, general.main_table), 2)
-    conv = (load_conv(conn, general.conv_table)
-            if table_exists(conn, general.conv_table) else ConvTable(general.conv_table, [], [], {}))
+    main, auto_main, notices = resolve_main(conn, general)
+    general.main_table = main
+    main_columns = column_names(conn, main)
+    conv_exists = table_exists(conn, general.conv_table)
+    raw_conv = (load_conv(conn, general.conv_table) if conv_exists
+                else ConvTable(general.conv_table, [], [], {}))
+    conv, conv_notices = align_conv(raw_conv, main_columns, exists=conv_exists)
+    notices += conv_notices
+    # CheckColumns は VBA の形の DB(全般設定がある)だけ。ほかの DB では関係ない
+    column_problems = check_columns(conn, exclusion_set(conn, main), 2) if has_general else []
     filters = load_filters(conn) if table_exists(conn, config.FLT_TABLE) else []
-    main_columns = column_names(conn, general.main_table) if table_exists(conn, general.main_table) else []
+    has_id = table_exists(conn, config.ID_TABLE)
+    if not has_id:
+        notices.append("ID の表が無いので、閲覧だけで動いています。直すには 設定 → かんたん設定 → 「編集を始める」。")
+    if config.KEY_ITEM not in main_columns:
+        notices.append(f"[{main}] に「{config.KEY_ITEM}」の列が無いので、一覧では行を直せません"
+                       f"(かんたん設定で足せます)。")
     return SystemSetup(general=general, conv=conv, filters=filters,
                        main_columns=main_columns, fj=field_dic(main_columns),
-                       column_problems=column_problems, master_problem=master_problem,
-                       format_ok=conv.format_ok() if conv.rows else False)
+                       column_problems=column_problems, master_problem="",
+                       format_ok=raw_conv.format_ok() if conv_exists and raw_conv.rows else not conv_exists,
+                       notices=notices, auto_main=auto_main, auto_conv=not conv_exists,
+                       has_id=has_id, has_general=has_general)

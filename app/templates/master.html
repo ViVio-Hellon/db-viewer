@@ -25,13 +25,6 @@
   /* 選んだ行は一覧と同じくはっきり(暗い配色でも分かるように) */
   #msTable tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
   .helper .table tbody tr[aria-selected="true"] td { background:var(--accent); color:var(--on-accent); }
-  /* 列を追加 */
-  .coldlg { width:min(560px, 94vw); }
-  .colform { display:grid; grid-template-columns:11em minmax(0,1fr); gap:10px 12px; align-items:center; margin-top:6px; }
-  .colform > label, .colform > span { color:var(--muted); font-size:var(--fs-sm); }
-  @media (max-width:560px){ .colform { grid-template-columns:1fr; } }
-  .opts { display:flex; flex-wrap:wrap; gap:4px 16px; }
-  .colnotes { margin:10px 0 0; padding-left:1.2em; font-size:var(--fs-xs); }
   /* 足したばかりの列・行 */
   #msTable td.is-new { background:var(--accent-soft); }
   #msTable th.is-new { box-shadow:inset 0 -3px 0 var(--accent); color:var(--ink); }

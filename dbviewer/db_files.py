@@ -2,9 +2,10 @@
 
 設定「接続先」で、フォルダの中身を並べるために使う。
 
-    open     … DBビューアの .sqlite3(全般設定・ID とメインテーブルがある)。強調して出す
+    open     … 開ける .sqlite3。全般設定・ID がそろっていれば DBビューアの形。
+               0.7.0 から、設定の表が無くても業務の表があれば開ける(表は自動・ID が無ければ閲覧だけ)
     convert  … Access(.accdb / .mdb)。「Access 取り込み」で .sqlite3 にすると開ける(注意表示)
-    other    … .sqlite3 だが DBビューアの形ではない(表が足りない)・読めない
+    other    … 表が 1 つも無い・読めない
 
 読むのはファイルの中の表の名前と件数だけ。書かない。
 """
@@ -32,21 +33,29 @@ def inspect_sqlite(path: Path) -> dict[str, Any]:
         tables = set(source_db.list_tables(path))
     except (source_db.SourceError, sqlite3.Error, OSError) as exc:
         return {"kind": KIND_OTHER, "note": f"読めません({exc})"}
-    missing = [t for t in (config.SET_TABLE, config.ID_TABLE) if t not in tables]
-    if missing:
-        return {"kind": KIND_OTHER, "note": f"DBビューアの形ではありません({'・'.join(missing)} がありません)"}
+    from .settings_tables import is_system_table
     q = source_db.quote_identifier
-    try:
-        got = source_db.read_query(
-            path, f"SELECT {q(config.PRESET)} AS v FROM {q(config.SET_TABLE)} WHERE {q(config.ITEM_NAME)} = ?",
-            [config.GS_MAIN_TABLE])
-    except (source_db.SourceError, sqlite3.Error):
-        got = []
-    main = str(got[0]["v"] or "") if got else ""
+    main = ""
+    if config.SET_TABLE in tables:
+        try:
+            got = source_db.read_query(
+                path, f"SELECT {q(config.PRESET)} AS v FROM {q(config.SET_TABLE)} WHERE {q(config.ITEM_NAME)} = ?",
+                [config.GS_MAIN_TABLE])
+        except (source_db.SourceError, sqlite3.Error):
+            got = []
+        main = str(got[0]["v"] or "") if got else ""
     if not main or main not in tables:
-        return {"kind": KIND_OTHER, "note": "全般設定の「メインテーブル名」の表がありません"}
+        user = [t for t in source_db.list_tables(path) if not is_system_table(t) and t != config.BROUGHT_REGISTRY]
+        if not user:
+            return {"kind": KIND_OTHER, "note": "表がありません"}
+        missing = [t for t in (config.SET_TABLE, config.ID_TABLE) if t not in tables]
+        why = f"{'・'.join(missing)} が無い" if missing else "メインテーブル名の決まりが無い"
+        view_only = "・閲覧だけ" if config.ID_TABLE not in tables else ""
+        return {"kind": KIND_OPEN, "note": f"表 {len(user)} 個({why}ので表は自動{view_only})",
+                "main_table": "", "simple": True}
     rows = source_db.table_counts(path).get(main, 0)
-    return {"kind": KIND_OPEN, "note": f"{main}({max(rows, 0):,} 件)", "main_table": main}
+    note = f"{main}({max(rows, 0):,} 件)" + ("" if config.ID_TABLE in tables else "・ID が無いので閲覧だけ")
+    return {"kind": KIND_OPEN, "note": note, "main_table": main}
 
 
 def scan(folder: Path, *, current: Optional[Path] = None) -> dict[str, Any]:
