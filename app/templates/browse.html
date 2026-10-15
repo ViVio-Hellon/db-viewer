@@ -12,7 +12,8 @@
   .br__list button:focus-visible { box-shadow:inset 0 0 0 2px var(--focus); }
   .br__main { display:flex; flex-direction:column; gap:8px; min-width:0; min-height:0; }
   .br__head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .br__head h3 { margin:0 auto 0 0; font-size:var(--fs-lg, 15px); }
+  .br__head h3 { margin:0; font-size:var(--fs-lg, 15px); }
+  #brPrintCols { flex:1; min-width:0; }
   .br__grid { display:flex; flex:1; min-height:0; min-width:0; }
   .brv { display:flex; flex-direction:column; gap:10px; overflow:hidden; }
 </style>
@@ -29,6 +30,7 @@
     <div class="br__main">
       <div class="br__head">
         <h3 id="brName">表を選んでください</h3>
+        <span class="why" id="brPrintCols" style="margin:0" title="設定 → かんたん設定 の「印刷」"></span>
         <button class="btn btn--commit" type="button" id="brAddCol" hidden title="この表のいちばん右に列を足します(Level 5)">＋ 列を追加</button>
         <button class="btn btn--find" type="button" id="brPrint" disabled>印刷</button>
         <div class="menu">

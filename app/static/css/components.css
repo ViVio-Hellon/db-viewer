@@ -1134,3 +1134,13 @@ dialog::backdrop { background: var(--scrim); }
 @media (max-width: 560px) { .colform { grid-template-columns: 1fr; } }
 .opts { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .colnotes { margin: 10px 0 0; padding-left: 1.2em; font-size: var(--fs-xs); }
+
+/* 入力の種類どおりの欄(fieldinput.js)と、行を足す・直す窓(rowform.js) */
+.fld { display: inline-flex; min-width: 0; width: 100%; }
+.fld > .input, .fld > .cell-edit { flex: 1; min-width: 0; }
+.rowdlg { width: min(640px, 94vw); }
+.rowform { display: grid; grid-template-columns: minmax(7em, 30%) minmax(0, 1fr); gap: 8px 12px; align-items: center;
+           max-height: 60vh; overflow: auto; margin-top: 6px; padding: 2px; }
+.rowform__row { display: contents; }
+.rowform__row > span { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+@media (max-width: 560px) { .rowform { grid-template-columns: 1fr; } }

@@ -22,9 +22,7 @@ async function loadTables() {
       return b;
     }));
     caps = d;
-    if (!d.configured) {
-      el.brNote.textContent = "DB の表をぜんぶ並べています(全般設定「テーブル閲覧」で絞れます)。一覧と同じ表で見て、コピー・保存・印刷します。";
-    }
+    el.brNote.textContent = "DB の表をぜんぶ並べています。印刷・保存・コピーに入れる列は 設定 → かんたん設定 の「印刷」で決めます。";
     if (!d.tables.length) el.brNote.textContent = "見られる表がありません。";
     let last = "";
     try { last = sessionStorage.getItem("dbviewer.browse.table") || ""; } catch { /* なし */ }
@@ -45,6 +43,8 @@ async function selectTable(t) {
     el.brName.textContent = t;
     el.brPrint.disabled = false; el.brOut.disabled = false;
     el.brAddCol.hidden = !caps.can_add_column;
+    const all = data.columns.length, pr = (data.print_columns || []).length;
+    el.brPrintCols.textContent = pr < all ? `印刷・保存する列: ${pr} / ${all}` : "";
     if (!grid) {
       grid = createGrid(el.brGrid, {
         onViewChange: async (view) => {
@@ -59,9 +59,12 @@ async function selectTable(t) {
   } catch (err) { toastError(err); }
 }
 
+/** 印刷・保存・コピーする表。列は かんたん設定の「印刷」の列(表で見せている並び)。 */
 function visibleTable() {
   const names = data.columns.map((c) => c.name);
-  const cols = grid.visibleColumns();
+  const printSet = new Set(data.print_columns || names);
+  const order = [...grid.visibleColumns(), ...names.filter((n) => !grid.visibleColumns().includes(n))];
+  const cols = order.filter((n) => printSet.has(n));
   const idx = cols.map((n) => names.indexOf(n));
   return { cols, rows: grid.shownRows().map((r) => idx.map((i) => r[i] ?? "")),
            numeric: cols.map((n) => data.columns[names.indexOf(n)].kind === "num") };
@@ -69,7 +72,7 @@ function visibleTable() {
 
 export function start() {
   for (const id of ["brTables", "brName", "brNote", "brProblem", "brGrid", "brPrint", "brOut", "brMenu", "brCopy", "brSave",
-                    "brAddCol"]) {
+                    "brAddCol", "brPrintCols"]) {
     el[id] = document.getElementById(id);
   }
   out.wireMenu(el.brOut, el.brMenu);

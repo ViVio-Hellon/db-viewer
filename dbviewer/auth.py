@@ -48,10 +48,10 @@ MSG_NO_PAIR = "IDと使用PCの登録で一致するものがありません。"
 MSG_BAD_PASS = "入力パスワード「{pw}」が違います。"
 MSG_TEMP_LEVEL = "登録がないので最低権限で仮設定されます。"
 MSG_NEED_LOGIN = "ログインしてください。"
-# ID の表が無い DB(設定の無い DB をそのまま開いたとき)。誰のものか分からないので見るだけ
-MSG_NO_ID_TABLE = ("この DB には ID の表が無いので、閲覧だけで開きます。"
-                   "直したいときは 設定 → かんたん設定 →「編集を始める」で自分を登録してください。")
-VIEW_ONLY_LEVEL = 1
+# ID の表が無い DB(0.8.0): 誰でも見て直せる(ファイルを開ける人はもともと直せる)。
+# 人とレベルを決めたいときは 設定 → かんたん設定 →「ログインを使う」で ID の表を作る
+MSG_NO_ID_TABLE = "この DB には ID の表が無いので、誰でも見て直せます(人を決めるには 設定 → かんたん設定)。"
+NO_ID_LEVEL = 5
 MSG_NO_LEVEL = "使用中の権限レベルは{lv}です。権限がありません。"
 
 
@@ -95,7 +95,7 @@ def authenticate(conn: sqlite3.Connection, inp_id: str, inp_pass: str, *,
         access_log.write("認証成功")
         user_settings.save(config.KEY_LAST_USER, inp_id or use_id)
         return LoginResult(True, note="" if dev else MSG_NO_ID_TABLE, user_id=inp_id or use_id,
-                           level=config.DEVELOP_LV if dev else VIEW_ONLY_LEVEL, developer=dev)
+                           level=config.DEVELOP_LV if dev else NO_ID_LEVEL, developer=dev)
 
     cols, rows = read_table(conn, config.ID_TABLE)
     fj = field_dic(cols)

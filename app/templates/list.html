@@ -9,6 +9,7 @@
   .lv__title { display:flex; align-items:baseline; gap:10px; min-width:0; }
   .lv__title h2 { font-size:var(--fs-xl); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .lv__act { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .lv__table { width:auto; max-width:22em; min-height:34px; padding:2px 8px; font-size:var(--fs-lg, 15px); font-weight:700; }
   .lv__notice { white-space:pre-line; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .lv__notice > span { flex:1; min-width:0; }
   .lv__sep { width:1px; align-self:stretch; background:var(--rule); margin:0 4px; }
@@ -52,7 +53,8 @@
   <div class="lv__head">
     <div class="lv__title">
       <h2 id="listTitle">一覧</h2>
-      <span class="why" style="margin:0" id="listHint">見出しを押すと並べ替え、▾ で絞り込み。マスをダブルクリックするとその場で直せて、すぐ保存されます</span>
+      <select class="input lv__table" id="listTable" aria-label="一覧に出す表" hidden></select>
+      <span class="why" style="margin:0" id="listHint">表を選んで見る。見出しで並べ替え、▾ で絞り込み。マスをダブルクリックするとその場で直せて、すぐ保存されます</span>
       <span class="savestate" id="saveState" aria-live="polite"></span>
     </div>
     <div class="lv__act">

@@ -1,13 +1,10 @@
 """かんたん設定(設定 → かんたん設定)
 
-- `POST /api/easy/state`    … 表示する表・業務の表・列ごとの決まり・選べる入力の種類
-- `POST /api/easy/main`     … 表示する表を変える `{"table"}`
-- `POST /api/easy/columns`  … 列ごとの決まりを保存 `{"rows": [{name, input, master, raw, required, money, sorted, sort}]}`
-- `POST /api/easy/start`    … 編集を始める(ID の表が無い DB で、自分を Level 5 で登録) `{"password", "name"}`
-- `POST /api/easy/key`      … 本体に 管理番号 の列を足す
+- `POST /api/easy/state`    … 見る DB・表・列ごとの設定(表示・入力・印刷)`{"table"}`
+- `POST /api/easy/columns`  … 列ごとの設定を保存 `{"table", "rows": [{name, show, input, step, print}]}`
+- `POST /api/easy/start`    … ログインを使う(ID の表が無い DB で、自分を Level 5 で登録) `{"password", "name"}`
 
-どれもログインが要る(ID の表が無い DB は閲覧だけでログインできる)。書くのは Level 5。
-「編集を始める」だけは ID の表が無いときに限り、誰でもできる(その人が最初の管理者になる)。
+どれもログインが要る(ID の表が無い DB は誰でも Level 5 で入れる)。保存は Level 5。
 """
 from __future__ import annotations
 
@@ -51,16 +48,8 @@ def state():
     conn, setup, err = _open()
     if err:
         return err
-    return jsonify(easy_setup.state(conn, setup, auth.level()))
-
-
-@bp.post("/api/easy/main")
-def main_table():
-    conn, setup, err = _open()
-    if err:
-        return err
     table = str((request.get_json(silent=True) or {}).get("table") or "")
-    return _reply(easy_setup.set_main(conn, setup, table, level=auth.level()), "easy.main", {"table": table})
+    return jsonify(easy_setup.state(conn, setup, auth.level(), table))
 
 
 @bp.post("/api/easy/columns")
@@ -68,34 +57,28 @@ def columns():
     conn, setup, err = _open()
     if err:
         return err
-    rows = (request.get_json(silent=True) or {}).get("rows") or []
+    body = request.get_json(silent=True) or {}
+    rows = body.get("rows") or []
     if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
-        return _refuse("bad_rows", "送られた列の決まりが読めません。")
-    result = easy_setup.save_columns(conn, setup, rows, level=auth.level())
-    return _reply(result, "easy.columns", {"table": setup.general.main_table, "count": len(rows)})
+        return _refuse("bad_rows", "送られた列の設定が読めません。")
+    table = str(body.get("table") or "")
+    s = auth.current()
+    result = easy_setup.save_columns(conn, table, rows, level=auth.level(), user=s.user_id if s else "")
+    return _reply(result, "easy.columns", {"table": table, "count": len(rows)})
 
 
 @bp.post("/api/easy/start")
-def start_editing():
+def start_login():
     conn, setup, err = _open()
     if err:
         return err
     body = request.get_json(silent=True) or {}
     s = auth.current()
     user_id = s.user_id if s else auth.network_id()
-    result = easy_setup.start_editing(conn, setup, user_id=user_id, pc=auth.pc_name(),
-                                      name=str(body.get("name") or ""), password=str(body.get("password") or ""))
+    result = easy_setup.start_login(conn, setup, user_id=user_id, pc=auth.pc_name(),
+                                    name=str(body.get("name") or ""), password=str(body.get("password") or ""))
     if result.ok and s is not None:
-        # 登録した本人なので、そのまま Level 5 にする(ログインし直さなくてよい)
+        # 登録した本人なので、そのまま Level 5(ログインし直さなくてよい)
         auth.start(auth.LoginResult(True, user_id=s.user_id, level=result.level, developer=s.developer))
-        log.info("編集を始めました: %s を Level %s で登録", user_id, result.level)
+        log.info("ログインを使い始めました: %s を Level %s で登録", user_id, result.level)
     return _reply(result, "easy.start", {"id": user_id, "pc": auth.pc_name()})
-
-
-@bp.post("/api/easy/key")
-def key_column():
-    conn, setup, err = _open()
-    if err:
-        return err
-    return _reply(easy_setup.add_key_column(conn, setup, level=auth.level()), "easy.key",
-                  {"table": setup.general.main_table})

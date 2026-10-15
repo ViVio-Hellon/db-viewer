@@ -3,7 +3,7 @@
 設定「接続先」で、フォルダの中身を並べるために使う。
 
     open     … 開ける .sqlite3。全般設定・ID がそろっていれば DBビューアの形。
-               0.7.0 から、設定の表が無くても業務の表があれば開ける(表は自動・ID が無ければ閲覧だけ)
+               0.7.0 から、設定の表が無くても業務の表があれば開ける(0.8.0: どの表も一覧で選んで見て直せる)
     convert  … Access(.accdb / .mdb)。「Access 取り込み」で .sqlite3 にすると開ける(注意表示)
     other    … 表が 1 つも無い・読めない
 
@@ -50,11 +50,10 @@ def inspect_sqlite(path: Path) -> dict[str, Any]:
             return {"kind": KIND_OTHER, "note": "表がありません"}
         missing = [t for t in (config.SET_TABLE, config.ID_TABLE) if t not in tables]
         why = f"{'・'.join(missing)} が無い" if missing else "メインテーブル名の決まりが無い"
-        view_only = "・閲覧だけ" if config.ID_TABLE not in tables else ""
-        return {"kind": KIND_OPEN, "note": f"表 {len(user)} 個({why}ので表は自動{view_only})",
+        return {"kind": KIND_OPEN, "note": f"表 {len(user)} 個({why}。一覧で表を選んで見て直せます)",
                 "main_table": "", "simple": True}
     rows = source_db.table_counts(path).get(main, 0)
-    note = f"{main}({max(rows, 0):,} 件)" + ("" if config.ID_TABLE in tables else "・ID が無いので閲覧だけ")
+    note = f"{main}({max(rows, 0):,} 件)" + ("" if config.ID_TABLE in tables else "・ID が無いので誰でも直せる")
     return {"kind": KIND_OPEN, "note": note, "main_table": main}
 
 

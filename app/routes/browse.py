@@ -1,9 +1,9 @@
 """テーブル閲覧と出力
 
 - `GET  /browse`               … 画面
-- `POST /api/browse/tables`    … 全般設定「テーブル閲覧」の表(空なら業務の表ぜんぶ。0.7.0)
+- `POST /api/browse/tables`    … 業務の表ぜんぶ(0.8.0。全般設定「テーブル閲覧」の表も)
 - `POST /api/browse/add-column` … 見ている表に列を足す(Level 5。マスタ管理の「列を追加」と同じ決まり)
-- `POST /api/browse/data`      … 表の全行・列の種類・列の見せ方(一覧と同じグリッドで見る)
+- `POST /api/browse/data`      … 表の全行(かんたん設定の「表示」の列)・列の種類・列の見せ方・印刷する列
 - `POST /api/browse/view`      … 列の見せ方を保存する
 - `GET  /api/export/settings`  … 出力先・既定の形式・文字コード
 - `POST /api/export`           … 画面に出している表をファイルに書く(ダウンロードはしない)
@@ -17,7 +17,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, render_template, request
 
 from dbviewer import (app_config, auth, config, grid_data, master_admin, session_setup, settings_tables,
-                      shared_db, table_browse, user_settings)
+                      shared_db, simple_table, table_browse, user_settings)
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 
@@ -78,9 +78,11 @@ def tables():
 
 
 def _browse_tables(conn, setup) -> list[str]:
-    """全般設定「テーブル閲覧」の表。空なら業務の表ぜんぶ(VBA は空なら閲覧なし。設定を減らすため変えた)。"""
-    names = table_browse.browse_tables(setup.general.browse_str)
-    return names or settings_tables.user_tables(conn)
+    """業務の表ぜんぶ(0.8.0)。全般設定「テーブル閲覧」に書いた表(タイプなど)があれば、それも足す。"""
+    names = settings_tables.user_tables(conn)
+    have = set(settings_tables.table_names(conn))
+    extra = [t for t in table_browse.browse_tables(setup.general.browse_str) if t in have and t not in names]
+    return names + extra
 
 
 def _table(setup) -> tuple[str, object]:
@@ -103,12 +105,15 @@ def data():
     if err:
         return err
     try:
-        v = table_browse.view(conn, table)
+        v = simple_table.view(conn, table)
     except ValueError as exc:
         return _refuse("table", str(exc))
-    return jsonify({"table": v.table, "columns": grid_data.columns_meta(v.columns, v.rows),
-                    "rows": v.rows, "count": len(v.rows), "key_index": -1,
-                    "view": grid_data.load_view(_view_key(table), v.columns)})
+    rows = [r[:-1] for r in v["rows"]]                    # 末尾の rowid は閲覧では要らない
+    return jsonify({"table": table, "columns": grid_data.columns_meta(v["columns"], rows),
+                    "rows": rows, "count": len(rows), "key_index": -1,
+                    # かんたん設定の「印刷」: 印刷・保存・コピーに入れる列
+                    "print_columns": v["print_columns"],
+                    "view": grid_data.load_view(_view_key(table), v["columns"])})
 
 
 @bp.post("/api/browse/view")
@@ -119,11 +124,11 @@ def view():
     table, err = _table(setup)
     if err:
         return err
-    v = table_browse.view(conn, table)
+    cols = simple_table.view(conn, table)["columns"]
     body = request.get_json(silent=True) or {}
     if body.get("reset"):
-        return jsonify({"view": grid_data.reset_view(_view_key(table), v.columns)})
-    return jsonify({"view": grid_data.save_view(_view_key(table), v.columns, body)})
+        return jsonify({"view": grid_data.reset_view(_view_key(table), cols)})
+    return jsonify({"view": grid_data.save_view(_view_key(table), cols, body)})
 
 
 @bp.post("/api/browse/add-column")

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from flask import Blueprint, g, jsonify, render_template, request
 
-from dbviewer import auth, master_admin, session_setup, settings_tables, shared_db
+from dbviewer import auth, master_admin, session_setup, settings_tables, shared_db, simple_table
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 
@@ -93,7 +93,8 @@ def tables():
     from dbviewer import table_bring
     listed = master_admin.listed_tables(conn, setup, lv)
     why = dict(master_admin.used_tables(conn, setup))
-    why[setup.general.main_table] = "業務データ(列の追加だけ)"
+    if setup.legacy:
+        why[setup.general.main_table] = "業務データ(列の追加だけ)"
     return jsonify({"level": lv, "tables": listed,
                     # その表でできること(行を直す・列を足す)と、ひとこと
                     "caps": {t: master_admin.capabilities(setup, t, lv, conn) for t in listed},
@@ -152,6 +153,10 @@ def execute():
     if master_admin.is_history(table):
         return _refuse("history", "履歴テーブルは直せません。", 403)
     values = [str(v) for v in (body.get("values") or [])]
+    # かんたん設定の入力(スピン = 数・カレンダー = 日付の形)にそろえる
+    values, problem = simple_table.convert_list(conn, table, values)
+    if problem:
+        return jsonify({"ok": False, "message": problem, "reason": "bad_value", "executed": ""}), 422
     key = str(body.get("key") or (values[0] if values else ""))
     seen = body.get("seen")
     answer = body.get("answer")

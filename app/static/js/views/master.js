@@ -1,5 +1,6 @@
 /* マスタメンテナンス(VBA MF2)。判断はサーバ。 */
 import { api } from "../api.js";
+import { makeField, inputOf } from "../fieldinput.js";
 import { toast, toastError } from "../toast.js";
 import { confirmBox } from "../askbox.js";
 import { createHelpers, isNumericVba } from "../helpers.js";
@@ -147,6 +148,15 @@ function renderFields() {
     const row = document.createElement("div"); row.className = "rec__row";
     const lbl = document.createElement("div"); lbl.className = `rec__lbl lbl--${f.color}`; lbl.textContent = f.name; lbl.title = f.input_type || "";
     const val = document.createElement("div"); val.className = "rec__val";
+    if (f.simple) {
+      // かんたん設定で決めた入力(コンボボックス・スピンボタン・カレンダー)
+      const field = makeField(f.simple, f.value);
+      const si = inputOf(field); si.dataset.no = f.no;
+      si.addEventListener("input", () => si.classList.toggle("is-changed", si.value !== f.original));
+      val.appendChild(field);
+      row.append(lbl, val); rows.push(row);
+      continue;
+    }
     const inp = document.createElement(f.lines > 1 ? "textarea" : "input"); inp.className = "input"; inp.value = f.value; inp.dataset.no = f.no;
     if (f.is_key || f.kind === "auto" || f.kind === "view") { inp.readOnly = true; inp.disabled = f.kind !== "free" && !f.is_key ? true : f.is_key; inp.classList.add("is-auto"); }
     else if (f.locked) { inp.readOnly = true; inp.title = "ダブルクリックか「…」で入力"; }

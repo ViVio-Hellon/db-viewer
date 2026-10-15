@@ -13,6 +13,9 @@ import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
 import { createHelpers } from "../helpers.js";
 import { openAddColumn } from "../addcolumn.js";
+import { makeField, inputOf } from "../fieldinput.js";
+import { openRowForm, showProblem } from "../rowform.js";
+import { confirmBox } from "../askbox.js";
 
 const el = {};
 const DETAIL_KEY = "dbviewer.list.detail";
@@ -26,19 +29,22 @@ function problem(text) {
 }
 
 /* ---------------- 読む ---------------- */
-async function load() {
+const simple = () => data && data.mode === "simple";
+
+async function load(table = "") {
   try {
-    data = await api.post("/api/list/data", {});
+    data = await api.post("/api/list/data", table ? { table } : {});
     problem("");
     el.listUpdated.hidden = true;
-    el.listTitle.textContent = data.setup.main_table || "一覧";
-    el.actReport.hidden = !data.setup.report_flag;
+    el.listTitle.textContent = data.table || data.setup.main_table || "一覧";
+    renderTables();
+    el.actReport.hidden = !data.setup.report_flag || simple();
     if (!data.edit || !data.edit.allowed) {
       el.listHint.textContent = "見出しを押すと並べ替え、▾ で絞り込み。このレベルでは直せません(ダブルクリックで参照)";
     }
     // 管理番号 の列が無い表(設定の無い DB)は、行を直す・足す・消すができない(かんたん設定で足せる)
-    const keyOk = data.setup.key_ok !== false;
-    el.actNew.hidden = !keyOk; el.actEdit.hidden = !keyOk; el.actDelete.hidden = !keyOk;
+    const keyOk = simple() || data.setup.key_ok !== false;
+    el.actNew.hidden = !keyOk || !data.can.add; el.actEdit.hidden = !keyOk; el.actDelete.hidden = !keyOk || !data.can.delete;
     el.actAddCol.hidden = !data.setup.can_add_column;
     showNotices(data.setup.notices || []);
     grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view });
@@ -47,6 +53,19 @@ async function load() {
     if (err.status === 409 || err.status === 422) problem(err.message);
     else toastError(err);
   }
+}
+
+/** 一覧に出す表(業務の表ぜんぶ)。選ぶとこの PC で覚える。 */
+function renderTables() {
+  const tables = data.tables || [];
+  el.listTable.hidden = tables.length < 2;
+  el.listTitle.hidden = !el.listTable.hidden;              // 表を選べるときは選ぶ欄が見出しを兼ねる
+  el.listTable.replaceChildren(...tables.map((t) => {
+    const o = document.createElement("option");
+    o.value = t.name; o.textContent = `${t.name}(${t.rows >= 0 ? t.rows.toLocaleString() : "?"} 件)`;
+    o.selected = t.name === data.table;
+    return o;
+  }));
 }
 
 /** 設定が無い・合わないところを、止めずに知らせる(かんたん設定へ)。 */
@@ -100,7 +119,7 @@ function renderDetail(row) {
   const head = document.createElement("div");
   head.className = "dt__head";
   const small = document.createElement("small");
-  small.textContent = data.key_index >= 0 ? `${names[data.key_index]} ${keyOf(row)}` : "選んだ行";
+  small.textContent = simple() ? `${data.table} の行` : data.key_index >= 0 ? `${names[data.key_index]} ${keyOf(row)}` : "選んだ行";
   const title = document.createElement("b");
   const firstText = shown.find((n) => n !== names[data.key_index] && (row[idx[n]] || "").length > 1);
   title.textContent = firstText ? row[idx[firstText]] : "";
@@ -133,9 +152,54 @@ function setDetail(on) {
 function command(mode, click = "ButtonClick") {
   const row = grid.selected();
   if (mode !== "新規" && !row) { toast("対象が選択されていません。", "warn"); return; }
+  if (simple()) { simpleCommand(mode, row); return; }
   const q = new URLSearchParams({ mode, click });
   if (mode !== "新規") q.set("key", keyOf(row));
   location.href = `/record?${q}`;
+}
+
+/* ---------- VBA 版でない表: 行の窓で足す・直す・見る、消す(行は rowid) ---------- */
+function seenOf(row) {
+  return Object.fromEntries(data.columns.map((c, i) => [c.name, row[i] ?? ""]));
+}
+
+async function simpleCommand(mode, row) {
+  const rowid = row ? keyOf(row) : "";
+  if (mode === "削除") {
+    if (!(await confirmBox("この行を削除しますか？", { ok: "削除する", danger: true }))) { toast("キャンセルしました。", "info"); return; }
+    try {
+      const res = await api.post("/api/list/row-delete", { table: data.table, rowid, seen: seenOf(row) });
+      if (res.db_mtime) data.db_mtime = res.db_mtime;
+      toast(res.message, "warn");
+      await load();
+    } catch (err) { toastError(err, "warn"); if (err.status === 409) await load(); }
+    return;
+  }
+  const readOnly = mode === "参照" || !data.edit.allowed;
+  let form;
+  try {
+    form = await api.post("/api/list/form", { table: data.table, rowid: mode === "新規" ? 0 : rowid });
+  } catch (err) { toastError(err); return; }
+  const seen = Object.fromEntries(form.fields.map((f) => [f.name, f.value ?? ""]));
+  openRowForm({
+    title: `${data.table} — ${mode === "新規" ? "行を足す" : readOnly ? "見る" : "直す"}`,
+    fields: form.fields, readOnly,
+    onSave: async (values) => {
+      try {
+        const res = mode === "新規"
+          ? await api.post("/api/list/row-add", { table: data.table, values })
+          : await api.post("/api/list/row-save", { table: data.table, rowid, values, seen });
+        if (res.db_mtime) data.db_mtime = res.db_mtime;
+        toast(res.reason === "unchanged" ? "変わっていません。" : res.message, res.reason === "unchanged" ? "info" : "ok");
+        await load();
+        if (res.rowid) grid.select(String(res.rowid));
+        return true;
+      } catch (err) {
+        if (err.status && err.status < 500) { showProblem(err.message); return false; }
+        toastError(err); return false;
+      }
+    },
+  });
 }
 
 /* ---------------- 見えているとおりに取り出す ---------------- */
@@ -194,6 +258,7 @@ function onCellEdit(row, name, td) {
 }
 
 function beginEdit(td, key, name, seen, spec, row) {
+  if (spec.inline === "simple") { startSimpleEdit(td, key, name, seen, spec, row); return; }
   if (spec.inline === "pick") {
     // マスタ・日付・数値などは、登録画面と同じ選ぶ窓で
     const inp = document.createElement("input");
@@ -236,10 +301,39 @@ function startTextEdit(td, key, name, seen, spec, row) {
   input.addEventListener("dblclick", (e) => e.stopPropagation());
 }
 
+/** 入力の種類どおりの欄(コンボボックス・スピンボタン・カレンダー)をマスにかぶせる。 */
+function startSimpleEdit(td, key, name, seen, spec, row) {
+  const field = makeField(spec, seen, { className: "cell-edit" });
+  const input = inputOf(field);
+  td.classList.add("is-editing");
+  td.replaceChildren(field);
+  input.focus();
+  if (input.type === "text") input.select();
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const v = input.value;
+    td.classList.remove("is-editing");
+    grid.updateRow(key, row);
+    if (commit && v !== seen && !(spec.input === "calendar" && v === "" && seen === "" )) saveCell(key, name, v, seen, row);
+    grid.focus();
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); finish(true); }
+  });
+  input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== input) finish(true); }, 0));
+  input.addEventListener("dblclick", (e) => e.stopPropagation());
+}
+
 async function saveCell(key, name, value, seen, row) {
   saveState(`保存しています… ${name}`);
   try {
-    const res = await api.post("/api/list/cell", { key, column: name, value, seen });
+    const res = simple()
+      ? await api.post("/api/list/row-save", { table: data.table, rowid: key, values: { [name]: value }, seen: { [name]: seen } })
+      : await api.post("/api/list/cell", { key, column: name, value, seen });
     if (res.db_mtime && data) data.db_mtime = res.db_mtime;        // 自分の書き込みで「他の端末」帯を出さない
     if (res.row) grid.updateRow(key, res.row);
     if (res.reason === "unchanged") { saveState(""); return; }
@@ -261,7 +355,7 @@ export function start() {
   for (const id of ["listTitle", "listProblem", "listUpdated", "listReload", "lvBody", "grid", "detail",
                     "actNew", "actEdit", "actView", "actDelete", "actReport", "actPrint", "actOut",
                     "outMenu", "outCopy", "outSave", "actDetail", "saveState", "listHint", "actAddCol",
-                    "listNotice", "listNoticeText"]) {
+                    "listNotice", "listNoticeText", "listTable"]) {
     el[id] = document.getElementById(id);
   }
   grid = createGrid(el.grid, {
@@ -305,7 +399,8 @@ export function start() {
   let detailOn = true;
   try { detailOn = localStorage.getItem(DETAIL_KEY) !== "0"; } catch { /* 既定は出す */ }
   setDetail(detailOn);
-  el.listReload.addEventListener("click", load);
+  el.listReload.addEventListener("click", () => load());
+  el.listTable.addEventListener("change", () => { grid.select(null); load(el.listTable.value); });
   document.addEventListener("app:health", onHealth);
   load();
 }

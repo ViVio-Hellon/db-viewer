@@ -57,7 +57,7 @@ def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str,
       <メイン>_設定      … 登録画面の決まり(入力形式・必須・履歴・マスタ結合…)
       <メイン>_設定 が参照するマスタ(入力形式 s/m、マスタ結合)… 選ぶ窓の中身
       「表を持ってくる」で足した表
-      設定の無い DB なら、そのほかの業務の表ぜんぶ(0.7.0。どの表の行も足せるように)
+      そのほかの業務の表ぜんぶ(0.8.0。どの表も見て直せるように)
       <メイン>_設定 の「履歴」に書いた H_ 表(見るだけ)
     """
     from . import table_bring
@@ -66,7 +66,8 @@ def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str,
     out: list[tuple[str, str]] = []
 
     def add(name: str, why: str) -> None:
-        if name and name in names and name != main and name not in {n for n, _ in out}:
+        # VBA 版の本体は一覧で直す(登録の決まり・履歴を通すため)。ほかの一覧の表はここでも直せる
+        if name and name in names and (name != main or not setup.legacy) and name not in {n for n, _ in out}:
             out.append((name, why))
 
     add(config.ID_TABLE, "ログイン")
@@ -80,11 +81,9 @@ def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str,
             add(r.ms_join.split("/")[0], f"「{r.item}」に結合するマスタ")
     for name in sorted(table_bring.brought_tables(conn)):
         add(name, "表を持ってくるで足した表")
-    # 0.7.0: 設定の無い DB(表示する表・列の決まりが自動)では、業務の表をぜんぶ並べる
-    # (どの表の行も足せる・直せるように)。設定のある DB は今までどおり「使っている表だけ」
-    if setup.auto_main or setup.auto_conv:
-        for name in user_tables(conn):
-            add(name, "DB の表")
+    # 0.8.0: 業務の表はぜんぶ並べる(どの表も一覧とマスタ管理で見て直せる)
+    for name in user_tables(conn):
+        add(name, "DB の表")
     for r in setup.conv.rows:
         if r.his_rec:
             add(r.his_rec, f"「{r.item}」の変更履歴(見るだけ)")
@@ -131,9 +130,11 @@ class MasterField:
     spec: input_types.InputSpec
     is_key: bool = False
 
+    simple: Optional[dict[str, Any]] = None     # かんたん設定の入力(コンボ・スピン・カレンダー)
+
     def to_dict(self) -> dict[str, Any]:
         s = self.spec
-        return {"no": self.no, "name": self.name, "value": self.value, "original": self.original,
+        return {"simple": self.simple,"no": self.no, "name": self.name, "value": self.value, "original": self.original,
                 "input_type": s.raw, "kind": s.kind, "color": s.color, "locked": s.locked,
                 "enabled": s.enabled, "lines": s.lines, "auto_tag": s.auto_tag,
                 "form_name": s.form_name, "form_args": s.form_args, "date_limit": s.date_limit,
@@ -202,6 +203,11 @@ def build_fields(conn: sqlite3.Connection, setup: SystemSetup, table: str, mode:
         else:
             val = row[k - 1] if row and k - 1 < len(row) else ""
         fields.append(MasterField(k, name, val, val, spec, is_key=(k == 1 and keyed)))
+    # かんたん設定で入力の種類を決めた列は、その入力欄(VBA 版の入力形式より先)
+    from . import simple_table
+    for f, c in zip(fields, simple_table.load(conn, table)):
+        if c.input != "text" and not f.is_key:
+            f.simple = simple_table.edit_spec(conn, table, c)
     return fields
 
 
@@ -353,7 +359,7 @@ def capabilities(setup: SystemSetup, table: str, level: int,
     fixed = fixed_columns_why(setup, table)
     can_columns = level >= COLUMN_LEVEL and not fixed
     setting = (_setting_table_of(conn, setup, table) or "") if conn is not None and can_columns else ""
-    if table == main:
+    if table == main and setup.legacy:
         return {"rows": False, "columns": can_columns, "note": MSG_ROWS_IN_LIST, "setting_table": setting}
     note = ""
     if table == setup.general.conv_table:

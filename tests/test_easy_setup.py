@@ -1,4 +1,4 @@
-"""かんたん設定(0.7.0): 設定の表が無い・合わない DB でも開き、画面で決めた決まりで直せる"""
+"""どの表でも見て直す・かんたん設定(0.8.0): 設定は 見る DB と 列ごとの 表示・入力・印刷 だけ"""
 from __future__ import annotations
 
 import os
@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-from dbviewer import auth, config, easy_setup, shared_db, user_settings
+from dbviewer import auth, config, shared_db, simple_table, user_settings
 from dbviewer.settings_tables import column_names, load_setup
 from tests._fixture_db import fresh_db_path
 from tests._web import TOKEN, make_client
@@ -18,11 +18,11 @@ MAIN, CONV = "作業標準管理", "作業標準管理_設定"
 
 
 def plain_db(path: Path) -> Path:
-    """設定の表が 1 つも無い、ふつうの DB(表 2 つ)。"""
+    """設定の表が 1 つも無い、ふつうの DB(表 2 つ。管理番号 も無い)。"""
     with closing(sqlite3.connect(path)) as c:
-        c.execute("CREATE TABLE 部品 (品番 TEXT, 名前 TEXT, 単価 REAL)")
-        c.executemany("INSERT INTO 部品 VALUES (?, ?, ?)",
-                      [("A-1", "箱", 120.5), ("A-2", "袋", 30), ("B-1", "テープ", 2502.5)])
+        c.execute("CREATE TABLE 部品 (品番 TEXT, 名前 TEXT, 単価 REAL, 入荷日 TEXT)")
+        c.executemany("INSERT INTO 部品 VALUES (?, ?, ?, ?)",
+                      [("A-1", "箱", 120.5, "2026/10/01"), ("A-2", "袋", 30, None), ("B-1", "テープ", 2502.5, "")])
         c.execute("CREATE TABLE 仕入先 (名前 TEXT, 電話 TEXT)")
         c.execute("INSERT INTO 仕入先 VALUES ('東海紙工', '052-000-0000')")
         c.commit()
@@ -30,6 +30,15 @@ def plain_db(path: Path) -> Path:
 
 
 class _Case(unittest.TestCase):
+    def setUp(self):
+        # この PC のログイン ID・PC 名(試験の機械には無いことがある)
+        env = mock.patch.dict(os.environ, {"USERNAME": "tester", "COMPUTERNAME": "PC-TEST"})
+        env.start()
+        self.addCleanup(env.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+
     def use(self, path: Path) -> None:
         self.path = path
         user_settings.save(config.KEY_ONLINE, False)
@@ -41,176 +50,204 @@ class _Case(unittest.TestCase):
         self.c = make_client()
         self.h = {"X-Tool-Token": TOKEN}
 
-    def setUp(self):
-        # この PC のログイン ID・PC 名(試験の機械には無いことがある)
-        env = mock.patch.dict(os.environ, {"USERNAME": "tester", "COMPUTERNAME": "PC-TEST"})
-        env.start()
-        self.addCleanup(env.stop)
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = Path(tmp.name)
-
     def post(self, url, **body):
         return self.c.post(url, json=body, headers=self.h)
 
-    def login(self, password=""):
-        r = self.post("/api/login", id=auth.network_id(), password=password)
+    def ok(self, url, **body):
+        r = self.post(url, **body)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         return r.get_json()
 
-    def setup_now(self):
-        with closing(shared_db.connect(self.path)) as conn:
-            return load_setup(conn)
+    def login(self, password=""):
+        return self.ok("/api/login", id=auth.network_id(), password=password)
+
+    def q(self, sql, *args):
+        with closing(sqlite3.connect(self.path)) as c:
+            return c.execute(sql, args).fetchall()
+
+    def tables(self):
+        return {n for (n,) in self.q("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 class PlainDbTest(_Case):
-    """設定の表が無い DB をそのまま開く → 閲覧だけ → 編集を始める → 決まりを選ぶ。"""
+    """設定の表が無い DB: どの表も一覧・マスタ管理・閲覧で見て直せる。"""
 
     def setUp(self):
         super().setUp()
         self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
 
-    def test_opens_without_settings_view_only(self):
-        s = self.setup_now()
-        self.assertEqual((s.general.main_table, s.auto_main, s.auto_conv, s.has_id), ("部品", True, True, False))
-        self.assertEqual([r.item for r in s.conv.rows], ["品番", "名前", "単価"])     # どの列も自由入力
-        j = self.login()
-        self.assertEqual(j["level"], auth.VIEW_ONLY_LEVEL)
-        self.assertIn("閲覧だけ", j["note"])
-        d = self.post("/api/list/data").get_json()
-        self.assertEqual([c["name"] for c in d["columns"]], ["品番", "名前", "単価"])
-        self.assertEqual(d["count"], 3)
-        self.assertEqual(d["rows"][2][2], "2502.5")                                # 丸めない
-        self.assertFalse(d["edit"]["allowed"])
-        self.assertEqual(self.post("/api/list/cell", key="1", column="名前", value="x", seen="箱").status_code, 403)
-        # 書く設定は断る。表示する表は、この PC だけで切り替えられる
-        self.assertEqual(self.post("/api/easy/columns", rows=[]).status_code, 403)
-        r = self.post("/api/easy/main", table="仕入先")
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertIn("この PC", r.get_json()["message"])
-        self.assertEqual(self.setup_now().general.main_table, "仕入先")
-        with closing(sqlite3.connect(self.path)) as c:                               # DB には書いていない
-            self.assertNotIn("全般設定", {n for (n,) in c.execute("SELECT name FROM sqlite_master")})
+    def save_cols(self, table, **changes):
+        st = self.ok("/api/easy/state", table=table)
+        rows = []
+        for c in st["columns"]:
+            c = dict(c)
+            c.update(changes.get(c["name"], {}))
+            rows.append(c)
+        return self.post("/api/easy/columns", table=table, rows=rows)
 
-    def test_start_editing_then_simple_settings(self):
+    def test_open_and_edit_any_table_without_settings(self):
+        j = self.login()
+        self.assertEqual(j["level"], auth.NO_ID_LEVEL)                    # ID が無い = 誰でも直せる
+        self.assertIn("誰でも", j["note"])
+        d = self.ok("/api/list/data")
+        self.assertEqual((d["mode"], d["table"]), ("simple", "部品"))
+        self.assertEqual([t["name"] for t in d["tables"]], ["部品", "仕入先"])
+        self.assertEqual([c["name"] for c in d["columns"]], ["品番", "名前", "単価", "入荷日"])
+        self.assertEqual(d["rows"][2][:3], ["B-1", "テープ", "2502.5"])           # 丸めない
+        self.assertEqual(d["key_index"], 4)                                       # 末尾が rowid
+        self.assertTrue(d["edit"]["allowed"])
+        # マスを直す(管理番号 が無くても行は rowid で決まる)
+        rowid = d["rows"][1][4]
+        r = self.ok("/api/list/row-save", table="部品", rowid=rowid, values={"名前": "ポリ袋"}, seen={"名前": "袋"})
+        self.assertEqual(r["row"][:2], ["A-2", "ポリ袋"])
+        self.assertEqual(self.q("SELECT 名前 FROM 部品 WHERE rowid=?", int(rowid)), [("ポリ袋",)])
+        # 見ていた値が古ければ書かない
+        r = self.post("/api/list/row-save", table="部品", rowid=rowid, values={"名前": "x"}, seen={"名前": "袋"})
+        self.assertEqual((r.status_code, r.get_json()["reason"]), (409, "conflict"))
+        # 表を替える(この PC で覚える)。DB には何も書かない
+        d = self.ok("/api/list/data", table="仕入先")
+        self.assertEqual((d["table"], d["count"]), ("仕入先", 1))
+        self.assertEqual(self.ok("/api/list/data")["table"], "仕入先")
+        self.assertEqual(self.post("/api/list/row-save", table="部品", rowid=rowid, values={}, seen={}).status_code, 409)
+        self.assertFalse(self.tables() & {"全般設定", "ID", "部品_設定", config.TOOL_SETTINGS_TABLE})
+
+    def test_add_view_delete_rows(self):
         self.login()
-        st = self.post("/api/easy/state").get_json()
-        self.assertTrue(st["can_start"])
-        self.assertFalse(st["can_write"])
-        self.assertEqual(self.post("/api/easy/start", password="").status_code, 422)
-        r = self.post("/api/easy/start", password="Pass1", name="試験")
+        f = self.ok("/api/list/form", table="部品", rowid=0)
+        self.assertEqual([x["name"] for x in f["fields"]], ["品番", "名前", "単価", "入荷日"])
+        r = self.ok("/api/list/row-add", table="部品", values={"品番": "C-1", "名前": "緩衝材", "単価": "1,500"})
+        rowid = r["rowid"]
+        self.assertEqual(self.q("SELECT 品番, 単価, typeof(単価) FROM 部品 WHERE rowid=?", rowid),
+                         [("C-1", 1500.0, "real")])                               # 数の列には数で
+        f = self.ok("/api/list/form", table="部品", rowid=rowid)
+        self.assertEqual(f["fields"][0]["value"], "C-1")
+        seen = {x["name"]: x["value"] for x in f["fields"]}
+        r = self.post("/api/list/row-delete", table="部品", rowid=rowid, seen={**seen, "名前": "違う"})
+        self.assertEqual(r.status_code, 409)
+        self.ok("/api/list/row-delete", table="部品", rowid=rowid, seen=seen)
+        self.assertEqual(self.q("SELECT COUNT(*) FROM 部品"), [(3,)])
+
+    def test_column_settings_show_input_print(self):
+        self.login()
+        r = self.save_cols("部品", 品番={"print": False}, 名前={"input": "combo"},
+                           単価={"input": "spin", "step": "0.5"}, 入荷日={"input": "calendar", "show": True})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertEqual(auth.level(), 5)                                            # そのまま Level 5
-        self.assertTrue(Path(r.get_json()["backup"]).is_file())
-        s = self.setup_now()
-        self.assertEqual((s.has_id, s.has_general, s.auto_main), (True, True, False))
-        # 2 度目は断る(ID の表ができた)
+        self.assertIn(config.TOOL_SETTINGS_TABLE, self.tables())               # DB の中の隠した表に覚える
+        d = self.ok("/api/list/data", table="部品")
+        self.assertNotIn(config.TOOL_SETTINGS_TABLE, [t["name"] for t in d["tables"]])
+        spec = d["edit"]["columns"]
+        self.assertEqual((spec["名前"]["input"], spec["名前"]["choices"]), ("combo", ["テープ", "箱", "袋"]))
+        self.assertEqual((spec["単価"]["input"], spec["単価"]["step"]), ("spin", "0.5"))
+        rid = d["rows"][0][d["key_index"]]
+        # スピン: 数でなければ断る / カレンダー: どの形で来ても列の形(2026/10/15)で書く
+        r = self.post("/api/list/row-save", table="部品", rowid=rid, values={"単価": "abc"}, seen={"単価": "120.5"})
+        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "bad_value"))
+        self.ok("/api/list/row-save", table="部品", rowid=rid, values={"単価": "121.5", "入荷日": "2026-10-15"},
+                seen={"単価": "120.5", "入荷日": "2026/10/01"})
+        self.assertEqual(self.q("SELECT 単価, 入荷日 FROM 部品 WHERE rowid=?", int(rid)), [(121.5, "2026/10/15")])
+        r = self.post("/api/list/row-save", table="部品", rowid=rid, values={"入荷日": "2026-02-30"},
+                      seen={"入荷日": "2026/10/15"})
+        self.assertEqual(r.status_code, 422)
+        # 表示しない列は一覧・閲覧に出ない。印刷しない列は閲覧の印刷・保存に入らない
+        self.save_cols("部品", 入荷日={"show": False}, 品番={"print": False})
+        d = self.ok("/api/list/data")
+        self.assertEqual([c["name"] for c in d["columns"]], ["品番", "名前", "単価"])
+        b = self.ok("/api/browse/data", table="部品")
+        self.assertEqual([c["name"] for c in b["columns"]], ["品番", "名前", "単価"])
+        self.assertEqual(b["print_columns"], ["名前", "単価"])
+        self.assertEqual(self.ok("/api/browse/tables")["tables"], ["部品", "仕入先"])
+        # マスタ管理: 全部の列(表示しない列も)と、入力の種類どおりの欄
+        f = self.ok("/api/master/form", table="部品", mode="UPDATE", row=["A-1", "箱", "121.5", "2026/10/15"])
+        simple = {x["name"]: (x["simple"] or {}).get("input") for x in f["fields"]}
+        self.assertEqual(simple, {"品番": None, "名前": "combo", "単価": "spin", "入荷日": "calendar"})
+        r = self.post("/api/master/execute", table="部品", mode="UPDATE", values=["A-1", "箱", "x", "2026/10/15"],
+                      key="A-1", seen=["A-1", "箱", "121.5", "2026/10/15"], confirmed=True, answer=True)
+        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "bad_value"))
+        self.ok("/api/master/execute", table="部品", mode="UPDATE", values=["A-1", "箱", "122", "2026-11-01"],
+                key="A-1", seen=["A-1", "箱", "121.5", "2026/10/15"], confirmed=True, answer=True)
+        self.assertEqual(self.q("SELECT 入荷日 FROM 部品 WHERE 品番='A-1'"), [("2026/11/01",)])
+
+    def test_settings_follow_column_names(self):
+        """列名で覚える: 列が増えても・並びが違う DB でも、ずれない。"""
+        self.login()
+        self.save_cols("部品", 単価={"input": "spin"}, 名前={"show": False})
+        self.ok("/api/list/add-column", name="保管場所", kind="text", fill="倉庫A")
+        d = self.ok("/api/list/data", table="部品")
+        self.assertEqual([c["name"] for c in d["columns"]], ["品番", "単価", "入荷日", "保管場所"])   # 足した列は出る
+        self.assertEqual(d["edit"]["columns"]["単価"]["input"], "spin")
+        # 同じ表で列の並びが違う DB: 設定が無ければ既定(どの列も表示・文字・印刷)
+        other = plain_db(self.tmp / "別.sqlite3")
+        with closing(shared_db.connect(other)) as conn:
+            self.assertEqual({c.input for c in simple_table.load(conn, "部品")}, {"text"})
+            simple_table.save(conn, "部品", [simple_table.ColumnSetting("単価", input="spin")])
+            conn.execute("ALTER TABLE 部品 RENAME TO 部品_古")
+            conn.execute("CREATE TABLE 部品 (単価 REAL, 品番 TEXT)")              # 並びが違う
+            got = {c.name: c.input for c in simple_table.load(conn, "部品")}
+        self.assertEqual(got, {"単価": "spin", "品番": "text"})
+
+    def test_bad_settings_refused(self):
+        self.login()
+        self.assertEqual(self.save_cols("部品", 単価={"input": "spin", "step": "0"}).status_code, 422)
+        self.assertEqual(self.save_cols("部品", **{n: {"show": False} for n in ("品番", "名前", "単価", "入荷日")})
+                         .status_code, 422)
+        self.assertEqual(self.save_cols("部品", 単価={"input": "なにか"}).status_code, 422)
+        self.assertEqual(self.post("/api/easy/columns", table=config.ID_TABLE, rows=[]).status_code, 422)
+
+    def test_start_login(self):
+        self.login()
+        st = self.ok("/api/easy/state")
+        self.assertFalse(st["has_id"])
+        self.assertEqual(self.post("/api/easy/start", password="").status_code, 422)
+        r = self.ok("/api/easy/start", password="Pass1", name="試験")
+        self.assertEqual(auth.level(), 5)
+        self.assertTrue(Path(r["backup"]).is_file())
+        self.assertIn("ID", self.tables())
+        self.assertNotIn("全般設定", self.tables())                               # 全般設定 は作らない
         self.assertEqual(self.post("/api/easy/start", password="x").get_json()["reason"], "has_id")
-        # 次のログインは登録したパスワードで
         auth.end()
         self.assertEqual(self.post("/api/login", id=auth.network_id(), password="bad").status_code, 403)
-        self.assertEqual(self.login("pass1")["level"], 5)                            # VBA と同じく小文字でそろえる
+        self.assertEqual(self.login("pass1")["level"], 5)
 
-        # 管理番号を足す → 一覧で直せる
-        self.assertIn("管理番号", " ".join(s.notices))
-        r = self.post("/api/easy/key")
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        d = self.post("/api/list/data").get_json()
-        self.assertGreaterEqual(d["key_index"], 0)
-        with closing(sqlite3.connect(self.path)) as c:
-            self.assertEqual([k for (k,) in c.execute("SELECT 管理番号 FROM 部品 ORDER BY rowid")], [1, 2, 3])
-
-        # 列の決まり: 単価は 数・必須・金額、名前は 仕入先 から選ぶ、品番で降順
-        st = self.post("/api/easy/state").get_json()
-        rows = {c["name"]: dict(c) for c in st["columns"]}
-        rows["単価"].update(input="数値変換", required=True, money=True)
-        rows["名前"].update(input="s", master="仕入先")
-        rows["品番"].update(sorted=True, sort="DESC")
-        r = self.post("/api/easy/columns", rows=list(rows.values()))
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        s = self.setup_now()
-        self.assertFalse(s.auto_conv)
-        self.assertEqual(s.conv.by_item("単価").input_type, "数値変換")
-        self.assertEqual(s.conv.by_item("単価").reg_con, "必須")
-        self.assertEqual(s.conv.by_item("名前").input_type, "s仕入先")
-        d = self.post("/api/list/data").get_json()
-        names = [c["name"] for c in d["columns"]]
-        self.assertEqual([row[names.index("品番")] for row in d["rows"]], ["B-1", "A-2", "A-1"])
-        self.assertEqual(d["rows"][0][names.index("単価")], "2,503")                # 金額で見せる
-        self.assertTrue(d["edit"]["allowed"])
-        # 必須の列を空にはできない(登録と同じ決まり)
-        key = d["rows"][0][d["key_index"]]
-        r = self.post("/api/list/cell", key=key, column="単価", value="", seen="2,503")
-        self.assertEqual(r.status_code, 422, r.get_data(as_text=True))
-        # 読み直した画面は選んだとおり
-        again = {c["name"]: c for c in self.post("/api/easy/state").get_json()["columns"]}
-        self.assertEqual((again["名前"]["input"], again["名前"]["master"]), ("s", "仕入先"))
-        self.assertTrue(again["品番"]["sorted"])
-
-    def test_bad_choices_refused(self):
+    def test_master_rows_in_any_table(self):
+        """マスタ管理にどの表も並び、1 列目が番号でない表も行を足す・直せる。"""
         self.login()
-        self.post("/api/easy/start", password="p")
-        st = self.post("/api/easy/state").get_json()
-        rows = [dict(c) for c in st["columns"]]
-        rows[0].update(input="s", master="ID")                                        # ID は選べない
-        self.assertEqual(self.post("/api/easy/columns", rows=rows).get_json()["reason"], "bad_input")
-        rows = [dict(c, sorted=True) for c in st["columns"]]                          # 並べる列は 1 つ
-        self.assertEqual(self.post("/api/easy/columns", rows=rows).status_code, 422)
-        rows = [dict(c) for c in st["columns"]]
-        rows[0].update(input="custom", raw="なにか")                                   # 読めない書き方
-        self.assertEqual(self.post("/api/easy/columns", rows=rows).status_code, 422)
-        self.assertEqual(self.post("/api/easy/main", table="ID").status_code, 422)
-
-    def test_columns_can_be_added_to_any_table_from_browse(self):
-        self.login()
-        self.post("/api/easy/start", password="p")
-        t = self.post("/api/browse/tables").get_json()
-        self.assertEqual(t["tables"], ["部品", "仕入先"])                               # 決まりが無ければ全部(ID は出さない)
-        self.assertTrue(t["can_add_column"])
-        r = self.post("/api/browse/add-column", table="仕入先", name="担当", kind="text", fill="未定")
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        with closing(sqlite3.connect(self.path)) as c:
-            self.assertEqual(column_names(c, "仕入先")[-1], "担当")
-        self.assertEqual(self.post("/api/browse/add-column", table="ID", name="x").status_code, 403)
-
-    def test_master_lists_every_table_when_unconfigured(self):
-        """設定の無い DB は、マスタ管理にどの表も並ぶ(行を足せる)。"""
-        self.login()
-        self.post("/api/easy/start", password="p")
-        tables = self.post("/api/master/tables").get_json()["tables"]
-        self.assertIn("仕入先", tables)
-        f = self.post("/api/master/form", table="仕入先", mode="ADDNEW").get_json()
-        self.assertEqual([(x["value"], x["is_key"]) for x in f["fields"]], [("", False), ("", False)])  # 名前は打てる
+        tables = self.ok("/api/master/tables")["tables"]
+        self.assertTrue({"部品", "仕入先"} <= set(tables))
+        f = self.ok("/api/master/form", table="仕入先", mode="ADDNEW")
+        self.assertEqual([(x["value"], x["is_key"]) for x in f["fields"]], [("", False), ("", False)])
         exe = lambda mode, values, seen=None: self.post(
             "/api/master/execute", table="仕入先", mode=mode, values=values, key=values[0], seen=seen,
             confirmed=True, answer=True)
-        # 同じ名前でも上書きせずに足す(1 列目は鍵ではない)
-        r = exe("ADDNEW", ["東海紙工", "052-222-2222"])
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        def rows():
-            with closing(sqlite3.connect(self.path)) as c:
-                return [list(x) for x in c.execute("SELECT * FROM 仕入先 ORDER BY rowid")]
-        self.assertEqual(rows(), [["東海紙工", "052-000-0000"], ["東海紙工", "052-222-2222"]])
-        # 修正は見ていた行を直す(1 列目も変えられる)
-        r = exe("UPDATE", ["東海紙工 名古屋", "052-222-2222"], seen=["東海紙工", "052-222-2222"])
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertEqual(rows()[1], ["東海紙工 名古屋", "052-222-2222"])
-        self.assertEqual(rows()[0], ["東海紙工", "052-000-0000"])
-        # 見ていた行がもう無ければ書かない
-        r = exe("UPDATE", ["x", "y"], seen=["無い", "行"])
-        self.assertEqual(r.get_json()["reason"], "conflict")
-        # 番号の鍵がある表は今までどおり(ID の 番号)
-        f = self.post("/api/master/form", table="ID", mode="ADDNEW").get_json()
-        self.assertEqual((f["fields"][0]["value"], f["fields"][0]["is_key"]), ("2", True))
+        self.assertEqual(exe("ADDNEW", ["東海紙工", "052-222-2222"]).status_code, 200)     # 同じ名前でも足す
+        self.assertEqual(self.q("SELECT * FROM 仕入先 ORDER BY rowid"),
+                         [("東海紙工", "052-000-0000"), ("東海紙工", "052-222-2222")])
+        self.assertEqual(exe("UPDATE", ["東海紙工 名古屋", "052-222-2222"], ["東海紙工", "052-222-2222"]).status_code, 200)
+        self.assertEqual(self.q("SELECT * FROM 仕入先 ORDER BY rowid")[1], ("東海紙工 名古屋", "052-222-2222"))
+        self.assertEqual(exe("UPDATE", ["x", "y"], ["無い", "行"]).get_json()["reason"], "conflict")
+        # 本体(一覧の表)も VBA 版でなければ、マスタ管理で行を直せる
+        self.assertTrue(self.ok("/api/master/rows", table="部品")["caps"]["rows"])
 
 
-class MisalignedSettingTest(_Case):
-    """VBA 版では起動しなかった「_設定 と本体の数・並びが違う」でも開く。"""
+class LegacyDbTest(_Case):
+    """VBA 版の DB(全般設定・<表>_設定・管理番号)は今までどおり。表示の設定は効く。"""
 
     def setUp(self):
         super().setUp()
         self.use(fresh_db_path(self.tmp))
         auth.start(auth.LoginResult(True, user_id="Xfa-Ngyinazawa", level=5))
+
+    def test_legacy_path_and_hidden_columns(self):
+        d = self.ok("/api/list/data")
+        self.assertEqual((d["mode"], d["table"], d["count"]), ("legacy", MAIN, 327))
+        st = self.ok("/api/easy/state")
+        self.assertTrue(st["legacy"])
+        rows = [dict(c, show=c["name"] != "RA") for c in st["columns"]]
+        self.ok("/api/easy/columns", table=MAIN, rows=rows)
+        d = self.ok("/api/list/data")
+        self.assertIn("RA", d["view"]["hidden"])
+        self.assertIn("RA", [c["name"] for c in d["columns"]])                  # VBA 版の表は隠すだけ
+        # ほかの表(タイプ)も一覧で選べない(システムの表)が、業務の表なら選べる
+        self.assertEqual([t["name"] for t in d["tables"]], [MAIN])
 
     def test_reordered_and_missing_rows(self):
         with closing(sqlite3.connect(self.path)) as c:
@@ -219,32 +256,20 @@ class MisalignedSettingTest(_Case):
             c.execute(f"INSERT INTO [{CONV}] (管理番号, 項目名) VALUES ('101', '昔の列')")   # 本体に無い
             c.execute(f"UPDATE [{CONV}] SET 表示 = '金額' WHERE 項目名 = 'Ⅱ'")
             c.commit()
-        s = self.setup_now()
-        self.assertEqual(s.master_problem, "")
+        with closing(shared_db.connect(self.path)) as conn:
+            s = load_setup(conn)
         self.assertEqual([r.item for r in s.conv.rows], s.main_columns)
         self.assertEqual(s.conv.by_item("Ⅱ").ind_type, "金額")                       # 名前で合わせる
         notes = " ".join(s.notices)
         self.assertIn("RA", notes)
         self.assertIn("昔の列", notes)
-        d = self.post("/api/list/data")
-        self.assertEqual(d.status_code, 200, d.get_data(as_text=True))
-        self.assertEqual(d.get_json()["count"], 327)
-        r = self.post("/api/record/form", mode="修正", key="2")
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        names = [f["name"] for f in r.get_json()["fields"]]
+        self.assertEqual(self.ok("/api/list/data")["count"], 327)
+        names = [f["name"] for f in self.ok("/api/record/form", mode="修正", key="2")["fields"]]
         self.assertEqual(names, s.main_columns)
 
-    def test_state_reads_existing_settings(self):
-        with closing(shared_db.connect(self.path)) as conn:
-            st = easy_setup.state(conn, self.setup_now(), 5)
-        self.assertFalse(st["auto_main"])
-        self.assertEqual(st["main"], MAIN)
-        self.assertEqual(len(st["columns"]), 25)
-        self.assertNotIn("ID", st["masters"])
-        for c in st["columns"]:
-            if c["raw"]:
-                # 選択肢にある書き方はその選択肢、無ければ「そのまま」
-                self.assertTrue(c["input"] == easy_setup.CUSTOM or c["input"] in {x[0] for x in easy_setup.INPUT_CHOICES})
+    def test_column_names_unchanged(self):
+        with closing(sqlite3.connect(self.path)) as c:
+            self.assertEqual(len(column_names(c, MAIN)), 25)
 
 
 if __name__ == "__main__":

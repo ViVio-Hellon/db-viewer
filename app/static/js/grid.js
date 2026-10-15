@@ -700,6 +700,8 @@ export function createGrid(root, opts = {}) {
     },
     total: () => st.rows.length,
     focus: () => wrap.focus(),
+    /** 行を選ぶ(足した行を見せる)。`null` で選びを外す。 */
+    select: (k) => select(k === null || k === undefined ? null : String(k), { scroll: true }),
     /** いちばん右まで見せる(列を足したあと)。 */
     scrollToEnd: () => { wrap.scrollLeft = wrap.scrollWidth; },
   };

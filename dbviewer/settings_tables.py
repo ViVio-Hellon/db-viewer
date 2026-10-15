@@ -12,16 +12,14 @@ VBA 版は起動のたびに `DBconnection` で各表を配列に読み、`MF1.U
 
 Web 版も同じ順・同じ文言で確かめ、結果を設定タブ「いまの状態」と一覧画面に出す。
 
-【0.7.0 から: 設定が無い・合わない DB でも開く(かんたん設定)】
+【0.7.0 から: 設定が無い・合わない DB でも開く / 0.8.0 から: 一覧で表を選ぶ。設定は列ごとの 表示・入力・印刷 だけ】
 VBA 版は 4 つの表がそろって、本体と `_設定` の項目数・並びが 1 つも違わないと起動を止めていた。
 Web 版は**止めずに、足りないところを自動で補って開く**。直したいときは 設定 → かんたん設定 で選ぶ。
 
-    全般設定 が無い・メインテーブル名が空・その表が無い
-        → この PC で選んだ表、無ければ業務の表の 1 つ目を出す(`auto_main`)
-    <メイン>_設定 が無い                 → どの列も自由入力(`auto_conv`)
-    <メイン>_設定 と本体の数・並びが違う → **項目名で合わせる**。足りない列は自由入力、
-                                           本体に無い項目は使わない(どちらも `notices` で知らせる)
-    ID が無い                            → 閲覧だけでログイン(auth.py)
+    一覧に出す表 → この PC で選んだ表、無ければ全般設定「メインテーブル名」、無ければ業務の表の 1 つ目
+    <表>_設定 が無い                     → simple_table.py の道(rowid で直す・列ごとの 表示・入力・印刷)
+    <表>_設定 と本体の数・並びが違う     → **項目名で合わせる**(VBA 版の道。`notices` で知らせる)
+    ID が無い                            → 誰でも直せる(auth.py)
 """
 from __future__ import annotations
 
@@ -45,8 +43,8 @@ def table_names(conn: sqlite3.Connection) -> list[str]:
     """VBA `GetTblDic`(ADOX の TABLE 型)に相当。SQLite の内部表は除く。"""
     rows = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid")
-    # 「表を持ってくる」の控えの表は Web 版だけのもの(VBA の DB には無い)
-    return [r[0] for r in rows if r[0] != config.BROUGHT_REGISTRY]
+    # 「表を持ってくる」の控えの表・列の設定の表は Web 版だけのもの(VBA の DB には無い。画面に出さない)
+    return [r[0] for r in rows if r[0] not in (config.BROUGHT_REGISTRY, config.TOOL_SETTINGS_TABLE)]
 
 
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -374,12 +372,17 @@ class SystemSetup:
     notices: list[str] = field(default_factory=list)   # 止めずに知らせること(かんたん設定で直せる)
     auto_main: bool = False           # 全般設定に決まりが無く、表示する表を自動で選んだ
     auto_conv: bool = False           # <メイン>_設定 が無い(どの列も自由入力)
-    has_id: bool = True               # ID の表がある(無ければ閲覧だけ)
+    has_id: bool = True               # ID の表がある(無ければ誰でも直せる)
     has_general: bool = True          # 全般設定 の表がある
 
     @property
     def ok(self) -> bool:
         return self.master_problem == ""
+
+    @property
+    def legacy(self) -> bool:
+        """VBA 版の道で動くか(<表>_設定 があり、管理番号 がある表)。それ以外は simple_table の道。"""
+        return not self.auto_conv and self.key_ok
 
     @property
     def key_ok(self) -> bool:
@@ -405,24 +408,19 @@ MSG_NO_TABLES = "表示できる表がありません(業務の表が 1 つも�
 
 
 def resolve_main(conn: sqlite3.Connection, general: GeneralSettings) -> tuple[str, bool, list[str]]:
-    """表示する表。(表, 自動で選んだか, 知らせること)
+    """一覧に出す表。(表, 全般設定で決まった表でないか, 知らせること)
 
-    全般設定の「メインテーブル名」があればそれ。無い・その表が無いときは、この PC で選んだ表、
-    それも無ければ業務の表の 1 つ目。
+    0.8.0 から一覧で表を選べる: この PC で選んだ表 → 全般設定の「メインテーブル名」→ 業務の表の 1 つ目。
     """
-    if general.main_table and table_exists(conn, general.main_table):
-        return general.main_table, False, []
     tables = user_tables(conn)
-    notices = []
-    if general.main_table:
-        notices.append(f"全般設定の「メインテーブル名」の表 [{general.main_table}] がありません。")
     if not tables:
-        raise SetupError(MSG_NO_TABLES if not general.main_table
-                         else f"メインテーブル [{general.main_table}] がありません。")
+        raise SetupError(MSG_NO_TABLES)
     pick = picked_table(conn)
-    table = pick if pick in tables else tables[0]
-    notices.append(f"表示する表は [{table}] です(自動)。変えるときは 設定 → かんたん設定。")
-    return table, True, notices
+    if pick in tables:
+        return pick, pick != general.main_table, []
+    if general.main_table and general.main_table in tables:
+        return general.main_table, False, []
+    return tables[0], True, []
 
 
 def load_setup(conn: sqlite3.Connection) -> SystemSetup:
@@ -436,16 +434,13 @@ def load_setup(conn: sqlite3.Connection) -> SystemSetup:
     raw_conv = (load_conv(conn, general.conv_table) if conv_exists
                 else ConvTable(general.conv_table, [], [], {}))
     conv, conv_notices = align_conv(raw_conv, main_columns, exists=conv_exists)
-    notices += conv_notices
+    # VBA 版の道(<表>_設定 があり 管理番号 がある表)のときだけ、_設定 の合わないところを知らせる
+    if conv_exists and config.KEY_ITEM in main_columns:
+        notices += conv_notices
     # CheckColumns は VBA の形の DB(全般設定がある)だけ。ほかの DB では関係ない
     column_problems = check_columns(conn, exclusion_set(conn, main), 2) if has_general else []
     filters = load_filters(conn) if table_exists(conn, config.FLT_TABLE) else []
     has_id = table_exists(conn, config.ID_TABLE)
-    if not has_id:
-        notices.append("ID の表が無いので、閲覧だけで動いています。直すには 設定 → かんたん設定 → 「編集を始める」。")
-    if config.KEY_ITEM not in main_columns:
-        notices.append(f"[{main}] に「{config.KEY_ITEM}」の列が無いので、一覧では行を直せません"
-                       f"(かんたん設定で足せます)。")
     return SystemSetup(general=general, conv=conv, filters=filters,
                        main_columns=main_columns, fj=field_dic(main_columns),
                        column_problems=column_problems, master_problem="",

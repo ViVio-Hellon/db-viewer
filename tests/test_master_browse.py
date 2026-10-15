@@ -23,7 +23,7 @@ class MasterAdminTest(unittest.TestCase):
             self.assertEqual(master_admin.editable_tables(conn, s, 2), [])
 
     def test_used_tables_follow_setting(self):
-        """_設定 が参照するマスタ(入力形式 s/m・マスタ結合)と履歴の H_ 表は出る。使っていない表は出ない。"""
+        """_設定 が参照するマスタ(入力形式 s/m・マスタ結合)と履歴の H_ 表は出る。0.8.0 から業務の表はぜんぶ出る。"""
         with tempfile.TemporaryDirectory() as tmp:
             conn = shared_db.connect(fresh_db_path(Path(tmp)))
             conn.execute("CREATE TABLE 担当者 (管理番号 INTEGER, 担当者 TEXT)")
@@ -36,7 +36,8 @@ class MasterAdminTest(unittest.TestCase):
             conn.commit()
             s = load_setup(conn)
             used = master_admin.used_tables(conn, s)
-            self.assertEqual([n for n, _ in used], ["ID", "全般設定", "作業標準管理_設定", "担当者", "区分マスタ", "H_変更"])
+            self.assertEqual([n for n, _ in used],
+                             ["ID", "全般設定", "作業標準管理_設定", "担当者", "区分マスタ", "使っていない", "H_変更"])
             self.assertIn("担当", dict(used)["担当者"])
             conn.close()
 
@@ -174,7 +175,8 @@ class WebMasterTest(unittest.TestCase):
             conn.execute(f"INSERT INTO [{config.SET_TABLE}] ([管理番号],[{config.ITEM_NAME}],[{config.PRESET}],[備考]) "
                          "VALUES (5,?,?,'')", (config.GS_TABLE_BROWSE, "タイプ/フィルタ"))
             conn.commit()
-        self.assertEqual(self.c.post("/api/browse/tables", json={}, headers=self.h).get_json()["tables"], ["タイプ", "フィルタ"])
+        self.assertEqual(self.c.post("/api/browse/tables", json={}, headers=self.h).get_json()["tables"],
+                         ["作業標準管理", "タイプ", "フィルタ"])           # 業務の表 + 全般設定「テーブル閲覧」の表
         d = self.c.post("/api/browse/data", json={"table": "タイプ"}, headers=self.h).get_json()
         self.assertEqual((d["count"], d["key_index"]), (7, -1))
         self.assertEqual([c["kind"] for c in d["columns"]], ["num", "text", "text"])

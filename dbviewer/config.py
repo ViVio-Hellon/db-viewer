@@ -75,6 +75,8 @@ ACCESS_LOG_NAME = "Access.log"
 # 「表を持ってくる」で足した表の記録(本体 .sqlite3 の中)。python-web-tools と同じ名前。
 # VBA には無い表なので、整合性検査・マスタ管理の一覧には出さない(`settings_tables.table_names`)
 BROUGHT_REGISTRY = "ツールで足した表"
+# 列ごとの設定(表示・入力・印刷)を表ごとに覚える隠した表(0.8.0。simple_table.py)
+TOOL_SETTINGS_TABLE = "ツールの設定"
 
 
 # ------------------------------------------------------------------

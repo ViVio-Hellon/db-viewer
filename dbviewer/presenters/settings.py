@@ -294,12 +294,12 @@ def _db_section(db_path: Path, prof: config.Profile, online: bool) -> Section:
 
 
 def _required_tables_check(section: Section, names: list[str]) -> None:
-    """設定の表(全般設定・ID)の有無。0.7.0 から無くても開ける(閲覧だけ・表は自動)。"""
+    """設定の表(全般設定・ID)の有無。0.8.0 から無くてよい(表は一覧で選ぶ・ID が無ければ誰でも直せる)。"""
     wanted = (config.SET_TABLE, config.ID_TABLE)
     missing = [t for t in wanted if t not in names]
     if missing:
-        section.checks.append(Check("設定の表", "無い表があります(開けます)", WARN,
-                                    "無い表: " + "、".join(missing) + "。かんたん設定で作れます。"))
+        section.checks.append(Check("設定の表", "無くても使えます", INFO,
+                                    "無い表: " + "、".join(missing) + "(どの表も一覧で選んで見て直せます)"))
     else:
         section.checks.append(Check("設定の表", "そろっています", OK, "、".join(wanted)))
 
@@ -311,7 +311,7 @@ def _setup_section(db_path: Path) -> Section:
     """VBA 起動時の整合性検査(CheckColumns / MasterFileCheck / formatCheck)と同じ判定。"""
     from .. import settings_tables
 
-    section = Section(title="表示する表と列の決まり", mark="設", action=FIX_EASY)
+    section = Section(title="一覧の表と列の設定", mark="設", action=FIX_EASY)
     if not db_path.is_file():
         section.checks.append(Check("検査", "本体ファイルが無いので確かめられません", INFO))
         return section
@@ -325,14 +325,13 @@ def _setup_section(db_path: Path) -> Section:
         section.checks.append(Check("検査", "読めません", NG, str(exc)))
         return section
     g = setup.general
-    section.checks.append(Check("表示する表", g.main_table + ("(自動)" if setup.auto_main else ""),
-                                INFO if setup.auto_main else OK,
-                                "全般設定に決まりが無いので自動で選んでいます" if setup.auto_main
+    section.checks.append(Check("一覧の表", g.main_table, OK,
+                                "一覧の上で選んだ表(この PC で覚える)" if setup.auto_main
                                 else "全般設定の「メインテーブル名」"))
     section.checks.append(Check(
-        "列の決まり", "自動(どの列も自由入力)" if setup.auto_conv else f"[{g.conv_table}] で決めています",
+        "列の設定", "かんたん設定(表示・入力・印刷)" if not setup.legacy else f"VBA 版の [{g.conv_table}]",
         INFO if setup.auto_conv else OK, f"本体 {len(setup.main_columns)} 列"))
-    section.checks.append(Check("直せる人", "ID で登録した人" if setup.has_id else "いません(閲覧だけ)",
+    section.checks.append(Check("直せる人", "ID で登録した人" if setup.has_id else "誰でも(ID の表が無い)",
                                 OK if setup.has_id else INFO))
     for note in setup.notices:
         if "自動" in note and setup.auto_main and note.startswith("表示する表"):

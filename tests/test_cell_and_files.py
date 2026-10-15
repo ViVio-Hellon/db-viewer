@@ -117,7 +117,7 @@ class DbFilesTest(unittest.TestCase):
         self.assertIn("変換済み", notes["作業標準管理システム.accdb"])
         self.assertIn("Access 取り込み", notes["新しい.accdb"])
         self.assertIn("全般設定", notes["ほか.db"])
-        self.assertIn("閲覧だけ", notes["ほか.db"])
+        self.assertIn("一覧で表を選んで", notes["ほか.db"])
         self.assertIn("表がありません", notes["空.db"])
         self.assertEqual(db_files.scan(self.dir / "無い")["exists"], False)
 

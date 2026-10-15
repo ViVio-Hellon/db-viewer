@@ -80,7 +80,7 @@
         </div>
       </section>
 
-      {# かんたん設定(0.7.0): 設定の表を手で書かずに、画面で選ぶ。中身は views/easy.js が描く #}
+      {# かんたん設定(0.8.0): 決めるのは 見る DB と 列ごとの 表示・入力・印刷 だけ。中身は views/easy.js が描く #}
       <section class="tabpanel tabpanel--scroll" id="panel-easy" role="tabpanel" aria-labelledby="tab-easy" hidden>
         <p class="status status--warn" id="easyLogin" hidden>
           ログインすると、ここで決められます。
@@ -90,63 +90,64 @@
         <div class="pathcards" id="easyBody" hidden>
           <section class="card">
             <header>
-              <i class="ib ib--sm" aria-hidden="true">表</i>
-              <h3>表示する表</h3>
-              <span class="eyebrow">一覧に出す表</span>
+              <i class="ib ib--sm" aria-hidden="true">Ｄ</i>
+              <h3>見る DB</h3>
+              <span class="eyebrow">決めるのはこれだけ</span>
             </header>
             <div class="pad">
-              <div class="easyrow">
-                <select class="input" id="easyMain" aria-label="表示する表" style="width:22em"></select>
-                <button class="btn btn--commit" type="button" id="easyMainSave">この表を表示する</button>
-              </div>
-              <p class="why" id="easyMainNote"></p>
+              <p class="easydb" id="easyDb"></p>
+              <p class="why">DB を替えるときは「接続先」で選びます。全般設定・<b>_設定</b> の表は要りません。
+                どの表も 一覧・マスタ管理・閲覧 で見て直せます(一覧の上で表を選ぶ)。</p>
+              <div class="btn-row"><button class="btn btn--find" type="button" id="easyGoSource"><span class="gl">▸</span>接続先で DB を選ぶ</button></div>
             </div>
           </section>
 
-          <section class="card" id="easyStartCard" hidden>
-            <header>
-              <i class="ib ib--sm ib--warn" aria-hidden="true">始</i>
-              <h3>編集を始める</h3>
-              <span class="eyebrow">いまは閲覧だけ</span>
-            </header>
-            <div class="pad">
-              <p class="why">この DB には ID の表が無いので、誰も直せません。あなたを Level 5(管理者)で登録すると、
-                直す・列を足す・この画面の設定ができるようになります。ほかの人はあとで マスタ管理 の ID で足します。</p>
-              <div class="optgrid">
-                <span>ログイン ID</span><b id="easyStartId"></b>
-                <label for="easyStartName">名前</label>
-                <input class="input" id="easyStartName" autocomplete="off" placeholder="空なら ID と同じ" style="width:16em">
-                <label for="easyStartPass">パスワード</label>
-                <input class="input" id="easyStartPass" type="password" autocomplete="new-password" style="width:16em">
-              </div>
-              <div class="btn-row" style="margin-top:8px">
-                <button class="btn btn--commit" type="button" id="easyStart">自分を Level 5 で登録して編集を始める</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="card easycols">
+          <section class="card">
             <header>
               <i class="ib ib--sm" aria-hidden="true">列</i>
-              <h3>列ごとの決まり</h3>
+              <h3>列の設定</h3>
               <span class="eyebrow" id="easyColsWhere"></span>
             </header>
             <div class="pad">
-              <p class="why">入力の種類・必須・金額で見せる・並べる列 を選んで保存します。ほかの決まり(参照形式・マスタ結合・履歴・追加表示)は
-                今までどおり マスタ管理 の <span id="easyConvName"></span> で直せます。</p>
-              <p class="status status--warn" id="easyKeyNote" hidden>
-                <span>この表には「管理番号」の列が無いので、一覧で行を直す・足す・消すができません。</span>
-                <button class="btn btn--find" type="button" id="easyKey" style="margin-left:8px">管理番号を足す</button>
-              </p>
+              <div class="easyrow">
+                <label for="easyTable" class="why" style="margin:0">表</label>
+                <select class="input" id="easyTable" style="width:22em"></select>
+              </div>
+              <p class="why">列ごとに、<b>表示</b>(一覧・閲覧に出す)・<b>入力</b>(直すときの欄)・<b>印刷</b>(閲覧・出力で印刷・保存に入れる)を選びます。
+                列名で覚えるので、列の並びが変わっても・列が増えても(増えた列は 表示・文字・印刷)ずれません。DB を替えれば、その DB の設定になります。</p>
+              <p class="status status--warn" id="easyLegacy" hidden></p>
               <div class="tablewrap easytable">
                 <table class="table">
-                  <thead><tr><th>列</th><th>入力の種類</th><th>必須</th><th>金額で見せる</th><th>この列で並べる</th></tr></thead>
+                  <thead><tr><th>列</th><th>表示</th><th>入力</th><th>印刷</th></tr></thead>
                   <tbody id="easyCols"></tbody>
                 </table>
               </div>
               <div class="btn-row" style="margin-top:8px">
-                <button class="btn btn--commit" type="button" id="easyColsSave">列の決まりを保存</button>
+                <button class="btn btn--commit" type="button" id="easyColsSave">列の設定を保存</button>
                 <span class="why" id="easyColsHint" style="margin:0"></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header>
+              <i class="ib ib--sm" aria-hidden="true">人</i>
+              <h3>ログイン</h3>
+              <span class="eyebrow">使わなくてもよい</span>
+            </header>
+            <div class="pad">
+              <p class="why" id="easyIdState"></p>
+              <div id="easyStartBox" hidden>
+                <div class="optgrid">
+                  <span>ログイン ID</span><b id="easyStartId"></b>
+                  <label for="easyStartName">名前</label>
+                  <input class="input" id="easyStartName" autocomplete="off" placeholder="空なら ID と同じ" style="width:16em">
+                  <label for="easyStartPass">パスワード</label>
+                  <input class="input" id="easyStartPass" type="password" autocomplete="new-password" style="width:16em">
+                </div>
+                <div class="btn-row" style="margin-top:8px">
+                  <button class="btn btn--commit" type="button" id="easyStart">自分を Level 5 で登録してログインを使う</button>
+                </div>
               </div>
             </div>
           </section>
@@ -587,11 +588,11 @@
   .easytable td, .easytable th { text-align:left !important; vertical-align:middle; }
   .easytable td.name b { color:var(--ink); overflow-wrap:anywhere; }
   .easytable td.name small { display:block; color:var(--faint); font-family:var(--mono); font-size:var(--fs-2xs); }
-  .easytable .pick { display:flex; gap:6px; flex-wrap:wrap; }
+  .easytable .pick { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   .easytable .pick .input { min-width:0; }
   .easytable tr.is-changed td { background:var(--accent-soft); }
-  .easycols { grid-column:1 / -1; }
-  #easyKeyNote { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+  .easytable tr.is-off td.name b { color:var(--faint); }
+  .easydb { font-family:var(--mono); font-size:var(--fs-sm); overflow-wrap:anywhere; color:var(--ink); margin:0 0 6px; }
   /* 表を持ってくる: 落とす場所。重ねている間は色を変える */
   .dropzone { border:2px dashed var(--rule); border-radius:var(--radius-xs);
               padding:18px; margin:8px 0; display:flex; flex-direction:column;

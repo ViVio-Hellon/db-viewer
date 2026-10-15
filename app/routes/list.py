@@ -7,13 +7,20 @@ VBA MF1 の一覧ページ(フィルタ列・ListView・ページ)は捨て、We
 - `POST /api/list/data`    … 全行・列の種類・この PC で保存した列の見せ方
 - `POST /api/list/view`    … 列の見せ方を保存する(`{"reset": true}` で初期に戻す)
 - `POST /api/list/add-column` … 本体に列を足す(Level 5。マスタ管理の「列を追加」と同じ決まり)
+
+0.8.0 から一覧で表を選べる(`{"table"}` を付けると、その表をこの PC で覚える)。VBA 版の表
+(<表>_設定 と 管理番号 がある)は今までどおり、ほかの表は simple_table の道(rowid で直す):
+- `POST /api/list/form`        … 行の入力欄(表示する列・入力の種類・コンボの選択肢)
+- `POST /api/list/row-save`    … 行(またはマス)を直す `{"table","rowid","values","seen"}`
+- `POST /api/list/row-add`     … 行を足す `{"table","values"}`
+- `POST /api/list/row-delete`  … 行を消す `{"table","rowid","seen"}`
 """
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, render_template, request
 
 from dbviewer import (auth, cell_edit, config, grid_data, master_admin, records, session_setup, settings_tables,
-                      shared_db)
+                      shared_db, simple_table)
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 
@@ -54,22 +61,71 @@ def _view_key(setup) -> str:
     return grid_data.view_key("list", shared_db.current_profile().prog_no, setup.general.main_table)
 
 
+def _pick_from_body(conn) -> None:
+    """`{"table"}` があれば、一覧に出す表としてこの PC で覚える(業務の表だけ)。"""
+    table = str((request.get_json(silent=True) or {}).get("table") or "")
+    if table and table in settings_tables.user_tables(conn):
+        settings_tables.pick_table(conn, table)
+
+
+def _tables(conn) -> list[dict]:
+    out = []
+    for name in settings_tables.user_tables(conn):
+        try:
+            n = conn.execute(f"SELECT COUNT(*) FROM {settings_tables.q(name)}").fetchone()[0]
+        except Exception:                               # noqa: BLE001 - 数えられなければ ?
+            n = -1
+        out.append({"name": name, "rows": n})
+    return out
+
+
+def _simple_data(conn, setup):
+    """VBA 版でない表: 表示する列・末尾に rowid・入力の種類(rowid で直す)。"""
+    table = setup.general.main_table
+    v = simple_table.view(conn, table)
+    meta = grid_data.columns_meta(v["columns"], v["rows"])
+    settings = simple_table.by_name(conn, table)
+    lv = auth.level()
+    return jsonify({
+        "mode": "simple", "table": table, "tables": _tables(conn),
+        "columns": meta, "rows": v["rows"], "key_index": v["key_index"], "count": len(v["rows"]),
+        "view": grid_data.load_view(_view_key(setup), v["columns"]),
+        "edit": {"allowed": lv >= auth.required_level("修正"),
+                 "columns": {c: simple_table.edit_spec(conn, table, settings[c]) for c in v["columns"]}},
+        "can": {"add": lv >= auth.required_level("新規"), "delete": lv >= auth.required_level("削除")},
+        "db_mtime": shared_db.probe().get("mtime"),
+        "setup": _setup_dict(setup),
+    })
+
+
 @bp.post("/api/list/data")
 def api_data():
+    try:
+        _pick_from_body(get_db())
+    except shared_db.DbNotFound:
+        pass
     conn, setup, err = _open()
     if err:
         return err
+    if not setup.legacy:
+        return _simple_data(conn, setup)
     try:
         columns, rows = records.full_list(conn, setup)
     except records.ListError as exc:
         return _refuse("list", str(exc))
     key_index = columns.index(config.KEY_ITEM) if config.KEY_ITEM in columns else -1
+    view = grid_data.load_view(_view_key(setup), columns)
+    # かんたん設定で「表示しない」にした列は隠す(VBA 版の表も同じ)
+    hide = [c.name for c in simple_table.load(conn, setup.general.main_table) if not c.show]
+    view["hidden"] = list(dict.fromkeys([*view.get("hidden", []), *[h for h in hide if h in columns]]))
     return jsonify({
+        "mode": "legacy", "table": setup.general.main_table, "tables": _tables(conn),
+        "can": {"add": True, "delete": True},
         "columns": grid_data.columns_meta(columns, rows),
         "rows": rows,
         "key_index": key_index,
         "count": len(rows),
-        "view": grid_data.load_view(_view_key(setup), columns),
+        "view": view,
         # その場で直せる列(レベルが足りなければ全部だめ)
         "edit": {"allowed": auth.level() >= auth.required_level("修正"),
                  "columns": cell_edit.edit_specs(conn, setup)},
@@ -142,15 +198,115 @@ def api_add_column():
                     "backup": r.backup}), status
 
 
+# ------------------------------------------------------------------
+# VBA 版でない表(simple_table の道): 行は rowid で決める
+# ------------------------------------------------------------------
+def _simple_open(need: str):
+    conn, setup, err = _open()
+    if err:
+        return None, None, None, err
+    body = request.get_json(silent=True) or {}
+    table = str(body.get("table") or "")
+    if table != setup.general.main_table or setup.legacy:
+        return None, None, None, _refuse("table", "一覧の表が替わりました。読み込み直してください。", 409)
+    _mode, refuse = auth.check_mode(need, auth.level())
+    if refuse:
+        return None, None, None, _refuse("level", refuse, 403)
+    return conn, table, body, None
+
+
+def _shown(conn, table) -> list[str]:
+    return [c.name for c in simple_table.load(conn, table) if c.show]
+
+
+def _write_reply(conn, table, r: simple_table.WriteResult, event: str, data: dict):
+    if r.reason != "unchanged":
+        trace.event(event, r.message, level="INFO" if r.ok else "WARN",
+                    data={"table": table, "rowid": r.rowid, "reason": r.reason, **data})
+    status = 200 if r.ok else 409 if r.reason in ("conflict", "gone") else 422
+    row = simple_table.row_values(conn, table, r.rowid, _shown(conn, table)) if r.rowid else None
+    return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason, "rowid": r.rowid, "row": row,
+                    "db_mtime": shared_db.probe().get("mtime")}), status
+
+
+def _int(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+@bp.post("/api/list/form")
+def api_form():
+    """行の入力欄。`rowid` があればその行の値(無ければ新しい行)。"""
+    conn, table, body, err = _simple_open("参照")
+    if err:
+        return err
+    settings = simple_table.load(conn, table)
+    values = {}
+    rowid = _int(body.get("rowid"))
+    if rowid:
+        row = simple_table.row_values(conn, table, rowid, [c.name for c in settings])
+        if row is None:
+            return _refuse("gone", simple_table.MSG_GONE, 404)
+        values = dict(zip([c.name for c in settings], row))
+    fields = []
+    for c in settings:
+        if not c.show:
+            continue
+        f = simple_table.edit_spec(conn, table, c)
+        f.update(name=c.name, value=values.get(c.name, ""))
+        fields.append(f)
+    return jsonify({"table": table, "rowid": rowid, "fields": fields})
+
+
+@bp.post("/api/list/row-save")
+def api_row_save():
+    conn, table, body, err = _simple_open("修正")
+    if err:
+        return err
+    values = body.get("values") if isinstance(body.get("values"), dict) else {}
+    seen = body.get("seen") if isinstance(body.get("seen"), dict) else {}
+    r = simple_table.update(conn, table, _int(body.get("rowid")), values, seen)
+    return _write_reply(conn, table, r, "list.row_save", {"before": seen, "after": values})
+
+
+@bp.post("/api/list/row-add")
+def api_row_add():
+    conn, table, body, err = _simple_open("新規")
+    if err:
+        return err
+    values = body.get("values") if isinstance(body.get("values"), dict) else {}
+    r = simple_table.insert(conn, table, values)
+    return _write_reply(conn, table, r, "list.row_add", {"after": values})
+
+
+@bp.post("/api/list/row-delete")
+def api_row_delete():
+    conn, table, body, err = _simple_open("削除")
+    if err:
+        return err
+    seen = body.get("seen") if isinstance(body.get("seen"), dict) else {}
+    r = simple_table.delete(conn, table, _int(body.get("rowid")), seen)
+    trace.event("list.row_delete", r.message, level="INFO" if r.ok else "WARN",
+                data={"table": table, "rowid": r.rowid, "reason": r.reason, "before": seen})
+    status = 200 if r.ok else 409 if r.reason in ("conflict", "gone") else 422
+    return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason,
+                    "db_mtime": shared_db.probe().get("mtime")}), status
+
+
 @bp.post("/api/list/view")
 def api_view():
     conn, setup, err = _open()
     if err:
         return err
-    try:
-        columns, _rows = records.full_list(conn, setup)
-    except records.ListError as exc:
-        return _refuse("list", str(exc))
+    if setup.legacy:
+        try:
+            columns, _rows = records.full_list(conn, setup)
+        except records.ListError as exc:
+            return _refuse("list", str(exc))
+    else:
+        columns = _shown(conn, setup.general.main_table)
     body = request.get_json(silent=True) or {}
     if body.get("reset"):
         return jsonify({"view": grid_data.reset_view(_view_key(setup), columns)})
