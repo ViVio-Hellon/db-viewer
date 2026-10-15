@@ -329,7 +329,7 @@ def _setup_section(db_path: Path) -> Section:
                                 "一覧の上で選んだ表(この PC で覚える)" if setup.auto_main
                                 else "全般設定の「メインテーブル名」"))
     section.checks.append(Check(
-        "列の設定", "かんたん設定(表示・入力・印刷)" if not setup.legacy else f"VBA 版の [{g.conv_table}]",
+        "列の設定", "かんたん設定(表示・入力・印刷)",
         INFO if setup.auto_conv else OK, f"本体 {len(setup.main_columns)} 列"))
     section.checks.append(Check("直せる人", "ID で登録した人" if setup.has_id else "誰でも(ID の表が無い)",
                                 OK if setup.has_id else INFO))

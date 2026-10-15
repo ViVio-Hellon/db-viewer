@@ -36,10 +36,13 @@ function render() {
   el.easyTable.replaceChildren(...st.tables.map((t) =>
     option(t.name, `${t.name}(${t.rows >= 0 ? t.rows.toLocaleString() : "?"} 件)`, t.name === st.table)));
   el.easyColsWhere.textContent = `[${st.table}] の ${st.columns.length} 列`;
-  show("easyLegacy", st.legacy);
-  el.easyLegacy.textContent = st.legacy
-    ? `この表には VBA 版の設定 [${st.setting_table}] があるので、一覧の入力は VBA 版の決まりで動きます(ここの「入力」はマスタ管理で効きます)。表示・印刷はここで決めたとおり。`
+  show("easyLegacy", st.from_vba);
+  el.easyLegacy.textContent = st.from_vba
+    ? `この表の入力の種類は、VBA 版の [${st.table}_設定] から読んでいます。保存すると かんたん設定 に移ります。`
     : "";
+  show("easyVbaCard", st.vba_tables.length > 0);
+  el.easyVbaList.textContent = st.vba_tables.join("・");
+  el.easyRetire.disabled = !st.can_write;
   el.easyCols.replaceChildren(...st.columns.map(columnRow));
   el.easyColsSave.disabled = !st.can_write;
   el.easyColsHint.textContent = st.can_write ? "" : "見るだけです(保存は Level 5)。";
@@ -109,6 +112,16 @@ async function saveColumns() {
   } catch (err) { toastError(err, "warn"); }
 }
 
+async function retireVba() {
+  if (!(await confirmBox(`VBA 版の設定の表(${st.vba_tables.join("・")})を消します。入力の種類は かんたん設定 に取り込みます。よろしいですか？`,
+                         { ok: "取り込んで消す", danger: true }))) return;
+  try {
+    const res = await api.post("/api/easy/retire", {});
+    toast(res.message, "ok");
+    await load(st.table);
+  } catch (err) { toastError(err, "warn"); }
+}
+
 async function startLogin() {
   const password = el.easyStartPass.value;
   if (!password) { toast("パスワードを入れてください。", "warn"); el.easyStartPass.focus(); return; }
@@ -134,7 +147,8 @@ async function loadSession() {
 export function start() {
   for (const id of ["easyLogin", "easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
                     "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyIdState", "easyStartBox",
-                    "easyStartId", "easyStartName", "easyStartPass", "easyStart"]) {
+                    "easyStartId", "easyStartName", "easyStartPass", "easyStart", "easyVbaCard", "easyVbaList",
+                    "easyRetire"]) {
     el[id] = document.getElementById(id);
   }
   if (!el.easyBody) return;
@@ -147,6 +161,7 @@ export function start() {
   });
   el.easyColsSave.addEventListener("click", saveColumns);
   el.easyStart.addEventListener("click", startLogin);
+  el.easyRetire.addEventListener("click", retireVba);
   el.easyGoSource.addEventListener("click", () => document.getElementById("tab-source")?.click());
   // タブを開くたびに読み直す(接続先で DB を替えたかもしれない)
   document.getElementById("tab-easy")?.addEventListener("click", () => load());

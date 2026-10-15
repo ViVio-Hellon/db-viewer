@@ -16,14 +16,14 @@ class MasterAdminTest(unittest.TestCase):
     def test_editable_tables_by_level(self):
         with connect() as conn:
             s = load_setup(conn)
-            # いま使っている表だけ(フィルタ・フィルタ_設定・タイプは一覧が使わなくなった)
-            self.assertEqual(master_admin.editable_tables(conn, s, 5), ["ID", "全般設定", "作業標準管理_設定"])
-            self.assertEqual(master_admin.editable_tables(conn, s, 4), ["ID", "全般設定", "作業標準管理_設定"])
-            self.assertEqual(master_admin.editable_tables(conn, s, 3), ["全般設定", "作業標準管理_設定"])
+            # 0.9.0: ID・全般設定・業務の表(本体も)。_設定・フィルタ・タイプは使わないので出さない
+            self.assertEqual(master_admin.editable_tables(conn, s, 5), ["ID", "全般設定", "作業標準管理"])
+            self.assertEqual(master_admin.editable_tables(conn, s, 4), ["ID", "全般設定", "作業標準管理"])
+            self.assertEqual(master_admin.editable_tables(conn, s, 3), ["全般設定", "作業標準管理"])
             self.assertEqual(master_admin.editable_tables(conn, s, 2), [])
 
     def test_used_tables_follow_setting(self):
-        """_設定 が参照するマスタ(入力形式 s/m・マスタ結合)と履歴の H_ 表は出る。0.8.0 から業務の表はぜんぶ出る。"""
+        """業務の表はぜんぶ、履歴の H_ 表は見るだけで出る。_設定 は出さない(0.9.0)。"""
         with tempfile.TemporaryDirectory() as tmp:
             conn = shared_db.connect(fresh_db_path(Path(tmp)))
             conn.execute("CREATE TABLE 担当者 (管理番号 INTEGER, 担当者 TEXT)")
@@ -37,8 +37,8 @@ class MasterAdminTest(unittest.TestCase):
             s = load_setup(conn)
             used = master_admin.used_tables(conn, s)
             self.assertEqual([n for n, _ in used],
-                             ["ID", "全般設定", "作業標準管理_設定", "担当者", "区分マスタ", "使っていない", "H_変更"])
-            self.assertIn("担当", dict(used)["担当者"])
+                             ["ID", "全般設定", "作業標準管理", "担当者", "区分マスタ", "使っていない", "H_変更"])
+            self.assertIn("見るだけ", dict(used)["H_変更"])
             conn.close()
 
     def test_fields_use_setting_table(self):
@@ -132,19 +132,15 @@ class WebMasterTest(unittest.TestCase):
                 os.environ[k] = v
 
     def test_master_cycle_and_main_table_refused(self):
-        # 本体は見られる(列の追加のため)が、行はここでは直せない(一覧で)
+        # 0.9.0: 本体もマスタ管理で行を直せる(どの表も同じ)。_設定・タイプは出さない
         main = self.c.post("/api/master/rows", json={"table": "作業標準管理"}, headers=self.h).get_json()
-        self.assertTrue(main["read_only"])
-        for path, body in (("/api/master/form", {"table": "作業標準管理", "mode": "ADDNEW"}),
-                           ("/api/master/execute", {"table": "作業標準管理", "mode": "ADDNEW", "values": ["999"]}),
-                           ("/api/master/delete", {"table": "作業標準管理", "row": main["rows"][0], "confirmed": True})):
-            r = self.c.post(path, json=body, headers=self.h)
-            self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (403, "main_rows"), path)
+        self.assertFalse(main["read_only"])
         self.assertEqual(self.c.post("/api/master/rows", json={"table": "タイプ"}, headers=self.h).status_code, 403)
+        self.assertEqual(self.c.post("/api/master/rows", json={"table": "作業標準管理_設定"},
+                                     headers=self.h).status_code, 403)
         t = self.c.post("/api/master/tables", json={}, headers=self.h).get_json()
-        # Level 5 では本体も並ぶ(列の追加だけ)
-        self.assertEqual(t["tables"], ["ID", "全般設定", "作業標準管理", "作業標準管理_設定"])
-        self.assertEqual((t["caps"]["作業標準管理"]["rows"], t["caps"]["作業標準管理"]["columns"]), (False, True))
+        self.assertEqual(t["tables"], ["ID", "全般設定", "作業標準管理"])
+        self.assertEqual((t["caps"]["作業標準管理"]["rows"], t["caps"]["作業標準管理"]["columns"]), (True, True))
         self.assertEqual(t["why"]["ID"], "ログイン")
         f = self.c.post("/api/master/form", json={"table": "全般設定", "mode": "ADDNEW"}, headers=self.h).get_json()
         key = f["fields"][0]["value"]

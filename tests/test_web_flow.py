@@ -186,7 +186,7 @@ class ListGridTest(unittest.TestCase):
         kinds = {c["name"]: c["kind"] for c in d["columns"]}
         self.assertEqual((kinds["管理番号"], kinds["Ⅰ"], kinds["作業NO"], kinds["更新日"], kinds["作業名"]),
                          ("num", "num", "text", "date", "text"))
-        self.assertEqual(d["key_index"], 0)
+        self.assertEqual(d["key_index"], len(d["columns"]))           # 0.9.0: 行は末尾の rowid で決める
         self.assertEqual(len(d["rows"]), 327)
         self.assertEqual(d["view"]["order"][:3], ["管理番号", "作業名", "作業NO"])
         self.assertEqual((d["view"]["hidden"], d["view"]["widths"]), ([], {}))

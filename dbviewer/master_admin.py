@@ -48,45 +48,31 @@ MSG_NOT_EDITABLE = "この表はこのレベルでは直せません。"
 
 
 def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str, str]]:
-    """マスタ管理に出す表と、出す理由。**いま使っている表だけ。**
+    """マスタ管理に出す表と、出す理由(0.9.0: <表>_設定 は使わないので出さない)。
 
-    一覧を Web の表にしたので、フィルタ・フィルタ_設定・タイプは使わなくなった(出さない)。
-    残るのは:
       ID                 … ログイン(誰が・どの PC で・どのレベルか)
-      全般設定           … メインテーブル名・帳票・テーブル閲覧・初期フィルタ
-      <メイン>_設定      … 登録画面の決まり(入力形式・必須・履歴・マスタ結合…)
-      <メイン>_設定 が参照するマスタ(入力形式 s/m、マスタ結合)… 選ぶ窓の中身
+      全般設定           … 帳票(あれば)
       「表を持ってくる」で足した表
-      そのほかの業務の表ぜんぶ(0.8.0。どの表も見て直せるように)
-      <メイン>_設定 の「履歴」に書いた H_ 表(見るだけ)
+      業務の表ぜんぶ     … どの表も一覧とマスタ管理で見て直せる
+      H_ 表              … 変更履歴(見るだけ)
     """
     from . import table_bring
-    names = set(table_names(conn))
-    main = setup.general.main_table
+    names = table_names(conn)
     out: list[tuple[str, str]] = []
 
     def add(name: str, why: str) -> None:
-        # VBA 版の本体は一覧で直す(登録の決まり・履歴を通すため)。ほかの一覧の表はここでも直せる
-        if name and name in names and (name != main or not setup.legacy) and name not in {n for n, _ in out}:
+        if name and name in names and name not in {n for n, _ in out}:
             out.append((name, why))
 
     add(config.ID_TABLE, "ログイン")
-    add(config.SET_TABLE, "メインテーブル名・帳票など")
-    add(setup.general.conv_table, "登録画面の決まり")
-    for r in setup.conv.rows:
-        spec = input_types.parse(r.input_type)
-        if spec.master:
-            add(spec.master, f"「{r.item}」で選ぶマスタ")
-        if "/" in (r.ms_join or ""):
-            add(r.ms_join.split("/")[0], f"「{r.item}」に結合するマスタ")
+    add(config.SET_TABLE, "帳票など")
     for name in sorted(table_bring.brought_tables(conn)):
         add(name, "表を持ってくるで足した表")
-    # 0.8.0: 業務の表はぜんぶ並べる(どの表も一覧とマスタ管理で見て直せる)
     for name in user_tables(conn):
         add(name, "DB の表")
-    for r in setup.conv.rows:
-        if r.his_rec:
-            add(r.his_rec, f"「{r.item}」の変更履歴(見るだけ)")
+    for name in names:
+        if is_history(name):
+            add(name, "変更履歴(見るだけ)")
     return out
 
 
@@ -353,19 +339,13 @@ def capabilities(setup: SystemSetup, table: str, level: int,
                  conn: Optional[sqlite3.Connection] = None) -> dict[str, Any]:
     """その表でできること(画面のボタンを出す・隠す)。判断はここ。
 
-    `setting_table` … 列を足すと一緒に行を足す設定の表(画面で前もって知らせる)
+    `setting_table` … 列を足すと一緒に行を足す設定の表(0.9.0 から無し)
     """
-    main = setup.general.main_table
     fixed = fixed_columns_why(setup, table)
     can_columns = level >= COLUMN_LEVEL and not fixed
     setting = (_setting_table_of(conn, setup, table) or "") if conn is not None and can_columns else ""
-    if table == main and setup.legacy:
-        return {"rows": False, "columns": can_columns, "note": MSG_ROWS_IN_LIST, "setting_table": setting}
     note = ""
-    if table == setup.general.conv_table:
-        note = (f"1 行 = 本体({main})の 1 列。行を追加すると本体にも同じ名前の列ができます"
-                f"(Level {COLUMN_LEVEL})。項目名の変更と行の削除はできません。")
-    elif is_history(table):
+    if is_history(table):
         note = "履歴は見るだけです。"
     elif fixed:
         note = fixed
@@ -432,9 +412,8 @@ def _backup(conn: sqlite3.Connection, why: str) -> str:
 
 def _setting_table_of(conn: sqlite3.Connection, setup: SystemSetup, table: str) -> Optional[str]:
     """列を足すと一緒に行を足す設定の表。本体なら <メイン>_設定、ほかは <表>_設定(あれば)。"""
-    if table == setup.general.main_table:
-        return setup.general.conv_table if table_exists(conn, setup.general.conv_table) else None
-    return setting_table_for(conn, setup, table)
+    # 0.9.0: <表>_設定 は使わない(列の設定は かんたん設定)。列を足しても行は足さない
+    return None
 
 
 def _next_key(conn: sqlite3.Connection, table: str) -> tuple[str, str]:

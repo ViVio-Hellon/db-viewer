@@ -8,8 +8,9 @@ VBA MF1 の一覧ページ(フィルタ列・ListView・ページ)は捨て、We
 - `POST /api/list/view`    … 列の見せ方を保存する(`{"reset": true}` で初期に戻す)
 - `POST /api/list/add-column` … 本体に列を足す(Level 5。マスタ管理の「列を追加」と同じ決まり)
 
-0.8.0 から一覧で表を選べる(`{"table"}` を付けると、その表をこの PC で覚える)。VBA 版の表
-(<表>_設定 と 管理番号 がある)は今までどおり、ほかの表は simple_table の道(rowid で直す):
+0.8.0 から一覧で表を選べる(`{"table"}` を付けると、その表をこの PC で覚える)。0.9.0 からどの表も
+simple_table の道(rowid で直す。列の設定は かんたん設定)。`/api/list/cell`・`/api/list/value` は VBA 版の
+エンジンの API として残す(画面からは使わない):
 - `POST /api/list/form`        … 行の入力欄(表示する列・入力の種類・コンボの選択肢)
 - `POST /api/list/row-save`    … 行(またはマス)を直す `{"table","rowid","values","seen"}`
 - `POST /api/list/row-add`     … 行を足す `{"table","values"}`
@@ -19,8 +20,8 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, render_template, request
 
-from dbviewer import (auth, cell_edit, config, grid_data, master_admin, records, session_setup, settings_tables,
-                      shared_db, simple_table)
+from dbviewer import (auth, cell_edit, grid_data, master_admin, session_setup, settings_tables, shared_db,
+                      simple_table)
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 
@@ -107,31 +108,7 @@ def api_data():
     conn, setup, err = _open()
     if err:
         return err
-    if not setup.legacy:
-        return _simple_data(conn, setup)
-    try:
-        columns, rows = records.full_list(conn, setup)
-    except records.ListError as exc:
-        return _refuse("list", str(exc))
-    key_index = columns.index(config.KEY_ITEM) if config.KEY_ITEM in columns else -1
-    view = grid_data.load_view(_view_key(setup), columns)
-    # かんたん設定で「表示しない」にした列は隠す(VBA 版の表も同じ)
-    hide = [c.name for c in simple_table.load(conn, setup.general.main_table) if not c.show]
-    view["hidden"] = list(dict.fromkeys([*view.get("hidden", []), *[h for h in hide if h in columns]]))
-    return jsonify({
-        "mode": "legacy", "table": setup.general.main_table, "tables": _tables(conn),
-        "can": {"add": True, "delete": True},
-        "columns": grid_data.columns_meta(columns, rows),
-        "rows": rows,
-        "key_index": key_index,
-        "count": len(rows),
-        "view": view,
-        # その場で直せる列(レベルが足りなければ全部だめ)
-        "edit": {"allowed": auth.level() >= auth.required_level("修正"),
-                 "columns": cell_edit.edit_specs(conn, setup)},
-        "db_mtime": shared_db.probe().get("mtime"),
-        "setup": _setup_dict(setup),
-    })
+    return _simple_data(conn, setup)
 
 
 @bp.post("/api/list/cell")
@@ -207,7 +184,7 @@ def _simple_open(need: str):
         return None, None, None, err
     body = request.get_json(silent=True) or {}
     table = str(body.get("table") or "")
-    if table != setup.general.main_table or setup.legacy:
+    if table != setup.general.main_table:
         return None, None, None, _refuse("table", "一覧の表が替わりました。読み込み直してください。", 409)
     _mode, refuse = auth.check_mode(need, auth.level())
     if refuse:
@@ -300,13 +277,7 @@ def api_view():
     conn, setup, err = _open()
     if err:
         return err
-    if setup.legacy:
-        try:
-            columns, _rows = records.full_list(conn, setup)
-        except records.ListError as exc:
-            return _refuse("list", str(exc))
-    else:
-        columns = _shown(conn, setup.general.main_table)
+    columns = _shown(conn, setup.general.main_table)
     body = request.get_json(silent=True) or {}
     if body.get("reset"):
         return jsonify({"view": grid_data.reset_view(_view_key(setup), columns)})
@@ -322,8 +293,9 @@ def _setup_dict(setup) -> dict:
         "auto_main": setup.auto_main,
         "can_add_column": auth.level() >= master_admin.COLUMN_LEVEL,
         "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()],
-        "setting_table": setup.general.conv_table if settings_tables.table_exists(conn, setup.general.conv_table) else "",
-        "report_flag": setup.general.report_flag,
+        "setting_table": "",
+        # 帳票は全般設定「帳票」があって、その「メインテーブル名」の表を見ているときだけ
+        "report_flag": setup.general.report_flag and setup.general.main_table == setup.general.configured_main,
         "browse_flag": setup.general.browse_flag,
         "column_problems": setup.column_problems,
         "format_ok": setup.format_ok,

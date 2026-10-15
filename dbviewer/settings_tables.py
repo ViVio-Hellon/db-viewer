@@ -123,6 +123,7 @@ def _text(value: Any) -> str:
 @dataclass
 class GeneralSettings:
     main_table: str = ""
+    configured_main: str = ""        # 全般設定に書いてあった「メインテーブル名」(帳票はこの表だけ)
     # VBA `indicateRowLimFlag = (setStr <> "")`: 初期表示が空なら行数制限なし
     init_view: str = ""
     init_filter: str = ""            # fltDefolt
@@ -380,11 +381,6 @@ class SystemSetup:
         return self.master_problem == ""
 
     @property
-    def legacy(self) -> bool:
-        """VBA 版の道で動くか(<表>_設定 があり、管理番号 がある表)。それ以外は simple_table の道。"""
-        return not self.auto_conv and self.key_ok
-
-    @property
     def key_ok(self) -> bool:
         """本体に 管理番号 の列がある(一覧・登録で行を直す・足すのに要る)。"""
         return config.KEY_ITEM in self.main_columns
@@ -428,15 +424,15 @@ def load_setup(conn: sqlite3.Connection) -> SystemSetup:
     has_general = table_exists(conn, config.SET_TABLE)
     general = load_general(conn)
     main, auto_main, notices = resolve_main(conn, general)
+    general.configured_main = general.main_table
     general.main_table = main
     main_columns = column_names(conn, main)
     conv_exists = table_exists(conn, general.conv_table)
     raw_conv = (load_conv(conn, general.conv_table) if conv_exists
                 else ConvTable(general.conv_table, [], [], {}))
     conv, conv_notices = align_conv(raw_conv, main_columns, exists=conv_exists)
-    # VBA 版の道(<表>_設定 があり 管理番号 がある表)のときだけ、_設定 の合わないところを知らせる
-    if conv_exists and config.KEY_ITEM in main_columns:
-        notices += conv_notices
+    # 0.9.0: <表>_設定 は画面では使わない(かんたん設定に取り込む)。合わないところも知らせない
+    del conv_notices
     # CheckColumns は VBA の形の DB(全般設定がある)だけ。ほかの DB では関係ない
     column_problems = check_columns(conn, exclusion_set(conn, main), 2) if has_general else []
     filters = load_filters(conn) if table_exists(conn, config.FLT_TABLE) else []

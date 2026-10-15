@@ -8,7 +8,7 @@ VBA 版は 全般設定・ID・<メイン>_設定 を Access で開いて決ま�
                          → DB の中の隠した表「ツールの設定」に表ごとに書く(simple_table.py)
     ログインを使う    … ID の表が無い DB は誰でも直せる。人とレベルを決めたいときだけ、自分を Level 5 で登録
 
-全般設定・<表>_設定 は要らない(あれば VBA 版の表として今までどおり動く)。
+全般設定・<表>_設定 は要らない。<表>_設定 は画面では使わず(0.9.0)、入力の種類を取り込んで消せる(`retire_vba`)。
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Any
 
 from . import config, shared_db, simple_table
 from .logging_utils import get_logger
-from .settings_tables import SystemSetup, q, table_exists, user_tables
+from .settings_tables import SystemSetup, q, table_exists, table_names, user_tables
 from .vba_compat import to_narrow
 
 log = get_logger("easy_setup")
@@ -63,7 +63,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     types = _decl_types(conn, table)
     columns = [{"name": c.name, "type": types.get(c.name, ""), "show": c.show, "input": c.input,
                 "step": c.step, "print": c.print} for c in simple_table.load(conn, table)]
-    legacy = table_exists(conn, table + config.SETTING_SUFFIX) and config.KEY_ITEM in types
+    vba = vba_setting_tables(conn)
     try:
         db = str(shared_db.db_path())
     except Exception:                                   # noqa: BLE001 - 出せないだけ
@@ -72,9 +72,56 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
         "db": db, "tables": tables, "table": table, "columns": columns,
         "inputs": [[k, label] for k, label in simple_table.INPUTS],
         "level": level, "can_write": level >= WRITE_LEVEL, "has_id": setup.has_id,
-        # VBA 版の表(<表>_設定 がある): 入力は VBA 版の決まりが先(ここで決めた入力は マスタ管理 だけ)
-        "legacy": legacy, "setting_table": table + config.SETTING_SUFFIX if legacy else "",
+        # VBA 版の設定の表(<表>_設定)。画面では使わない。取り込んで消せる
+        "vba_tables": vba,
+        "from_vba": table + config.SETTING_SUFFIX in vba and not simple_table.has_settings(conn, table),
     }
+
+
+def vba_setting_tables(conn: sqlite3.Connection) -> list[str]:
+    """DB にある VBA 版の設定の表(<表>_設定)。"""
+    return [n for n in table_names(conn) if n.endswith(config.SETTING_SUFFIX)]
+
+
+def retire_vba(conn: sqlite3.Connection, *, level: int, user: str = "") -> EasyResult:
+    """VBA 版の <表>_設定 を取り込んで消す。
+
+    1. かんたん設定をまだ保存していない表は、<表>_設定 から作った設定(入力の種類)を「ツールの設定」に保存
+    2. 書く前に本体の控えを取り、<表>_設定 の表をぜんぶ消す(1 つの取引)
+    """
+    if level < WRITE_LEVEL:
+        return EasyResult(False, MSG_LEVEL, REFUSE_LEVEL)
+    vba = vba_setting_tables(conn)
+    if not vba:
+        return EasyResult(False, "VBA 版の設定の表(_設定)はもうありません。", REFUSE_TABLE)
+    try:
+        backup = _backup(conn, "VBA 版の設定を消す前")
+    except OSError as exc:
+        return EasyResult(False, f"書く前の控えを取れなかったので、やめました: {exc}", REFUSE_FAILED)
+    users = set(user_tables(conn))
+    taken = []
+    try:
+        for name in vba:
+            base = name[: -len(config.SETTING_SUFFIX)]
+            if base in users and not simple_table.has_settings(conn, base):
+                simple_table.save(conn, base, simple_table.load(conn, base), user=user)
+                taken.append(base)
+        conn.execute("BEGIN IMMEDIATE")
+        for name in vba:
+            conn.execute(f"DROP TABLE {q(name)}")
+        conn.execute("COMMIT")
+    except sqlite3.Error as exc:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        log.exception("VBA 版の設定を消せません")
+        return EasyResult(False, f"消せませんでした: {exc}", REFUSE_FAILED, backup=backup)
+    log.info("VBA 版の設定を消しました: %s(取り込み: %s)", vba, taken)
+    msg = f"VBA 版の設定の表を消しました: {'・'.join(vba)}。"
+    if taken:
+        msg += f" 入力の種類は かんたん設定 に取り込みました({'・'.join(taken)})。"
+    return EasyResult(True, msg, backup=backup)
 
 
 def save_columns(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]], *, level: int,

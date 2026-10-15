@@ -109,14 +109,17 @@ class WriteReadTest(unittest.TestCase):
         return self.c.post("/api/list/cell", json={"key": key, "column": column, "value": value, "seen": seen},
                            headers=self.h)
 
-    def test_money_starts_from_stored_value(self):
+    def test_list_shows_and_saves_stored_value(self):
+        """0.9.0: 一覧は本体の値をそのまま見せる(金額の丸め表示はやめた)。直しても丸めない。"""
         d = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
         names = [c["name"] for c in d["columns"]]
-        row = next(r for r in d["rows"] if r[d["key_index"]] == "2")
-        self.assertEqual(row[names.index("Ⅱ")], "1,235")                     # 一覧は丸めて見せる
-        self.assertTrue(d["edit"]["columns"]["Ⅱ"]["money"])
-        raw = self.c.post("/api/list/value", json={"key": "2", "column": "Ⅱ"}, headers=self.h).get_json()
-        self.assertEqual(raw["value"], "1234.5")                              # 直すときは本体の値から
+        row = next(r for r in d["rows"] if r[names.index("管理番号")] == "2")
+        self.assertEqual(row[names.index("Ⅱ")], "1234.5")
+        rid = row[d["key_index"]]
+        r = self.c.post("/api/list/row-save", headers=self.h, json={
+            "table": "作業標準管理", "rowid": rid, "values": {"Ⅱ": "2502.5"}, "seen": {"Ⅱ": "1234.5"}})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(self.db("Ⅱ"), "2502.5")
 
     def test_money_saves_number_not_text_with_commas(self):
         # 見せた形(1,235)を見ていても、本体の値(1234.5)を見ていても、競合とは言わない

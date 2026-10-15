@@ -14,8 +14,9 @@ DB を替えれば、その DB の設定になる(無ければ既定)。
 【行の決め方】SQLite の rowid(どの表にもある行の番号)。管理番号 の列は要らない。
 直すときは「画面が見ていた値」と今の値を比べ、ほかの端末が先に変えていたら書かない。
 
-VBA 版の DB(<表>_設定 があり、管理番号 がある表)は今までどおりの道(マスタ結合・自動項目・履歴・帳票)で動く
-(`uses_legacy`)。<表>_設定 を消せば、この道になる。
+【VBA 版の <表>_設定】0.9.0 から画面では使わない。かんたん設定を一度も保存していない表は、<表>_設定 の
+入力形式から最初の設定を作る(`from_vba`: calender → カレンダー、数値N/最小/最大/刻み → スピンボタン、
+s/m マスタ → コンボボックス、ほかは文字)。かんたん設定の「取り込んで消す」で保存して <表>_設定 を消せる。
 """
 from __future__ import annotations
 
@@ -89,13 +90,47 @@ def has_settings(conn: sqlite3.Connection, table: str) -> bool:
     return bool(_raw(conn, table).get("columns"))
 
 
+def vba_input(raw: str) -> tuple[str, str]:
+    """VBA 版の入力形式 → (入力, 刻み)。かんたん設定の 4 つに無いもの(自動項目・専用フォームなど)は文字。"""
+    from .vba_compat import cv
+    text = raw or ""
+    c = cv(text)
+    if c.startswith("CALENDER"):
+        return "calendar", "1"
+    if c.startswith("数値") and c != "数値変換":
+        parts = text.split("/")
+        step = parts[3].strip() if len(parts) > 3 and _number(parts[3]) else "1"
+        return "spin", step
+    if c[:1] in ("S", "M") and len(text) > 1:
+        return "combo", "1"
+    return "text", "1"
+
+
+def from_vba(conn: sqlite3.Connection, table: str) -> dict[str, ColumnSetting]:
+    """<表>_設定 があれば、その入力形式から作った設定(列名ごと)。無ければ空。"""
+    from .settings_tables import load_conv
+    conv_name = table + config.SETTING_SUFFIX
+    if not table_exists(conn, conv_name):
+        return {}
+    out = {}
+    for r in load_conv(conn, conv_name).rows:
+        if r.item and r.item not in out:
+            inp, step = vba_input(r.input_type)
+            out[r.item] = ColumnSetting(r.item, input=inp, step=step)
+    return out
+
+
 def load(conn: sqlite3.Connection, table: str) -> list[ColumnSetting]:
-    """いまの列の並びで、列ごとの設定。決めていない列は既定(表示・文字・印刷)。"""
+    """いまの列の並びで、列ごとの設定。決めていない列は既定(表示・文字・印刷)。
+    かんたん設定を一度も保存していない表は、VBA 版の <表>_設定 から作る。"""
     saved = _raw(conn, table).get("columns") or {}
+    vba = {} if saved else from_vba(conn, table)
     out = []
     for name in column_names(conn, table):
         s = saved.get(name) if isinstance(saved, dict) else None
         c = ColumnSetting(name)
+        if name in vba:
+            c = vba[name]
         if isinstance(s, dict):
             c.show = bool(s.get("show", True))
             c.input = s.get("input") if s.get("input") in INPUT_KEYS else "text"

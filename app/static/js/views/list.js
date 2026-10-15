@@ -38,7 +38,7 @@ async function load(table = "") {
     el.listUpdated.hidden = true;
     el.listTitle.textContent = data.table || data.setup.main_table || "一覧";
     renderTables();
-    el.actReport.hidden = !data.setup.report_flag || simple();
+    el.actReport.hidden = !data.setup.report_flag;
     if (!data.edit || !data.edit.allowed) {
       el.listHint.textContent = "見出しを押すと並べ替え、▾ で絞り込み。このレベルでは直せません(ダブルクリックで参照)";
     }
@@ -222,7 +222,7 @@ async function runReport() {
   const keys = grid.shownKeys();
   if (!keys.length) { toast("帳票にする行がありません。", "warn"); return; }
   try {
-    const res = await api.post("/api/report/run", { keys });
+    const res = await api.post("/api/report/run", { keys, by: simple() ? "rowid" : "key" });
     // 帳票は別の窓で(デスクトップ版は外枠が窓を開く)
     if (!openWindow(tokenUrl(res.preview), "帳票")) toast("別の窓を開けませんでした。ポップアップの許可を確認してください。", "warn");
   } catch (err) { toastError(err); }

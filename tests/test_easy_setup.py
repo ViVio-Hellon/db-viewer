@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from dbviewer import auth, config, shared_db, simple_table, user_settings
-from dbviewer.settings_tables import column_names, load_setup
 from tests._fixture_db import fresh_db_path
 from tests._web import TOKEN, make_client
 
@@ -228,48 +227,67 @@ class PlainDbTest(_Case):
         self.assertTrue(self.ok("/api/master/rows", table="部品")["caps"]["rows"])
 
 
-class LegacyDbTest(_Case):
-    """VBA 版の DB(全般設定・<表>_設定・管理番号)は今までどおり。表示の設定は効く。"""
+class VbaDbTest(_Case):
+    """VBA 版の DB(全般設定・<表>_設定・管理番号)も同じ道(0.9.0)。_設定 は取り込んで消せる。"""
 
     def setUp(self):
         super().setUp()
         self.use(fresh_db_path(self.tmp))
         auth.start(auth.LoginResult(True, user_id="Xfa-Ngyinazawa", level=5))
 
-    def test_legacy_path_and_hidden_columns(self):
+    def test_same_path_and_inputs_from_vba(self):
         d = self.ok("/api/list/data")
-        self.assertEqual((d["mode"], d["table"], d["count"]), ("legacy", MAIN, 327))
+        self.assertEqual((d["mode"], d["table"], d["count"]), ("simple", MAIN, 327))
+        self.assertEqual(d["key_index"], len(d["columns"]))
+        spec = d["edit"]["columns"]
+        # VBA 版の入力形式から: 数値2/0/500/1 → スピン、calender → カレンダー、#UPUSER# → 文字
+        self.assertEqual((spec["Ⅰ"]["input"], spec["Ⅰ"]["step"]), ("spin", "1"))
+        self.assertEqual(spec["登録日"]["input"], "calendar")
+        self.assertEqual(spec["登録者"]["input"], "text")
         st = self.ok("/api/easy/state")
-        self.assertTrue(st["legacy"])
-        rows = [dict(c, show=c["name"] != "RA") for c in st["columns"]]
-        self.ok("/api/easy/columns", table=MAIN, rows=rows)
-        d = self.ok("/api/list/data")
-        self.assertIn("RA", d["view"]["hidden"])
-        self.assertIn("RA", [c["name"] for c in d["columns"]])                  # VBA 版の表は隠すだけ
-        # ほかの表(タイプ)も一覧で選べない(システムの表)が、業務の表なら選べる
-        self.assertEqual([t["name"] for t in d["tables"]], [MAIN])
-
-    def test_reordered_and_missing_rows(self):
+        self.assertTrue(st["from_vba"])
+        self.assertEqual(st["vba_tables"], ["フィルタ_設定", CONV])
+        # _設定 の並び・数が本体と違っても、項目名で読む
         with closing(sqlite3.connect(self.path)) as c:
-            c.execute(f"UPDATE [{CONV}] SET 管理番号 = 100 WHERE 項目名 = '作業名'")     # 並びを変える
-            c.execute(f"DELETE FROM [{CONV}] WHERE 項目名 = 'RA'")                     # 1 行足りない
-            c.execute(f"INSERT INTO [{CONV}] (管理番号, 項目名) VALUES ('101', '昔の列')")   # 本体に無い
-            c.execute(f"UPDATE [{CONV}] SET 表示 = '金額' WHERE 項目名 = 'Ⅱ'")
+            c.execute(f"DELETE FROM [{CONV}] WHERE 項目名 = 'Ⅱ'")
+            c.execute(f"UPDATE [{CONV}] SET 管理番号 = 100 WHERE 項目名 = 'Ⅰ'")
             c.commit()
-        with closing(shared_db.connect(self.path)) as conn:
-            s = load_setup(conn)
-        self.assertEqual([r.item for r in s.conv.rows], s.main_columns)
-        self.assertEqual(s.conv.by_item("Ⅱ").ind_type, "金額")                       # 名前で合わせる
-        notes = " ".join(s.notices)
-        self.assertIn("RA", notes)
-        self.assertIn("昔の列", notes)
-        self.assertEqual(self.ok("/api/list/data")["count"], 327)
-        names = [f["name"] for f in self.ok("/api/record/form", mode="修正", key="2")["fields"]]
-        self.assertEqual(names, s.main_columns)
+        spec = self.ok("/api/list/data")["edit"]["columns"]
+        self.assertEqual((spec["Ⅰ"]["input"], spec["Ⅱ"]["input"]), ("spin", "text"))
 
-    def test_column_names_unchanged(self):
+    def test_retire_vba_settings(self):
+        n = len(self.q(f"SELECT * FROM [{MAIN}]"))
+        self.assertEqual(self.post("/api/easy/retire").status_code, 200)
+        self.assertFalse({CONV, "フィルタ_設定"} & self.tables())                  # _設定 は消えた
+        self.assertEqual(len(self.q(f"SELECT * FROM [{MAIN}]")), n)              # 本体はそのまま
+        st = self.ok("/api/easy/state")
+        self.assertEqual((st["vba_tables"], st["from_vba"]), ([], False))
+        inputs = {c["name"]: c["input"] for c in st["columns"]}                 # 入力の種類は取り込んだ
+        self.assertEqual((inputs["Ⅳ"], inputs["完了日"], inputs["作業名"]), ("spin", "calendar", "text"))
+        self.assertEqual(self.post("/api/easy/retire").status_code, 422)          # もう無い
+        # 一覧・帳票・マスタ管理はそのまま動く
+        d = self.ok("/api/list/data")
+        self.assertEqual(d["count"], 327)
+        self.assertEqual(d["edit"]["columns"]["Ⅰ"]["input"], "spin")
+        rowids = [r[d["key_index"]] for r in d["rows"]][:319]
+        rep = self.ok("/api/report/run", keys=rowids, by="rowid")
+        self.assertEqual(rep["source_rows"], 319)
+        self.assertIn(MAIN, self.ok("/api/master/tables")["tables"])
+
+    def test_retire_needs_level5(self):
+        auth.start(auth.LoginResult(True, user_id="Xfa-Ngyinazawa", level=4))
+        self.assertEqual(self.post("/api/easy/retire").status_code, 403)
+        self.assertIn(CONV, self.tables())
+
+    def test_report_only_for_its_table(self):
+        self.ok("/api/list/data", table=MAIN)
+        self.assertTrue(self.ok("/api/list/data")["setup"]["report_flag"])
         with closing(sqlite3.connect(self.path)) as c:
-            self.assertEqual(len(column_names(c, MAIN)), 25)
+            c.execute("CREATE TABLE 別表 (a TEXT)")
+            c.commit()
+        d = self.ok("/api/list/data", table="別表")
+        self.assertFalse(d["setup"]["report_flag"])
+        self.assertEqual(self.post("/api/report/run", keys=[]).get_json()["error"]["code"], "report_table")
 
 
 if __name__ == "__main__":

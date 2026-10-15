@@ -3,6 +3,7 @@
 - `POST /api/easy/state`    … 見る DB・表・列ごとの設定(表示・入力・印刷)`{"table"}`
 - `POST /api/easy/columns`  … 列ごとの設定を保存 `{"table", "rows": [{name, show, input, step, print}]}`
 - `POST /api/easy/start`    … ログインを使う(ID の表が無い DB で、自分を Level 5 で登録) `{"password", "name"}`
+- `POST /api/easy/retire`   … VBA 版の <表>_設定 を取り込んで消す(Level 5。控えを取る)
 
 どれもログインが要る(ID の表が無い DB は誰でも Level 5 で入れる)。保存は Level 5。
 """
@@ -82,3 +83,13 @@ def start_login():
         auth.start(auth.LoginResult(True, user_id=s.user_id, level=result.level, developer=s.developer))
         log.info("ログインを使い始めました: %s を Level %s で登録", user_id, result.level)
     return _reply(result, "easy.start", {"id": user_id, "pc": auth.pc_name()})
+
+
+@bp.post("/api/easy/retire")
+def retire():
+    conn, _setup, err = _open()
+    if err:
+        return err
+    s = auth.current()
+    result = easy_setup.retire_vba(conn, level=auth.level(), user=s.user_id if s else "")
+    return _reply(result, "easy.retire_vba", {})

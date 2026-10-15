@@ -15,7 +15,7 @@ import uuid
 
 from flask import Blueprint, Response, jsonify, request
 
-from dbviewer import config, grid_data, records, reports, session_setup, settings_tables, shared_db
+from dbviewer import config, grid_data, records, reports, session_setup, settings_tables, shared_db, simple_table
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 from dbviewer.reports import render
@@ -57,6 +57,23 @@ def _keep(html: str) -> str:
     return pid
 
 
+def _rowids_to_keys(conn, table: str, rowids: list) -> list[str]:
+    ids = []
+    for r in rowids:
+        try:
+            ids.append(int(r))
+        except (TypeError, ValueError):
+            continue
+    found: dict[int, str] = {}
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        sql = (f"SELECT rowid, {settings_tables.q(config.KEY_ITEM)} FROM {settings_tables.q(table)} "
+               f"WHERE rowid IN ({','.join('?' for _ in part)})")
+        for rid, key in conn.execute(sql, part):
+            found[rid] = simple_table.text_of(key)
+    return [found[i] for i in ids if i in found]
+
+
 @bp.post("/api/report/run")
 def run():
     conn, setup, err = _open()
@@ -68,11 +85,16 @@ def run():
         builder = reports.builder_for(spec.proc)
     except reports.ReportError as exc:
         return _refuse("report_setting", str(exc))
+    if setup.general.main_table != setup.general.configured_main:
+        return _refuse("report_table", f"帳票は [{setup.general.configured_main}] の表で作ります。一覧でその表を選んでください。")
     try:
         columns, rows = records.full_list(conn, setup)
     except records.ListError as exc:
         return _refuse("sql", str(exc))
     keys = body.get("keys")
+    if isinstance(keys, list) and body.get("by") == "rowid":
+        # 一覧は行を rowid で持つ。帳票の行は 管理番号 で選ぶので、置き換える
+        keys = _rowids_to_keys(conn, setup.general.main_table, keys)
     if isinstance(keys, list):
         key_index = columns.index(config.KEY_ITEM) if config.KEY_ITEM in columns else -1
         # 帳票は作業NO の区切りで小計を入れるので、並びは帳票の決まり(一覧 SQL の順 =

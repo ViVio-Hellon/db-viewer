@@ -93,8 +93,6 @@ def tables():
     from dbviewer import table_bring
     listed = master_admin.listed_tables(conn, setup, lv)
     why = dict(master_admin.used_tables(conn, setup))
-    if setup.legacy:
-        why[setup.general.main_table] = "業務データ(列の追加だけ)"
     return jsonify({"level": lv, "tables": listed,
                     # その表でできること(行を直す・列を足す)と、ひとこと
                     "caps": {t: master_admin.capabilities(setup, t, lv, conn) for t in listed},

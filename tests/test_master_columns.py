@@ -1,4 +1,4 @@
-"""マスタ管理: 列を追加・行を追加(本体と <メイン>_設定 を合わせたまま)"""
+"""マスタ管理: 列を追加(0.9.0: <メイン>_設定 は使わない。どの表も同じ)"""
 from __future__ import annotations
 
 import sqlite3
@@ -47,27 +47,23 @@ class _DbCase(unittest.TestCase):
 
 
 class AddColumnTest(_DbCase):
-    def test_main_gets_setting_row_too(self):
+    def test_main_add_column_without_setting_table(self):
         n_conv = len(self.q(f"SELECT * FROM [{CONV}]"))
         r = self.add(table=MAIN, name="部署", kind="text", fill="梱包")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         j = r.get_json()
-        self.assertEqual((j["column"], j["setting_table"]), ("部署", CONV))
-        # 本体の末尾に列、いまある行には入れた値
+        self.assertEqual((j["column"], j["setting_table"]), ("部署", ""))
+        # 本体の末尾に列、いまある行には入れた値。_設定 には触らない
         self.assertEqual(self.cols(MAIN)[-1], "部署")
         self.assertEqual({v for (v,) in self.q(f"SELECT 部署 FROM [{MAIN}]")}, {"梱包"})
-        # _設定 の末尾に同じ名前の行(番号は最大 + 1、ほかは空 = 自由入力)
-        rows = self.q(f"SELECT 管理番号, 項目名, 入力形式 FROM [{CONV}]")
-        self.assertEqual(len(rows), n_conv + 1)
-        self.assertEqual(rows[-1][1:], ("部署", None))
-        self.assertEqual(int(rows[-1][0]), max(int(x[0]) for x in rows[:-1]) + 1)
-        self.assertEqual(j["setting_key"], str(rows[-1][0]))
-        # 起動の照合は通る。一覧にも出て、その場で直せる
-        self.assertEqual(self.problem(), "")
+        self.assertEqual(len(self.q(f"SELECT * FROM [{CONV}]")), n_conv)
+        # 一覧にも出て、その場で直せる(行は rowid)
         d = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
-        self.assertIn("部署", [c["name"] for c in d["columns"]])
-        r = self.c.post("/api/list/cell", json={"key": "2", "column": "部署", "value": "出荷", "seen": "梱包"},
-                        headers=self.h)
+        names = [c["name"] for c in d["columns"]]
+        self.assertIn("部署", names)
+        row = next(r for r in d["rows"] if r[names.index("管理番号")] == "2")
+        r = self.c.post("/api/list/row-save", headers=self.h, json={
+            "table": MAIN, "rowid": row[d["key_index"]], "values": {"部署": "出荷"}, "seen": {"部署": "梱包"}})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual(self.q(f"SELECT 部署 FROM [{MAIN}] WHERE 管理番号=2"), [("出荷",)])
         # 書く前の控え
@@ -76,7 +72,7 @@ class AddColumnTest(_DbCase):
     def test_other_master_and_kinds(self):
         r = self.add(table="ID", name="内線", kind="integer", fill="12")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertEqual(r.get_json()["setting_table"], "")            # ID_設定 は無い
+        self.assertEqual(r.get_json()["setting_table"], "")
         self.assertEqual({v for (v,) in self.q("SELECT 内線 FROM ID")}, {12})
         self.assertEqual(self.q("SELECT typeof(内線) FROM ID LIMIT 1"), [("integer",)])
         r = self.add(table="ID", name="係数", kind="number", fill="abc")
@@ -91,74 +87,24 @@ class AddColumnTest(_DbCase):
         self.assertEqual(len(self.cols(MAIN)), 25)
 
     def test_fixed_tables_refused(self):
-        for table in ("全般設定", CONV):
-            r = self.add(table=table, name="追加")
-            self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "fixed_columns"), table)
+        r = self.add(table="全般設定", name="追加")
+        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "fixed_columns"))
+        # _設定 はもうマスタ管理に出さない(使わない表)
+        self.assertEqual(self.add(table=CONV, name="追加").status_code, 403)
 
-    def test_stray_setting_row_does_not_block(self):
-        """_設定 が本体と合っていなくても(0.7.0 から項目名で合わせる)、列は足せる。"""
+    def test_works_with_any_setting_table_state(self):
+        """_設定 が本体と合っていなくても・無くても、列は足せる。"""
         conn = shared_db.connect(self.path)
         self.addCleanup(conn.close)
-        conn.execute(f"INSERT INTO [{CONV}] (管理番号, 項目名) VALUES ('99', '迷子')")   # 本体に無い項目
+        conn.execute(f"INSERT INTO [{CONV}] (管理番号, 項目名) VALUES ('99', '迷子')")
         conn.commit()
-        setup = load_setup(conn)
-        self.assertTrue(any("迷子" in n for n in setup.notices))
-        r = master_admin.add_column(conn, setup, MAIN, "部署", level=5)
+        r = master_admin.add_column(conn, load_setup(conn), MAIN, "部署", level=5)
         self.assertTrue(r.ok, r.message)
-        self.assertIn("部署", column_names(conn, MAIN))
-        setup = load_setup(conn)
-        self.assertEqual(setup.conv.by_item("部署").item, "部署")
-        self.assertEqual([r.item for r in setup.conv.rows], setup.main_columns)
-
-
-class AddRowToSettingTest(_DbCase):
-    def form_values(self, **items):
-        f = self.c.post("/api/master/form", json={"table": CONV, "mode": "ADDNEW"}, headers=self.h).get_json()
-        return [items.get(x["name"], x["value"]) for x in f["fields"]]
-
-    def execute(self, values, **extra):
-        return self.c.post("/api/master/execute", headers=self.h,
-                           json={"table": CONV, "mode": "ADDNEW", "values": values, "key": values[0], **extra})
-
-    def test_row_add_makes_main_column(self):
-        values = self.form_values(項目名="確認者", 入力形式="数値変換", 登録条件="必須")
-        r = self.execute(values).get_json()
-        self.assertEqual(r["reason"], "question")
-        self.assertIn("確認者", r["message"])
-        self.assertNotIn("確認者", self.cols(MAIN))                     # 聞いただけでは足さない
-        r = self.execute(values, confirmed=True, answer=True)
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertEqual(self.cols(MAIN)[-1], "確認者")
-        self.assertEqual(self.q(f"SELECT 項目名, 入力形式, 登録条件 FROM [{CONV}]")[-1], ("確認者", "数値変換", "必須"))
-        self.assertEqual(self.problem(), "")
-
-    def test_row_add_refused_names_and_cancel(self):
-        r = self.execute(self.form_values(項目名="作業名"), confirmed=True, answer=True)
-        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "bad_name"))
-        r = self.execute(self.form_values(項目名="確認者"), confirmed=True, answer=False)
-        self.assertEqual(r.get_json()["reason"], "cancelled")
-        self.assertNotIn("確認者", self.cols(MAIN))
-
-    def test_rename_and_delete_refused(self):
-        cols = self.cols(CONV)
-        row = [("" if v is None else str(v)) for v in self.q(f"SELECT * FROM [{CONV}]")[1]]
-        renamed = list(row)
-        renamed[cols.index("項目名")] = "作業名2"
-        r = self.c.post("/api/master/execute", headers=self.h, json={
-            "table": CONV, "mode": "UPDATE", "values": renamed, "key": row[0], "seen": row,
-            "confirmed": True, "answer": True})
-        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "rename_item"))
-        # 項目名以外(入力形式など)は今までどおり直せる
-        changed = list(row)
-        changed[cols.index("登録条件")] = "必須"
-        r = self.c.post("/api/master/execute", headers=self.h, json={
-            "table": CONV, "mode": "UPDATE", "values": changed, "key": row[0], "seen": row,
-            "confirmed": True, "answer": True})
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        r = self.c.post("/api/master/delete", json={"table": CONV, "row": changed, "confirmed": True, "answer": True},
-                        headers=self.h)
-        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "delete_item"))
-        self.assertEqual(self.problem(), "")
+        conn.execute(f"DROP TABLE [{CONV}]")
+        conn.commit()
+        r = master_admin.add_column(conn, load_setup(conn), MAIN, "係", level=5)
+        self.assertTrue(r.ok, r.message)
+        self.assertEqual(column_names(conn, MAIN)[-2:], ["部署", "係"])
 
 
 class DeleteNullTest(_DbCase):
@@ -179,16 +125,11 @@ class LowerLevelTest(_DbCase):
 
     def test_columns_need_level5(self):
         t = self.c.post("/api/master/tables", json={}, headers=self.h).get_json()
-        self.assertNotIn(MAIN, t["tables"])                            # 本体は Level 5 だけ
+        self.assertIn(MAIN, t["tables"])                               # 0.9.0: 本体も行を直せる(Level 3 から)
+        self.assertTrue(t["caps"][MAIN]["rows"])
         self.assertFalse(t["caps"]["ID"]["columns"])
         self.assertTrue(t["caps"]["ID"]["rows"])
         r = self.add(table="ID", name="内線")
-        self.assertEqual((r.status_code, r.get_json()["reason"]), (403, "level"))
-        # _設定 に行を足す = 本体に列を足す なので、これも Level 5
-        f = self.c.post("/api/master/form", json={"table": CONV, "mode": "ADDNEW"}, headers=self.h).get_json()
-        values = [("確認者" if x["name"] == "項目名" else x["value"]) for x in f["fields"]]
-        r = self.c.post("/api/master/execute", headers=self.h, json={
-            "table": CONV, "mode": "ADDNEW", "values": values, "key": values[0], "confirmed": True, "answer": True})
         self.assertEqual((r.status_code, r.get_json()["reason"]), (403, "level"))
         # ふつうの行の追加(ID)は今までどおり
         f = self.c.post("/api/master/form", json={"table": "ID", "mode": "ADDNEW"}, headers=self.h).get_json()
