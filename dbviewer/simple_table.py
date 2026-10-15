@@ -38,7 +38,18 @@ INPUTS: tuple[tuple[str, str], ...] = (
     ("combo", "コンボボックス(入っている値から選ぶ・打つ)"),
     ("spin", "スピンボタン(数)"),
     ("calendar", "カレンダー(日付)"),
+    ("auto_new_user", "自動: 登録した人(足したとき)"),
+    ("auto_upd_user", "自動: 直した人(足した・直したとき)"),
+    ("file", "ファイル(PDF などをプレビュー)"),
 )
+# 自動で入る列(画面では直せない。書くときにログインした人の ID を入れる)
+AUTO_NEW = "auto_new_user"
+AUTO_UPD = "auto_upd_user"
+AUTO_INPUTS = (AUTO_NEW, AUTO_UPD)
+# ファイルの列のプレビュー(アプリの窓の中で見る。ほかのアプリでは開かない)
+PREVIEW_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
+                 ".txt": "text/plain", ".csv": "text/plain", ".log": "text/plain"}
 INPUT_KEYS = tuple(k for k, _ in INPUTS)
 MAX_CHOICES = 500
 
@@ -91,10 +102,14 @@ def has_settings(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def vba_input(raw: str) -> tuple[str, str]:
-    """VBA 版の入力形式 → (入力, 刻み)。かんたん設定の 4 つに無いもの(自動項目・専用フォームなど)は文字。"""
+    """VBA 版の入力形式 → (入力, 刻み)。かんたん設定に無いもの(日時の自動・専用フォームなど)は文字。"""
     from .vba_compat import cv
     text = raw or ""
     c = cv(text)
+    if c == "#NEWUSER#":
+        return AUTO_NEW, "1"
+    if c == "#UPUSER#":
+        return AUTO_UPD, "1"
     if c.startswith("CALENDER"):
         return "calendar", "1"
     if c.startswith("数値") and c != "数値変換":
@@ -274,6 +289,12 @@ def choices(conn: sqlite3.Connection, table: str, column: str) -> list[str]:
 
 
 def edit_spec(conn: sqlite3.Connection, table: str, s: ColumnSetting) -> dict[str, Any]:
+    if s.input in AUTO_INPUTS:
+        return {"inline": "", "input": s.input, "step": s.step,
+                "why": "自動で入る項目です(" + ("足した人" if s.input == AUTO_NEW else "直した人") + ")。"}
+    if s.input == "file":
+        # マスのダブルクリックはプレビュー。ファイルの場所を直すのは行の窓で
+        return {"inline": "file", "input": "file", "step": s.step}
     d: dict[str, Any] = {"inline": "simple", "input": s.input, "step": s.step}
     if s.input == "combo":
         d["choices"] = choices(conn, table, s.name)
@@ -333,9 +354,18 @@ def _write(conn: sqlite3.Connection, sql: str, args: list[Any]) -> Optional[str]
         raise exc
 
 
+def _auto_columns(conn: sqlite3.Connection, table: str) -> dict[str, str]:
+    """自動で入る列 → 入力の種類。"""
+    return {c.name: c.input for c in load(conn, table) if c.input in AUTO_INPUTS}
+
+
 def update(conn: sqlite3.Connection, table: str, rowid: int, values: dict[str, Any],
-           seen: dict[str, Any]) -> WriteResult:
-    """行を直す。`seen` = 画面が見ていた値(直す列ぶん)。今の値と違えば書かない。"""
+           seen: dict[str, Any], *, user: str = "") -> WriteResult:
+    """行を直す。`seen` = 画面が見ていた値(直す列ぶん)。今の値と違えば書かない。
+    何か変わったら「自動: 直した人」の列にログインした人を入れる(自動の列は画面の値を使わない)。"""
+    auto = _auto_columns(conn, table)
+    values = {k: v for k, v in values.items() if k not in auto}
+    seen = {k: v for k, v in seen.items() if k not in auto}
     now = _current(conn, table, rowid)
     if now is None:
         return WriteResult(False, MSG_GONE, "gone")
@@ -348,6 +378,7 @@ def update(conn: sqlite3.Connection, table: str, rowid: int, values: dict[str, A
     changed = {k: v for k, v in conv.items() if text_of(v) != now.get(k, "")}
     if not changed:
         return WriteResult(True, "変わっていません。", "unchanged", rowid)
+    changed.update({k: user for k, kind in auto.items() if kind == AUTO_UPD and user})
     sets = ", ".join(f"{q(k)} = ?" for k in changed)
     try:
         _write(conn, f"UPDATE {q(table)} SET {sets} WHERE rowid = ?", [*changed.values(), rowid])
@@ -356,11 +387,15 @@ def update(conn: sqlite3.Connection, table: str, rowid: int, values: dict[str, A
     return WriteResult(True, "保存しました。", "", rowid)
 
 
-def insert(conn: sqlite3.Connection, table: str, values: dict[str, Any]) -> WriteResult:
-    conv, problem = convert_row(conn, table, values)
+def insert(conn: sqlite3.Connection, table: str, values: dict[str, Any], *, user: str = "") -> WriteResult:
+    """行を足す。「自動: 登録した人」「自動: 直した人」の列にはログインした人を入れる。"""
+    auto = _auto_columns(conn, table)
+    conv, problem = convert_row(conn, table, {k: v for k, v in values.items() if k not in auto})
     if problem:
         return WriteResult(False, problem, "bad_value")
     conv = {k: v for k, v in conv.items() if v is not None}
+    if user:
+        conv.update({k: user for k in auto})
     try:
         if conv:
             rid = _write(conn, f"INSERT INTO {q(table)} ({', '.join(q(k) for k in conv)}) "
@@ -400,3 +435,42 @@ def convert_list(conn: sqlite3.Connection, table: str, values: list[Any]) -> tup
             return [], problem
         out[i] = text_of(v)
     return out, ""
+
+
+def apply_auto_list(conn: sqlite3.Connection, table: str, values: list[str], mode: str, user: str) -> list[str]:
+    """マスタ管理の値(表の列順)に自動の列を入れる。新規は両方、修正は「直した人」だけ。"""
+    if not user:
+        return values
+    out = list(values)
+    for i, c in enumerate(load(conn, table)):
+        if i < len(out) and (c.input == AUTO_UPD or (c.input == AUTO_NEW and mode == "ADDNEW")):
+            out[i] = user
+    return out
+
+
+# ------------------------------------------------------------------
+# ファイルの列のプレビュー
+# ------------------------------------------------------------------
+def file_target(value: str, base) -> Optional["Path"]:
+    """セルの値 → ファイルの場所。絶対パスはそのまま、相対パスは 参照ファイルの起点 から。"""
+    from pathlib import Path
+    text = str(value or "").strip().strip('"')
+    if not text:
+        return None
+    p = Path(text)
+    if not p.is_absolute() and not re.match(r"^[A-Za-z]:[\\/]|^\\\\", text):
+        p = Path(base) / p
+    return p
+
+
+def preview_check(conn: sqlite3.Connection, table: str, column: str, value: str) -> str:
+    """プレビューしてよいか。だめなら理由。**その表のその列に入っている値だけ**(ほかの場所は見せない)。"""
+    if not table_exists(conn, table) or column not in column_names(conn, table):
+        return "その表・列がありません。"
+    s = by_name(conn, table).get(column)
+    if s is None or s.input != "file":
+        return f"「{column}」はファイルの列ではありません(かんたん設定の入力を「ファイル」に)。"
+    hit = conn.execute(f"SELECT 1 FROM {q(table)} WHERE CAST({q(column)} AS TEXT) = ? LIMIT 1", (value,)).fetchone()
+    if hit is None:
+        return "その値は表に入っていません(保存してからプレビューしてください)。"
+    return ""

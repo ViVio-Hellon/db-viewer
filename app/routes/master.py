@@ -155,6 +155,9 @@ def execute():
     values, problem = simple_table.convert_list(conn, table, values)
     if problem:
         return jsonify({"ok": False, "message": problem, "reason": "bad_value", "executed": ""}), 422
+    # 自動で入る列(登録した人・直した人)
+    s = auth.current()
+    values = simple_table.apply_auto_list(conn, table, values, mode, s.user_id if s else auth.network_id())
     key = str(body.get("key") or (values[0] if values else ""))
     seen = body.get("seen")
     answer = body.get("answer")

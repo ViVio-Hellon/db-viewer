@@ -35,7 +35,7 @@ export function showProblem(text) {
 /**
  * `onSave(values)` が true を返したら閉じる(断られたら窓に理由を出して開いたまま)。
  */
-export function openRowForm({ title, fields, readOnly = false, onSave }) {
+export function openRowForm({ title, fields, readOnly = false, onSave, onPreview = null }) {
   if (!dlg) build();
   dlg.querySelector("#rfTitle").textContent = title;
   const box = dlg.querySelector("#rfFields");
@@ -44,9 +44,9 @@ export function openRowForm({ title, fields, readOnly = false, onSave }) {
     const lab = document.createElement("label");
     lab.className = "rowform__row";
     const name = document.createElement("span"); name.textContent = f.name;
-    const field = makeField(f, f.value);
+    const field = makeField(f, f.value, { onPreview: onPreview ? (v) => onPreview(f.name, v) : null });
     const inp = inputOf(field);
-    inp.readOnly = readOnly;
+    inp.readOnly = readOnly || inp.readOnly;
     if (readOnly && inp.type !== "text") inp.disabled = true;
     inputs.push([f.name, inp, f.value ?? ""]);
     inp.addEventListener("input", () => inp.classList.toggle("is-changed", true));

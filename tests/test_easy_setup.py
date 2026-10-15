@@ -227,6 +227,82 @@ class PlainDbTest(_Case):
         self.assertTrue(self.ok("/api/master/rows", table="部品")["caps"]["rows"])
 
 
+class AutoAndFileTest(_Case):
+    """自動: 登録した人・直した人 と、ファイルの列のプレビュー(0.10.0)。"""
+
+    def setUp(self):
+        super().setUp()
+        self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("ALTER TABLE 部品 ADD COLUMN 登録者 TEXT")
+            c.execute("ALTER TABLE 部品 ADD COLUMN 更新者 TEXT")
+            c.execute("ALTER TABLE 部品 ADD COLUMN 図面 TEXT")
+            c.execute("UPDATE 部品 SET 図面 = '図面/A-1.pdf' WHERE 品番 = 'A-1'")
+            c.execute("UPDATE 部品 SET 図面 = '図面/A-2.xlsx' WHERE 品番 = 'A-2'")
+            c.commit()
+        self.login()
+        st = self.ok("/api/easy/state", table="部品")
+        rows = [dict(c) for c in st["columns"]]
+        for r in rows:
+            r["input"] = {"登録者": "auto_new_user", "更新者": "auto_upd_user", "図面": "file"}.get(r["name"], r["input"])
+        self.ok("/api/easy/columns", table="部品", rows=rows)
+        self.refdir = self.tmp / "参照"
+        (self.refdir / "図面").mkdir(parents=True)
+        user_settings.save(config.KEY_REF_DIR, str(self.refdir))
+        self.addCleanup(user_settings.save, config.KEY_REF_DIR, "")
+
+    def who(self, rowid):
+        return self.q("SELECT 登録者, 更新者 FROM 部品 WHERE rowid=?", int(rowid))[0]
+
+    def test_auto_user_on_add_and_change(self):
+        d = self.ok("/api/list/data", table="部品")
+        self.assertEqual(d["edit"]["columns"]["登録者"]["inline"], "")            # 一覧では直せない
+        self.assertIn("自動", d["edit"]["columns"]["更新者"]["why"])
+        r = self.ok("/api/list/row-add", table="部品", values={"品番": "C-1", "登録者": "ほかの人"})
+        self.assertEqual(self.who(r["rowid"]), ("tester", "tester"))           # 画面の値は使わない
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 部品 SET 登録者 = '前の人', 更新者 = '前の人' WHERE rowid = ?", (r["rowid"],))
+            c.commit()
+        self.ok("/api/list/row-save", table="部品", rowid=r["rowid"], values={"名前": "x"}, seen={"名前": ""})
+        self.assertEqual(self.who(r["rowid"]), ("前の人", "tester"))            # 直した人だけ替わる
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 部品 SET 更新者 = '前の人' WHERE rowid = ?", (r["rowid"],))
+            c.commit()
+        self.ok("/api/list/row-save", table="部品", rowid=r["rowid"], values={"名前": "x"}, seen={"名前": "x"})
+        self.assertEqual(self.who(r["rowid"]), ("前の人", "前の人"))            # 変わっていなければ入れない
+        # マスタ管理でも同じ
+        f = self.ok("/api/master/form", table="部品", mode="ADDNEW")
+        kinds = {x["name"]: (x["simple"] or {}).get("input") for x in f["fields"]}
+        self.assertEqual((kinds["登録者"], kinds["更新者"], kinds["図面"]), ("auto_new_user", "auto_upd_user", "file"))
+        vals = ["D-1", "", "", "", "", "", "", ""]
+        self.ok("/api/master/execute", table="部品", mode="ADDNEW", values=vals, key="D-1", confirmed=True, answer=True)
+        self.assertEqual(self.q("SELECT 登録者, 更新者 FROM 部品 WHERE 品番='D-1'"), [("tester", "tester")])
+
+    def preview(self, value, column="図面"):
+        return self.c.get("/api/file/preview", query_string={"table": "部品", "column": column, "value": value},
+                          headers=self.h)
+
+    def test_file_preview(self):
+        (self.refdir / "図面" / "A-1.pdf").write_bytes(b"%PDF-1.4 test")
+        (self.refdir / "図面" / "A-2.xlsx").write_bytes(b"PK")
+        d = self.ok("/api/list/data", table="部品")
+        self.assertEqual(d["edit"]["columns"]["図面"]["inline"], "file")
+        r = self.preview("図面/A-1.pdf")
+        self.assertEqual((r.status_code, r.mimetype), (200, "application/pdf"))
+        self.assertTrue(r.headers["Content-Disposition"].startswith("inline"))   # ダウンロードさせない
+        self.assertEqual(r.data, b"%PDF-1.4 test")
+        self.assertEqual(self.preview("図面/A-2.xlsx").status_code, 415)          # 見られない形式
+        self.assertEqual(self.preview("../../etc/passwd").status_code, 403)      # 表に無い値は見せない
+        self.assertEqual(self.preview("箱", column="名前").status_code, 403)      # ファイルの列でない
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 部品 SET 図面 = ? WHERE 品番 = 'B-1'", (str(self.refdir / "図面" / "メモ.txt"),))
+            c.commit()
+        self.assertEqual(self.preview(str(self.refdir / "図面" / "メモ.txt")).status_code, 404)   # まだ無い
+        (self.refdir / "図面" / "メモ.txt").write_bytes("手順メモ".encode("cp932"))
+        r = self.preview(str(self.refdir / "図面" / "メモ.txt"))                 # 絶対パス・Shift_JIS
+        self.assertEqual((r.status_code, r.get_data(as_text=True)), (200, "手順メモ"))
+
+
 class VbaDbTest(_Case):
     """VBA 版の DB(全般設定・<表>_設定・管理番号)も同じ道(0.9.0)。_設定 は取り込んで消せる。"""
 
@@ -243,7 +319,7 @@ class VbaDbTest(_Case):
         # VBA 版の入力形式から: 数値2/0/500/1 → スピン、calender → カレンダー、#UPUSER# → 文字
         self.assertEqual((spec["Ⅰ"]["input"], spec["Ⅰ"]["step"]), ("spin", "1"))
         self.assertEqual(spec["登録日"]["input"], "calendar")
-        self.assertEqual(spec["登録者"]["input"], "text")
+        self.assertEqual(spec["登録者"]["input"], "auto_upd_user")               # #UPUSER# → 自動: 直した人
         st = self.ok("/api/easy/state")
         self.assertTrue(st["from_vba"])
         self.assertEqual(st["vba_tables"], ["フィルタ_設定", CONV])

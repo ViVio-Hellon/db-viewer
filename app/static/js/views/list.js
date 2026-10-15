@@ -13,7 +13,7 @@ import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
 import { createHelpers } from "../helpers.js";
 import { openAddColumn } from "../addcolumn.js";
-import { makeField, inputOf } from "../fieldinput.js";
+import { makeField, inputOf, previewFile } from "../fieldinput.js";
 import { openRowForm, showProblem } from "../rowform.js";
 import { confirmBox } from "../askbox.js";
 
@@ -129,6 +129,13 @@ function renderDetail(row) {
   const add = (n, cls = "") => {
     const dt = document.createElement("dt"); dt.textContent = n; if (cls) dt.className = cls;
     const dd = document.createElement("dd"); dd.textContent = row[idx[n]] ?? ""; if (cls) dd.className = cls;
+    const spec = data.edit && data.edit.columns[n];
+    if (spec && spec.inline === "file" && row[idx[n]]) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn btn--find dt__file"; b.textContent = "プレビュー";
+      b.addEventListener("click", () => previewFile(data.table, n, row[idx[n]]));
+      dd.appendChild(b);
+    }
     dl.append(dt, dd);
   };
   for (const n of shown) add(n);
@@ -184,6 +191,7 @@ async function simpleCommand(mode, row) {
   openRowForm({
     title: `${data.table} — ${mode === "新規" ? "行を足す" : readOnly ? "見る" : "直す"}`,
     fields: form.fields, readOnly,
+    onPreview: (column, value) => previewFile(data.table, column, value),
     onSave: async (values) => {
       try {
         const res = mode === "新規"
@@ -236,6 +244,11 @@ function saveState(text, kind = "") {
 
 /** マスのダブルクリック。直せる列なら true(その場で直す)、直せなければ false(行を開く)。 */
 function onCellEdit(row, name, td) {
+  const fileSpec = data && data.edit && data.edit.columns[name];
+  if (fileSpec && fileSpec.inline === "file") {                          // ファイルの列はプレビュー(見るだけでもよい)
+    previewFile(data.table, name, row[data.columns.findIndex((c) => c.name === name)]);
+    return true;
+  }
   if (!data || !data.edit || !data.edit.allowed) return false;          // レベルが足りない → 参照で開く
   const spec = data.edit.columns[name];
   if (!spec || !spec.inline) {

@@ -1,6 +1,6 @@
 /* マスタメンテナンス(VBA MF2)。判断はサーバ。 */
 import { api } from "../api.js";
-import { makeField, inputOf } from "../fieldinput.js";
+import { makeField, inputOf, previewFile } from "../fieldinput.js";
 import { toast, toastError } from "../toast.js";
 import { confirmBox } from "../askbox.js";
 import { createHelpers, isNumericVba } from "../helpers.js";
@@ -150,7 +150,7 @@ function renderFields() {
     const val = document.createElement("div"); val.className = "rec__val";
     if (f.simple) {
       // かんたん設定で決めた入力(コンボボックス・スピンボタン・カレンダー)
-      const field = makeField(f.simple, f.value);
+      const field = makeField(f.simple, f.value, { onPreview: (v) => previewFile(state.table, f.name, v) });
       const si = inputOf(field); si.dataset.no = f.no;
       si.addEventListener("input", () => si.classList.toggle("is-changed", si.value !== f.original));
       val.appendChild(field);

@@ -535,7 +535,7 @@ def get_db():
 # ------------------------------------------------------------------
 def _register_routes(app: Flask) -> None:
     from .routes import auth as auth_routes
-    from .routes import browse, easy, health, master, pending, record, report, settings
+    from .routes import browse, easy, files, health, master, pending, record, report, settings
     from .routes import list as list_routes
     from .routes import log as log_routes
 
@@ -549,6 +549,7 @@ def _register_routes(app: Flask) -> None:
     app.register_blueprint(report.bp)
     app.register_blueprint(log_routes.bp)
     app.register_blueprint(easy.bp)
+    app.register_blueprint(files.bp)
 
     # レールに出ているのに中身がまだ無い画面へ、「準備中」の案内を置く
     pending.register(app)

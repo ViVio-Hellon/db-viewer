@@ -1144,3 +1144,7 @@ dialog::backdrop { background: var(--scrim); }
 .rowform__row { display: contents; }
 .rowform__row > span { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 @media (max-width: 560px) { .rowform { grid-template-columns: 1fr; } }
+.fld { gap: 6px; align-items: center; }
+.fld__btn { flex: none; min-height: 32px; padding: 2px 10px; }
+.fld > .input.is-auto { color: var(--muted); background: var(--raised); }
+.dt__file { margin-left: 6px; padding: 0 8px; min-height: 22px; font-size: var(--fs-xs); }

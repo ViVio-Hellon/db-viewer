@@ -206,6 +206,12 @@ def _write_reply(conn, table, r: simple_table.WriteResult, event: str, data: dic
                     "db_mtime": shared_db.probe().get("mtime")}), status
 
 
+def _user() -> str:
+    """自動で入れる人(ログインした ID)。"""
+    s = auth.current()
+    return s.user_id if s and s.user_id else auth.network_id()
+
+
 def _int(v) -> int:
     try:
         return int(v)
@@ -244,7 +250,7 @@ def api_row_save():
         return err
     values = body.get("values") if isinstance(body.get("values"), dict) else {}
     seen = body.get("seen") if isinstance(body.get("seen"), dict) else {}
-    r = simple_table.update(conn, table, _int(body.get("rowid")), values, seen)
+    r = simple_table.update(conn, table, _int(body.get("rowid")), values, seen, user=_user())
     return _write_reply(conn, table, r, "list.row_save", {"before": seen, "after": values})
 
 
@@ -254,7 +260,7 @@ def api_row_add():
     if err:
         return err
     values = body.get("values") if isinstance(body.get("values"), dict) else {}
-    r = simple_table.insert(conn, table, values)
+    r = simple_table.insert(conn, table, values, user=_user())
     return _write_reply(conn, table, r, "list.row_add", {"after": values})
 
 
