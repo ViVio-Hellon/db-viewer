@@ -261,6 +261,9 @@ def render(*, display_name: str, version_label: str, token: str, app_id: str,
     <h2 id="troubleTitle">起動できませんでした</h2>
     <p id="troubleBody"></p>
     <p style="margin-top:8px">ログ: <code>%LOCALAPPDATA%\\DBViewer\\logs\\</code></p>
+    <p style="margin-top:10px"><button type="button" id="quit"
+       style="font:inherit;padding:6px 14px;border-radius:6px;border:1px solid currentColor;background:transparent;color:inherit;cursor:pointer">終了する</button>
+       <span id="quitNote" style="margin-left:8px">この画面を閉じても、しばらくすると自動で終わります。</span></p>
   </div>
 </main>
 <script>{_SCRIPT}</script>
@@ -329,6 +332,27 @@ function bootWatch(opt) {
 
   upto("prepare");
 
+  // 起動に失敗したあとも、数秒ごとに問い合わせる(= 画面がまだ見ている)。
+  // 閉じれば途絶えて、サーバが自分で終わる(Python を残さない)
+  function beat() {
+    fetch("/api/health", { cache: "no-store" }).catch(function () {}).then(function () {
+      setTimeout(beat, 5000);
+    });
+  }
+  document.getElementById("quit").addEventListener("click", function () {
+    var note = document.getElementById("quitNote");
+    fetch("/api/shutdown", { method: "POST", cache: "no-store",
+                             headers: { "Content-Type": "application/json", "X-Tool-Token": opt.token },
+                             body: "{}" })
+      .then(function (res) { return res.json().catch(function () { return {}; }); })
+      .then(function (body) {
+        note.textContent = body.stopped ? "終了しました。この画面は閉じてかまいません。"
+                                        : (body.message || "終了できませんでした。stop.bat を実行してください。");
+        if (body.stopped) document.getElementById("quit").disabled = true;
+      })
+      .catch(function () { note.textContent = "終了しました。この画面は閉じてかまいません。"; });
+  });
+
   function poll() {
     fetch("/api/health", { cache: "no-store" }).then(function (res) {
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -341,7 +365,7 @@ function bootWatch(opt) {
       }
       misses = 0;
 
-      if (health.startup_error) { fail("起動できませんでした", health.startup_error); return; }
+      if (health.startup_error) { fail("起動できませんでした", health.startup_error); setTimeout(beat, 5000); return; }
       if (health.ready) {
         order.forEach(function (k) { setStep(k, "done"); });
         nowText.textContent = "起動しました";

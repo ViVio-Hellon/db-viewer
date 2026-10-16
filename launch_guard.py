@@ -178,7 +178,16 @@ def is_process_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True              # 別ユーザーのプロセス = 生きている
-    return True
+    return not _is_zombie(pid)
+
+
+def _is_zombie(pid: int) -> bool:
+    """終わったが親がまだ片付けていない(Linux の Z)。もう何もしないので「消えた」と数える。"""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return False
+    return stat.rpartition(")")[2].split()[:1] == ["Z"]
 
 
 def _is_alive_windows(pid: int) -> bool:
@@ -200,6 +209,33 @@ def _is_alive_windows(pid: int) -> bool:
     return f'"{pid}"' in out.stdout
 
 
+def _command_line_windows(pid: int) -> str:
+    """wmic → 無ければ PowerShell(CIM)。
+
+    **wmic は Windows 11(24H2 以降)に既定で入っていない。** wmic だけに頼ると、コマンドラインが
+    取れず「このアプリか確かめられない」となり、stop.bat も --force も止められなかった(0.11.1)。
+    """
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        out = subprocess.run(
+            ["wmic", "process", "where", f"ProcessId={pid}", "get", "CommandLine", "/format:list"],
+            capture_output=True, text=True, timeout=5, creationflags=flags)
+        for line in out.stdout.splitlines():
+            if line.startswith("CommandLine=") and line.split("=", 1)[1].strip():
+                return line.split("=", 1)[1].strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.info("wmic を使えません(%s)。PowerShell で確かめます", exc)
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter 'ProcessId={int(pid)}').CommandLine"],
+            capture_output=True, text=True, timeout=15, creationflags=flags)
+        return (out.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("PowerShell でもコマンドラインを取れませんでした: %s", exc)
+    return ""
+
+
 def process_command_line(pid: int) -> str:
     """そのPIDが何を実行しているか。**停止前の確認に使う**。
 
@@ -211,19 +247,7 @@ def process_command_line(pid: int) -> str:
     if pid <= 0:
         return ""
     if os.name == "nt":
-        try:
-            out = subprocess.run(
-                ["wmic", "process", "where", f"ProcessId={pid}", "get",
-                 "CommandLine", "/format:list"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            for line in out.stdout.splitlines():
-                if line.startswith("CommandLine="):
-                    return line.split("=", 1)[1].strip()
-        except (OSError, subprocess.SubprocessError) as exc:
-            log.warning("wmic を実行できませんでした: %s", exc)
-        return ""
+        return _command_line_windows(pid)
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes()
         return raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()

@@ -329,7 +329,7 @@ def start(mode: str, *, open_browser: bool = True) -> int:
         except Exception as exc:                  # noqa: BLE001 - 画面に出して継続
             log().exception("アプリを組み立てられませんでした")
             srv.boot.mark_error(f"アプリを組み立てられませんでした: {exc}")
-            _hold_until_stopped(srv, thread)
+            _hold_after_failure(srv, thread)
             return 1
 
         _initialize(srv)
@@ -341,6 +341,28 @@ def start(mode: str, *, open_browser: bool = True) -> int:
         launch_guard.remove_lock(mode)
         launch_guard.release_app_lock()
         log().info("終了しました: mode=%s", mode)
+
+
+# 本体を組み立てられなかったとき、画面からの問い合わせがこの秒数来なければ終わる。
+# 待機画面は理由を出したあとも数秒ごとに問い合わせる(= 見ている)。タブを閉じれば途絶える
+FAILED_IDLE_SEC = 90.0
+
+
+def _hold_after_failure(srv, thread, *, watch_screen: bool = True) -> None:
+    """本体を組み立てられなかったまま **Python を残さない**(0.11.1。all-tools で起きた)。
+
+    待機画面は理由を出したまま残る(閉じると理由が読めないので)。以前はここで止まる道が無く、
+    stop.bat でも止まらずに Python が残り、フォルダを消せなくなった。いまは:
+      - stop.bat・画面の「終了する」… 待機画面が `/api/shutdown` に答える(`BootApp._shutdown`)
+      - 画面を閉じた … 問い合わせが `FAILED_IDLE_SEC` 秒来なければ自分で終わる
+    デスクトップ版(`watch_screen=False`)は窓を閉じると外枠が終わらせる。
+    """
+    while thread.is_alive() and not srv.stop_requested:
+        thread.join(timeout=1.0)
+        if watch_screen and srv.boot.idle_seconds() > FAILED_IDLE_SEC:
+            log().warning("起動に失敗したまま画面が %.0f秒 来ないので終了します", FAILED_IDLE_SEC)
+            srv.stop()
+    _hold_until_stopped(srv, thread)
 
 
 # 停止を頼んでから、受付の輪が終わるのを待つ上限(秒)。
@@ -413,7 +435,7 @@ def start_bridge(mode: str, *, token: str = "", server_factory) -> int:
         except Exception as exc:                  # noqa: BLE001 - 画面に出して継続
             log().exception("アプリを組み立てられませんでした")
             srv.boot.mark_error(f"アプリを組み立てられませんでした: {exc}")
-            _hold_until_stopped(srv, thread)
+            _hold_after_failure(srv, thread, watch_screen=False)
             return 1
         # 窓を閉じたら外枠が終わらせるので、心拍による自動終了は使わない
         _initialize(srv, watch_idle=False)
@@ -445,6 +467,9 @@ def _initialize(srv, *, watch_idle: bool = True) -> None:
     except Exception as exc:                      # noqa: BLE001 - 画面に出して継続
         log().exception("初期化に失敗しました")
         srv.mark_error(f"初期化に失敗しました: {exc}")
+        # 失敗しても、画面が居なくなったら終わる見張りは付ける(付けないと Python が残る)
+        if watch_idle:
+            _watch_for_idle(srv)
         return
 
     # 画面が居なくなったら終わる(基盤仕様書 2.8)。デスクトップ版は窓が閉じたら終わる

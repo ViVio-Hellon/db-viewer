@@ -7,8 +7,15 @@
 
 そこで、待ち受けだけを先に始めます。ここが答えるのは2つだけ:
 
-    GET /             待機画面(1往復で出る。外部への要求は無し)
-    GET /api/health   まだ準備できていないことを、本体と同じ形で返す
+    GET  /             待機画面(1往復で出る。外部への要求は無し)
+    GET  /api/health   まだ準備できていないことを、本体と同じ形で返す
+    POST /api/shutdown 止める(トークン必須。本体と同じ答え方)
+
+【止める合図に答える(0.11.1)】
+本体を組み立てられなかった(フォルダの一部が欠けた・設定ファイルが壊れた・部品が無い)とき、
+プロセスはこの待機画面で理由を出したまま残る。以前はここが `/api/shutdown` に「起動しています」(503)と
+答えていたので、stop.bat が止められず、Python が残ってフォルダも消せなかった(all-tools で起きた)。
+いまは本体と同じく止める合図に答える。画面が居なくなったか(問い合わせの途絶え)は `idle_seconds` で見る。
 
 `dbviewer.boot_screen` と `app_config` 以外は読み込みません
 (Flask も、業務のモジュールも読みません)。
@@ -22,8 +29,11 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
+import time
 from typing import Any, Callable, Optional
+from urllib.parse import parse_qs
 
 from dbviewer import app_config, boot_screen
 from dbviewer.logging_utils import get_logger
@@ -52,6 +62,17 @@ class BootApp:
         self.stage_key = "prepare"
         self.startup_error = ""
         self._page: Optional[bytes] = None
+        # 止める道(`AppServer.stop`)。本体ができる前でも同じ道で止める
+        self.stop_hook: Optional[Callable[[], None]] = None
+        # 画面からの最後の問い合わせ(待機画面は数百 ms ごとに /api/health を読む)
+        self.last_seen = time.monotonic()
+
+    def seen(self) -> None:
+        self.last_seen = time.monotonic()
+
+    def idle_seconds(self) -> float:
+        """画面から問い合わせが来ていない秒数。"""
+        return time.monotonic() - self.last_seen
 
     # -- 状態 ---------------------------------------------------------
     def mark_stage(self, stage: str, key: str = "prepare") -> None:
@@ -102,8 +123,12 @@ class BootApp:
     def __call__(self, environ: dict, start_response: Callable) -> list:
         path = environ.get("PATH_INFO", "/")
         if path == "/api/health":
+            self.seen()
             return _json(start_response, self.health())
+        if path == "/api/shutdown" and environ.get("REQUEST_METHOD") == "POST":
+            return self._shutdown(environ, start_response)
         if path == "/" or path == "":
+            self.seen()
             body = self.page()
             start_response("200 OK", [
                 ("Content-Type", "text/html; charset=utf-8"),
@@ -114,6 +139,22 @@ class BootApp:
             return [body]
         # 業務の要求。まだ答えられないので、そう言う
         return _json(start_response, _NOT_READY, status="503 Service Unavailable")
+
+
+    def _shutdown(self, environ: dict, start_response: Callable) -> list:
+        """止める合図(stop.bat・失敗の画面の「終了する」)。本体の `/api/shutdown` と同じ答え方。"""
+        supplied = environ.get("HTTP_X_TOOL_TOKEN", "") or (parse_qs(environ.get("QUERY_STRING", "")).get("t") or [""])[0]
+        if not secrets.compare_digest(supplied.encode("utf-8"), self.token.encode("utf-8")):
+            return _json(start_response, {"error": {"code": "bad_token", "message": "この画面は無効になりました"}},
+                         status="401 Unauthorized")
+        if self.stop_hook is None:
+            return _json(start_response, {"stopped": False, "reason": "no_hook",
+                                          "message": "このプロセスは停止操作に対応していません"},
+                         status="501 Not Implemented")
+        log.info("待機画面で停止要求を受け付けました(本体はまだ/組み立てられませんでした)")
+        # 答えを返してから止める(先に止めると、この答えが届かない)
+        threading.Timer(0.2, self.stop_hook).start()
+        return _json(start_response, {"stopped": True, "message": "終了します"})
 
 
 class Handover:

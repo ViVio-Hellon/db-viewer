@@ -47,6 +47,8 @@ class AppServer:
         # 待機画面が持っているトークンが通らなくなる
         self.token = token or secrets.token_urlsafe(24)
         self.boot = BootApp(mode, port, self.token)
+        # 本体を組み立てられなかったときも、同じ道(`stop`)で止められるように
+        self.boot.stop_hook = self.stop
         self.wsgi = Handover(self.boot)
         self.app = None
         self.url = f"http://{app_config.host()}:{port}/?t={self.token}"

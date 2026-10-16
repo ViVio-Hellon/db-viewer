@@ -10,6 +10,9 @@
     2. 応答しないときだけ、記録したPIDを使う
     3. 落とす前に、そのPIDが**本当にこのアプリか**を確かめる
     4. `python.exe` をプロセス名だけで一括終了することはしない
+    5. **止まったと言うのは、プロセスが本当に消えたのを確かめてから**(0.11.1)。
+       以前は待ち受けが答えなくなっただけで「終了しました」、--force は確かめずに「強制終了しました」と
+       出していた。Python が残っているのに止めたように見え、フォルダを消せなかった(all-tools で起きた)
 
 実行中の長時間処理があるときは、既定では止めずに知らせる。
 中断してよいかは利用者が決める(`--force` で中断する)。
@@ -115,12 +118,15 @@ def stop(mode: str, *, force: bool = False) -> StopResult:
                           f"    中断して止めるには --force を付けてください")
         return result
 
-    if asked.get("ok") and _wait_gone(info.port, GRACEFUL_WAIT_SEC):
+    if asked.get("ok") and _wait_gone(info.port, GRACEFUL_WAIT_SEC) \
+            and _wait_pid_gone(info.pid, GRACEFUL_WAIT_SEC):
         launch_guard.remove_lock(mode)
         result.stopped = True
         result.method = "graceful"
         result.message = "正常に終了しました"
         return result
+    if asked.get("ok"):
+        log.warning("停止を受け付けたのに pid=%s が残っています。PIDで止めます", info.pid)
 
     # --- 2. 応答しないときだけPIDを使う ---
     return _stop_by_pid(mode, info, result, force=force)
@@ -175,8 +181,9 @@ def _stop_by_pid(mode: str, info, result: StopResult, *, force: bool) -> StopRes
 
     if not _looks_like_our_process(info):
         result.message = (
-            f"pid {info.pid} はこのアプリではないようなので止めません。\n"
-            f"    手動で確認してください(ロック: {launch_guard.lock_path(mode)})")
+            f"pid {info.pid} がこのアプリか確かめられないので止めません。\n"
+            f"    タスクマネージャーの「詳細」で PID {info.pid} の python を確かめて終了してください"
+            f"(ロック: {launch_guard.lock_path(mode)})")
         log.warning("pid=%s の照合に失敗したため停止しません", info.pid)
         return result
 
@@ -203,6 +210,11 @@ def _stop_by_pid(mode: str, info, result: StopResult, *, force: bool) -> StopRes
         os.kill(info.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
     except OSError as exc:
         result.message = f"強制終了できませんでした: {exc}"
+        return result
+    # **消えたのを確かめてから** 止めたと言う
+    if not _wait_pid_gone(info.pid, FORCE_WAIT_SEC):
+        result.message = (f"強制終了を送りましたが、pid {info.pid} がまだ残っています。\n"
+                          f"    タスクマネージャーの「詳細」で PID {info.pid} の python を終了してください")
         return result
     launch_guard.remove_lock(mode)
     result.stopped = True
