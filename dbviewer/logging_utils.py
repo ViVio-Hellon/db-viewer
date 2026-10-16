@@ -7,7 +7,7 @@ Python版ではファイル配置の複雑さの割に価値が薄いため、�
 
 - 出力先: config.LOG_DIR 配下に `dbviewer_<PC名>_YYYYMMDD.log`(PC 名を入れるのは、
   設定で共有フォルダを記録の置き場所にしたとき、PC ごとにファイルを分けるため)
-- 置き場所は設定「記録」で変えられる(`set_log_dir` / `apply_settings`)
+- 置き場所は設定「ログ」で変えられる(`set_log_dir` / `apply_settings`)
 - 操作の記録(なぜなぜ分析用)は別のファイル(`trace.py`)
 - コンソール(Debug.Printのイミディエイト相当)にも同時出力
 """
@@ -47,7 +47,7 @@ class DailyFileHandler(logging.FileHandler):
         super().__init__(log_path_for(day), **kwargs)
 
     def reopen(self) -> None:
-        """置き場所が変わった(設定「記録」)。次の 1 行から新しい場所へ。"""
+        """置き場所が変わった(設定「ログ」)。次の 1 行から新しい場所へ。"""
         self.acquire()
         try:
             self.close()

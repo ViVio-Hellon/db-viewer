@@ -391,7 +391,7 @@
           <div class="pad">
             <p class="why">画面のエラーには<b>記録番号</b>(8 桁の英数字)が出ます。ここに入れると、その操作の前後
               ── どの画面で・誰が・何を押し・何が返り・その前に何があったか ── が一続きで出ます。
-              なぜなぜ分析の下書きもそこからコピーできます。</p>
+              そこで<b>なぜなぜシート</b>(なぜ 1〜5・対策・対策の状況)を書いて残せます。</p>
             <div class="ridrow">
               <input class="input" id="logRid" placeholder="例: 3f9a0c12" maxlength="16" spellcheck="false" autocomplete="off">
               <button class="btn btn--commit" type="button" id="logChainGo">前後を見る</button>
@@ -401,16 +401,18 @@
 
         <section class="card">
           <header>
-            <i class="ib ib--sm" aria-hidden="true">記</i>
-            <h3>最近の記録</h3>
+            <i class="ib ib--sm" aria-hidden="true">ロ</i>
+            <h3>ログ</h3>
             <span class="lv lv--info" id="logToday"></span>
           </header>
           <div class="pad">
             <div class="logbar">
-              <div class="seg" role="radiogroup" aria-label="出すもの">
-                <label class="checkline"><input type="radio" name="logOnly" value="problems" checked> 問題だけ(断り・エラー)</label>
-                <label class="checkline"><input type="radio" name="logOnly" value="all"> すべて</label>
+              <div class="seg" role="radiogroup" aria-label="見るもの">
+                <label class="checkline"><input type="radio" name="logOnly" value="errors"> エラーだけ</label>
+                <label class="checkline"><input type="radio" name="logOnly" value="problems" checked> エラー・断り・警告</label>
+                <label class="checkline"><input type="radio" name="logOnly" value="all"> 操作も全部</label>
               </div>
+              <select class="input" id="logPc" aria-label="PC"><option value="">どの PC も</option></select>
               <select class="input" id="logDays" aria-label="期間">
                 <option value="1">今日</option>
                 <option value="7" selected>7 日</option>
@@ -419,11 +421,13 @@
               </select>
               <input class="input" id="logQ" type="search" placeholder="言葉で絞る(ID・画面・理由・値…)" spellcheck="false">
               <button class="btn btn--find" type="button" id="logReload"><span class="gl">⟳</span>見直す</button>
+              <button class="btn btn--find" type="button" id="logCsv" title="いまの絞り込みのまま、ログの出力先の「書き出し」フォルダへ CSV で書きます(なぜなぜの列も入ります)">CSV に書き出す</button>
             </div>
+            <p class="status status--ok" id="logCsvDone" hidden></p>
             <p class="why" id="logSummary"></p>
             <div class="tablewrap tablewrap--log" id="logWrap">
               <table class="table logtable">
-                <thead><tr><th>時刻</th><th>出来事</th><th>画面</th><th>利用者</th><th>PC</th><th>内容</th><th>記録番号</th></tr></thead>
+                <thead><tr><th>時刻</th><th>出来事</th><th>画面</th><th>利用者</th><th>PC</th><th>内容</th><th>記録番号</th><th>なぜなぜ</th></tr></thead>
                 <tbody id="logRows"></tbody>
               </table>
             </div>
@@ -434,7 +438,7 @@
         <section class="card">
           <header>
             <i class="ib ib--sm" aria-hidden="true">置</i>
-            <h3>記録の置き場所</h3>
+            <h3>ログの出力先</h3>
             <span class="lv lv--{{ view.log.dir_state.level }}" id="logDirState">{{ view.log.dir_state.text }}</span>
           </header>
           <div class="pad">
@@ -442,7 +446,7 @@
               <b>共有フォルダにすると、どの PC で起きたことも 1 か所で引けます</b>。ファイル名に PC 名が入るので、同じファイルを取り合いません。
               空ならこの PC の中({{ view.log.dir_default }})。</p>
             <div class="paths">
-              {{ pathrow("logDir", "置き場所", view.log.dir, view.log.dir_real) }}
+              {{ pathrow("logDir", "出力先(掃き出し先)", view.log.dir, view.log.dir_real) }}
             </div>
             <p class="status status--warn" id="logDirProblem" {% if not view.log.problem %}hidden{% endif %}>{{ view.log.problem }}</p>
             <div class="field" style="margin-top:8px">
@@ -452,7 +456,7 @@
             </div>
             <p class="why" id="logFile">この PC のファイル: {{ view.log.file }}(ほかに dbviewer_{{ view.log.pc }}_日付.log = 開発者向けの詳しいログ)</p>
             <div class="btn-row" style="margin-top:8px">
-              <button class="btn btn--commit" type="button" id="saveLog">記録の設定を保存</button>
+              <button class="btn btn--commit" type="button" id="saveLog">ログの設定を保存</button>
               <button class="btn btn--find" type="button" id="openLog" {% if not view.log.can_open %}hidden{% endif %}>フォルダを開く</button>
             </div>
           </div>
@@ -471,7 +475,7 @@
               <div class="check check--info"><dt>PC 名</dt><dd><span class="v">{{ view.terminal.pc_name }}</span></dd></div>
               <div class="check check--info"><dt>ログイン ID(OS)</dt><dd><span class="v">{{ view.terminal.user }}</span></dd></div>
               <div class="check check--info"><dt>版</dt><dd><span class="v">{{ view.terminal.version }}</span><span class="why">{{ view.terminal.app_root }}</span></dd></div>
-              <div class="check check--info"><dt>ローカル領域</dt><dd><span class="v">{{ view.terminal.local_root }}</span><span class="why">記録: {{ view.terminal.log_dir }}(設定「記録」で変えられます) / 設定: {{ view.terminal.config_path }}</span></dd></div>
+              <div class="check check--info"><dt>ローカル領域</dt><dd><span class="v">{{ view.terminal.local_root }}</span><span class="why">記録: {{ view.terminal.log_dir }}(設定「ログ」で変えられます) / 設定: {{ view.terminal.config_path }}</span></dd></div>
             </dl>
           </div>
         </section>
@@ -549,6 +553,22 @@
     <summary>なぜなぜの下書きを見る(コピーできないとき)</summary>
     <textarea class="input" id="logDraft" rows="14" readonly spellcheck="false"></textarea>
   </details>
+  <section class="whysheet" id="logSheet" hidden>
+    <h4>なぜなぜシート <span class="why" style="margin:0">記録から言えることは上の並びと下書きに。ここは人が書きます</span></h4>
+    <div class="whysheet__grid">
+      <label for="logSheetStatus">対策の状況</label>
+      <select class="input" id="logSheetStatus" style="width:10em"></select>
+      <div id="logWhys" class="whysheet__whys"></div>
+      <label for="logMeasure">対策</label>
+      <textarea class="input" id="logMeasure" rows="2" maxlength="400" placeholder="誰が・いつまでに・何をする(同じことが起きないように)"></textarea>
+      <label for="logBy">書いた人</label>
+      <input class="input" id="logBy" maxlength="40" style="width:14em" autocomplete="off">
+    </div>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn--commit" type="button" id="logSheetSave">なぜなぜを残す</button>
+      <span class="why" id="logSheetNote" style="margin:0"></span>
+    </div>
+  </section>
 </dialog>
 
 <dialog id="browser" class="browser">
@@ -645,6 +665,17 @@
   .timeline pre { margin:0; padding:8px 10px; border-top:1px solid var(--rule); background:var(--sunken); color:var(--ink);
                   font-size:var(--fs-xs); white-space:pre-wrap; overflow-wrap:anywhere; max-height:40vh; overflow:auto; }
   .draft > summary { cursor:pointer; color:var(--muted); padding:6px 0; }
+  .whysheet { border-top:1px solid var(--rule); margin-top:10px; padding-top:8px; }
+  .whysheet h4 { margin:0 0 6px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+  .whysheet__grid { display:grid; grid-template-columns:8em minmax(0,1fr); gap:6px 10px; align-items:start; }
+  .whysheet__grid label { color:var(--muted); font-size:var(--fs-sm); padding-top:6px; }
+  .whysheet__whys { display:contents; }
+  .whysheet textarea { width:100%; resize:vertical; }
+  @media (max-width:560px) { .whysheet__grid { grid-template-columns:1fr; } }
+  .logtable td.sheet { white-space:nowrap; }
+  .sheetchip { display:inline-block; font-size:var(--fs-xs); padding:0 8px; border-radius:var(--pill); background:var(--warn-bg); color:var(--state-warn); }
+  .sheetchip.is-doing { background:var(--info-bg); color:var(--info-fg); }
+  .sheetchip.is-done { background:var(--ok-bg); color:var(--state-ok); }
   .draft textarea { width:100%; font-family:var(--mono); font-size:var(--fs-xs); }
   @media (max-width: 640px) {
     .timeline summary { grid-template-columns:1fr; }

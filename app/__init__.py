@@ -121,6 +121,7 @@ def _start_records(app: Flask) -> None:
     from dbviewer import logging_utils, shared_db, trace, user_settings
     state = logging_utils.apply_settings()
     app.config["LOG_STATE"] = state
+    trace.install_capture()                       # log.warning / log.exception もログに拾う
     keep = user_settings.get(config.KEY_LOG_KEEP_DAYS, config.DEFAULT_LOG_KEEP_DAYS)
     try:
         gone = trace.cleanup(int(keep))
@@ -141,7 +142,7 @@ def _register_trace(app: Flask) -> None:
     """要求ごとに記録番号を振り、書く操作・断り・エラーを残す。
 
     【記録番号】画面のエラーにも出す(`X-Request-Id`)。「エラーが出た」と言われたら、
-    その番号で設定「記録」を引けば、どの画面で何を押し、何が返り、その前に何が
+    その番号で設定「ログ」を引けば、どの画面で何を押し、何が返り、その前に何が
     あったかが一続きで読める。
     """
     import uuid
@@ -192,14 +193,15 @@ def _register_trace(app: Flask) -> None:
         if isinstance(exc, HTTPException):
             return exc
         rid = g.get("rid", "")
-        log.exception("思わぬエラー rid=%s %s %s", rid, request.method, request.path)
+        # ログには下の error.server で残す(拾う口で二重にしない)
+        log.exception("思わぬエラー rid=%s %s %s", rid, request.method, request.path, extra={"no_trace": True})
         sent = trace.sent_body()
         ms = round((time.perf_counter() - g.get("t0", time.perf_counter())) * 1000)
         trace.event("error.server", str(exc) or type(exc).__name__, level="ERROR", exc=exc,
                     st=500, ms=ms, data={"sent": sent})
         g.recorded = True
         message = (f"思わぬエラーが起きました。記録番号 {rid} を管理者に伝えてください"
-                   f"(設定 →「記録」で中身を見られます)。")
+                   f"(設定 →「ログ」で中身を見られます)。")
         if request.path.startswith("/api/"):
             return jsonify(_error("server_error", message) | {"rid": rid}), 500
         return (f"<!doctype html><meta charset='utf-8'><title>エラー</title>"

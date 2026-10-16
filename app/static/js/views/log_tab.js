@@ -1,5 +1,6 @@
 /*
-  設定「記録」 ── 最近の記録と、記録番号の前後(なぜなぜ分析)
+  設定「ログ」 ── 最近のログ、記録番号の前後、なぜなぜシート、CSV への書き出し
+  (参照: ViVio-Hellon/vba-daily-report-python-migration の「ログ」)
 
   並べ方・呼び名・下書きの文はサーバ(`dbviewer/presenters/log_view.py`)が決める。
   ここは受け取ったものを並べるだけ。
@@ -49,13 +50,30 @@ function ridButton(rid) {
   return b;
 }
 
+function sheetChip(r) {
+  const cell = document.createElement("td");
+  cell.className = "sheet";
+  if (r.sheet) {
+    const chip = document.createElement("span");
+    chip.className = `sheetchip is-${r.sheet_status}`;
+    chip.textContent = r.sheet;
+    cell.appendChild(chip);
+  } else if (r.is_error) {
+    const chip = document.createElement("span");
+    chip.className = "sheetchip";
+    chip.textContent = "未着手";
+    cell.appendChild(chip);
+  }
+  return cell;
+}
+
 function rowNode(r) {
   const tr = document.createElement("tr");
   tr.className = LV_CLASS[r.lv] || "";
   const ridCell = document.createElement("td");
   if (r.rid) ridCell.appendChild(ridButton(r.rid));
   tr.append(td(r.time, "t"), td(r.label, "ev"), td(r.screen), td(r.user), td(r.pc),
-            td(r.msg, "msg"), ridCell);
+            td(r.msg, "msg"), ridCell, sheetChip(r));
   return tr;
 }
 
@@ -65,18 +83,24 @@ function chosenOnly() {
 
 export async function loadEvents() {
   if (!el.rows) return;
-  const qs = new URLSearchParams({ days: el.days.value, only: chosenOnly(), q: el.q.value.trim() });
+  const qs = new URLSearchParams({ days: el.days.value, only: chosenOnly(), q: el.q.value.trim(), pc: el.pc.value });
   try {
     const view = await api.get(`/api/log/events?${qs}`);
     loadedOnce = true;
     el.rows.replaceChildren(...view.rows.map(rowNode));
+    // PC の選択肢(ログのある PC)。選んでいたものは残す
+    const keep = el.pc.value;
+    el.pc.replaceChildren(new Option("どの PC も", ""), ...view.pcs.map((pc) => new Option(pc, pc)));
+    el.pc.value = view.pcs.includes(keep) ? keep : "";
+    showOpen(view.open_errors, view.open_days);
     const pcs = view.pcs.length ? `${view.pcs.length} 台(${view.pcs.join("・")})` : "まだありません";
     el.summary.textContent = `置き場所: ${view.dir} / 記録のある PC: ${pcs} / ${view.rows.length} 件`
       + (view.rows.length >= view.limit ? `(新しい順に ${view.limit} 件まで。言葉で絞ってください)` : "(新しい順)");
     el.empty.hidden = view.rows.length > 0;
     el.empty.className = "status status--ok";
-    el.empty.textContent = view.only === "all" ? "この期間の記録はありません。"
-      : "この期間に断り・エラーはありません。「すべて」で操作の記録も見られます。";
+    el.empty.textContent = view.only === "all" ? "この期間のログはありません。"
+      : view.only === "errors" ? "この期間にエラーはありません。"
+      : "この期間に断り・エラーはありません。「操作も全部」で操作のログも見られます。";
     el.wrap.hidden = view.rows.length === 0;
   } catch (err) { toastError(err); }
 }
@@ -116,6 +140,63 @@ function chainText(view) {
     .join("\t")).join("\r\n");
 }
 
+/** 見出しの「まだ対策済にしていないエラー」の数。 */
+function showOpen(n, days = 2) {
+  if (!el.today) return;
+  el.today.className = `lv lv--${n ? "ng" : "ok"}`;
+  el.today.textContent = n ? `まだ対策していないエラー ${n} 件(${days} 日)` : `この ${days} 日のエラーは対策済`;
+}
+
+/* ---------- なぜなぜシート(人が書く) ---------- */
+let sheetRid = "";
+
+function renderSheet(view) {
+  sheetRid = view.found ? view.rid : "";
+  el.sheet.hidden = !view.found;
+  if (!view.found) return;
+  const sh = view.sheet || {};
+  el.sheetStatus.replaceChildren(...(view.statuses || []).map(([k, label]) => new Option(label, k, false, k === (sh.status || "open"))));
+  const whys = sh.whys || [];
+  const nodes = [];
+  for (let i = 0; i < (view.why_count || 5); i += 1) {
+    const lab = document.createElement("label");
+    lab.htmlFor = `logWhy${i}`; lab.textContent = `なぜ ${i + 1}`;
+    const ta = document.createElement("textarea");
+    ta.className = "input"; ta.id = `logWhy${i}`; ta.rows = 1; ta.maxLength = 400;
+    ta.placeholder = i === 0 ? "なぜ起きた?(記録から言えることから一段ずつ。推測には ? を付ける)" : "それはなぜ?";
+    ta.value = whys[i] || "";
+    nodes.push(lab, ta);
+  }
+  el.whys.replaceChildren(...nodes);
+  el.measure.value = sh.measure || "";
+  el.by.value = sh.by || "";
+  el.by.placeholder = "空ならログインした ID";
+  el.sheetNote.textContent = sh.t ? `前に残したのは ${sh.t.replace("T", " ")}(${sh.by || "?"}・${sh.pc || "?"})` : "まだ書いていません";
+}
+
+async function saveSheet() {
+  if (!sheetRid) return;
+  const whys = [...el.whys.querySelectorAll("textarea")].map((t) => t.value);
+  try {
+    const res = await api.post("/api/log/sheet", { rid: sheetRid, status: el.sheetStatus.value, whys,
+                                                    measure: el.measure.value, by: el.by.value });
+    toast(`なぜなぜを残しました(${res.status_label})。`, "ok");
+    el.sheetNote.textContent = `残しました ${res.sheet.t.replace("T", " ")}(${res.sheet.by})`;
+    showOpen(res.open_errors);
+    if (loadedOnce) loadEvents();
+  } catch (err) { toastError(err); }
+}
+
+async function exportCsv() {
+  try {
+    const res = await api.post("/api/log/export", { days: Number(el.days.value), only: chosenOnly(),
+                                                     q: el.q.value.trim(), pc: el.pc.value });
+    el.csvDone.hidden = false;
+    el.csvDone.textContent = `CSV に書き出しました(${res.rows} 行): ${res.path}`;
+    toast("CSV に書き出しました。Excel で開けます。", "ok");
+  } catch (err) { toastError(err); }
+}
+
 export async function openChain(rid) {
   rid = String(rid || "").trim();
   if (!rid) { toast("記録番号を入れてください。", "warn"); return; }
@@ -129,6 +210,7 @@ export async function openChain(rid) {
     el.draft.value = view.draft || "";
     el.copyDraft.disabled = !view.found;
     el.copyChain.disabled = !view.found;
+    renderSheet(view);
     if (!el.chain.open) el.chain.showModal();
     el.chainList.querySelector(".is-center")?.scrollIntoView({ block: "center" });
   } catch (err) { toastError(err); }
@@ -144,9 +226,7 @@ export function render(log) {
   el.problem.textContent = log.problem || "";
   el.keep.value = log.keep_days;
   el.file.textContent = `この PC のファイル: ${log.file}(ほかに dbviewer_${log.pc}_日付.log = 開発者向けの詳しいログ)`;
-  const n = log.errors_today, w = log.warns_today;
-  el.today.className = `lv lv--${n ? "ng" : w ? "warn" : "ok"}`;
-  el.today.textContent = n || w ? `今日: エラー ${n} / 断り ${w}` : "今日は問題なし";
+  if (log.open_errors !== undefined) showOpen(log.open_errors, log.open_days);
   if (loadedOnce) loadEvents();
 }
 
@@ -163,13 +243,20 @@ export function start(state, save) {
                            ["saveLog", "saveLog"], ["openLog", "openLog"],
                            ["chain", "logChain"], ["chainTitle", "logChainTitle"], ["chainNote", "logChainNote"],
                            ["chainList", "logChainList"], ["draft", "logDraft"],
-                           ["copyDraft", "logCopyDraft"], ["copyChain", "logCopyChain"]]) {
+                           ["copyDraft", "logCopyDraft"], ["copyChain", "logCopyChain"],
+                           ["pc", "logPc"], ["csv", "logCsv"], ["csvDone", "logCsvDone"],
+                           ["sheet", "logSheet"], ["sheetStatus", "logSheetStatus"], ["whys", "logWhys"],
+                           ["measure", "logMeasure"], ["by", "logBy"], ["sheetSave", "logSheetSave"],
+                           ["sheetNote", "logSheetNote"]]) {
     el[key] = document.getElementById(id);
   }
   if (!el.rows) return;
 
   el.reload.addEventListener("click", loadEvents);
   el.days.addEventListener("change", loadEvents);
+  el.pc.addEventListener("change", loadEvents);
+  el.csv.addEventListener("click", exportCsv);
+  el.sheetSave.addEventListener("click", saveSheet);
   for (const r of document.querySelectorAll("input[name=logOnly]")) r.addEventListener("change", loadEvents);
   el.q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loadEvents(); } });
   el.q.addEventListener("search", loadEvents);

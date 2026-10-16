@@ -58,9 +58,9 @@ export function toast(message, kind = "info", action = null) {
 }
 
 /**
- * 記録番号を添える(`X-Request-Id`)。押せば設定「記録」でその前後が見える。
+ * 記録番号を添える(`X-Request-Id`)。押せば設定「ログ」でその前後が見える。
  *
- * **断り(4xx)は番号だけ、思わぬエラーは「記録を見る」も出す。** 断りは
+ * **断り(4xx)は番号だけ、思わぬエラーは「ログを見る」も出す。** 断りは
  * 理由が文言に書いてあるので、普段は番号を見るだけで足りる。
  */
 export function addRecordNo(el, rid, { link = true } = {}) {
@@ -76,7 +76,7 @@ export function addRecordNo(el, rid, { link = true } = {}) {
   const a = document.createElement("a");
   a.className = "btn";
   a.href = `/settings?tab=log&rid=${encodeURIComponent(rid)}`;
-  a.textContent = "記録を見る";
+  a.textContent = "ログを見る";
   a.style.marginLeft = "auto";
   // 移った先で同じ知らせが残らないように(差し替えでは知らせの場所は残る)
   a.addEventListener("click", () => setTimeout(() => el.remove(), 0));

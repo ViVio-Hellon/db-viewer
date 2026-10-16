@@ -114,6 +114,13 @@ def shell_context(active: str, *,
     """`base.html` が必要とする値一式。"""
     config = current_app.config
     mode = config["MODE"]
+    badges = dict(badges or {})
+    if "settings" not in badges:
+        # まだ「対策済」にしていないエラー(この 2 日)。押せば 設定 →「ログ」で見られる
+        from dbviewer import why_sheet
+        n = why_sheet.open_errors_cached()
+        if n:
+            badges["settings"] = (f"エラー{n}件", "todo")
     return {
         "active": active,
         "nav": nav_items(mode, badges),

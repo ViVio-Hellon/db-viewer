@@ -27,6 +27,12 @@
 
 パスワードなど、名前に pass / token を含む値は「***」にして残す。
 **書けなくても業務は止めない。**
+
+【0.11.0】(ViVio-Hellon/vba-daily-report-python-migration の「ログ」にそろえた)
+- 設定の出力先に書けないときは、この PC の既定の場所に書き、**5 分ごとに設定の出力先を試し直す**
+  (起動し直さなくても戻る)。読むときは両方を読む(書けなかったあいだのぶんも一覧に並ぶ)
+- コードの中で `log.warning` / `log.exception` に書いたもの(握りつぶしていたエラー)も拾う(`install_capture`)。
+  同じものが続くときは 1 分に 1 度だけ、間引いた数を添える
 """
 from __future__ import annotations
 
@@ -61,6 +67,34 @@ def pc_name() -> str:
 
 def file_for(day: Optional[date] = None, pc: Optional[str] = None) -> Path:
     return config.LOG_DIR / f"{PREFIX}{pc or pc_name()}_{(day or date.today()):%Y%m%d}{SUFFIX}"
+
+
+def read_dirs() -> list[Path]:
+    """読む場所: いまの出力先と、この PC の既定の場所(書けなかったあいだのぶん)。"""
+    dirs = [config.LOG_DIR]
+    if config.DEFAULT_LOG_DIR != config.LOG_DIR and config.DEFAULT_LOG_DIR.is_dir():
+        dirs.append(config.DEFAULT_LOG_DIR)
+    return dirs
+
+
+RETRY_SECONDS = 300
+_retry = {"at": 0.0}
+
+
+def _maybe_retry() -> None:
+    """設定の出力先に書けず既定の場所に書いているとき、5 分ごとに設定の出力先を試し直す。"""
+    import time
+    from . import logging_utils, user_settings
+    now = time.monotonic()
+    if now - _retry["at"] < RETRY_SECONDS:
+        return
+    _retry["at"] = now
+    text = str(user_settings.get(config.KEY_LOG_DIR, "") or "").strip()
+    if not text:
+        return
+    wanted = logging_utils.resolve_log_dir(text)
+    if wanted != config.LOG_DIR and not logging_utils.set_log_dir(wanted):
+        logging_utils.get_logger("dbviewer.trace").info("ログの出力先に書けるようになりました: %s", wanted)
 
 
 def summarize(value: Any, depth: int = 0) -> Any:
@@ -168,6 +202,7 @@ def event(ev: str, msg: str = "", *, level: str = "INFO", data: Any = None,
             rec["exc"] = {"type": type(exc).__name__, "msg": summarize(str(exc)),
                           "tb": traceback.format_exception(type(exc), exc, exc.__traceback__)[-30:]}
         line = json.dumps(rec, ensure_ascii=False, default=str)
+        _maybe_retry()
         path = file_for()
         with _lock:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +214,7 @@ def event(ev: str, msg: str = "", *, level: str = "INFO", data: Any = None,
 
 
 # ------------------------------------------------------------------
-# 読む(設定「記録」の画面)
+# 読む(設定「ログ」の画面)
 # ------------------------------------------------------------------
 _NAME = re.compile(rf"^{PREFIX}(?P<pc>.+)_(?P<day>\d{{8}}){re.escape(SUFFIX)}$")
 
@@ -192,17 +227,17 @@ def pc_of(path: Path) -> str:
 
 def files(days: int = 7, folder: Optional[Path] = None) -> list[Path]:
     """直近 `days` 日の記録ファイル(この PC 以外のものも。共有フォルダに置いたとき)。"""
-    folder = folder or config.LOG_DIR
     since = (date.today() - timedelta(days=max(1, days) - 1)).strftime("%Y%m%d")
-    out = []
-    try:
-        for p in folder.iterdir():
-            m = _NAME.match(p.name)
-            if m and m.group("day") >= since:
-                out.append(p)
-    except OSError:
-        return []
-    return sorted(out, key=lambda p: p.name)
+    out: dict[str, Path] = {}
+    for d in ([folder] if folder else read_dirs()):
+        try:
+            for p in d.iterdir():
+                m = _NAME.match(p.name)
+                if m and m.group("day") >= since:
+                    out.setdefault(str(p.resolve()), p)
+        except OSError:
+            continue
+    return sorted(out.values(), key=lambda p: p.name)
 
 
 def _lines(paths: Iterable[Path]) -> list[dict[str, Any]]:
@@ -295,3 +330,51 @@ def cleanup(keep_days: int) -> int:
     except OSError:
         return gone
     return gone
+
+
+# ------------------------------------------------------------------
+# log.warning / log.exception もログに拾う(0.11.0)
+# ------------------------------------------------------------------
+import logging  # noqa: E402
+
+# 拾わない記録(通信の部品・ログ自身)
+_SKIP_LOGGERS = ("waitress", "werkzeug", "urllib3", "dbviewer.trace")
+REPEAT_SECONDS = 60
+
+
+class CaptureHandler(logging.Handler):
+    """WARNING 以上を 1 行の出来事にする。同じもの(記録の名前 + 文の型)は 1 分に 1 度、間引いた数を添える。"""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self._last: dict[tuple[str, str], list[float]] = {}
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            if record.name.startswith(_SKIP_LOGGERS) or getattr(record, "no_trace", False):
+                return
+            import time
+            key = (record.name, str(record.msg))
+            now = time.monotonic()
+            last = self._last.get(key)
+            if last and now - last[0] < REPEAT_SECONDS:
+                last[1] += 1
+                return
+            skipped = int(last[1]) if last else 0
+            self._last[key] = [now, 0]
+            error = record.levelno >= logging.ERROR
+            data: dict[str, Any] = {"logger": record.name, "where": f"{Path(record.pathname).name}:{record.lineno}"}
+            if skipped:
+                data["間引いた数"] = skipped
+            exc = record.exc_info[1] if record.exc_info and record.exc_info[1] else None
+            event("log.error" if error else "log.warning", record.getMessage(),
+                  level="ERROR" if error else "WARN", data=data, exc=exc)
+        except Exception:                               # noqa: BLE001 - ログのせいで業務を止めない
+            pass
+
+
+def install_capture() -> None:
+    """`dbviewer` の記録に拾う口を付ける(何度呼んでも 1 つ)。"""
+    root = logging.getLogger("dbviewer")
+    if not any(isinstance(h, CaptureHandler) for h in root.handlers):
+        root.addHandler(CaptureHandler())

@@ -35,7 +35,7 @@ export class ApiError extends Error {
     // 断られたときも本文に画面ぜんぶが入っていることがある(422)。
     // 「断られた」と「画面が古いまま」を同時に起こさないために渡す
     this.body = body;
-    // 記録番号(`X-Request-Id`)。設定「記録」でこの操作の前後が引ける
+    // 記録番号(`X-Request-Id`)。設定「ログ」でこの操作の前後が引ける
     this.rid = rid || (body && body.rid) || "";
   }
 }

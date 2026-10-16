@@ -1,4 +1,4 @@
-"""設定「記録」に出す値(記録 = `dbviewer/trace.py` の 1 行 1 出来事)
+"""設定「ログ」に出す値(記録 = `dbviewer/trace.py` の 1 行 1 出来事)
 
 画面は並べるだけ。出来事の呼び名・画面の名前・時刻の見せ方はここで決める。
 
@@ -12,7 +12,7 @@ import json
 from datetime import datetime
 from typing import Any, Optional
 
-from .. import config, trace, user_settings
+from .. import config, trace, user_settings, why_sheet
 
 # 出来事の種類 → 画面の呼び名
 EV_LABEL = {
@@ -38,7 +38,20 @@ EV_LABEL = {
     "report": "帳票",
     "job.done": "長い処理が終わった",
     "job.failed": "長い処理が失敗",
-    "log.moved": "記録の置き場所を変えた",
+    "log.moved": "ログの出力先を変えた",
+    "log.warning": "警告(コードの中)",
+    "log.error": "エラー(コードの中)",
+    "why.save": "なぜなぜを残した",
+    "log.export": "エラー一覧を書き出した",
+    "list.row_save": "一覧で直した",
+    "list.row_add": "一覧で行を足した",
+    "list.row_delete": "一覧で行を消した",
+    "list.add_column": "列を追加",
+    "browse.add_column": "列を追加",
+    "easy.columns": "列の設定を保存",
+    "easy.start": "ログインを使い始めた",
+    "easy.retire_vba": "VBA 版の設定を消した",
+    "file.preview": "ファイルをプレビュー",
     "app.start": "起動",
     "app.stop": "終了",
 }
@@ -133,19 +146,51 @@ def keep_days() -> int:
         return config.DEFAULT_LOG_KEEP_DAYS
 
 
-def events(days: int = DEFAULT_DAYS, *, only: str = "problems", q: str = "", limit: int = 300) -> dict[str, Any]:
-    recs = trace.read(days, only_problems=(only != "all"), q=q, limit=limit)
+# 見るもの(参照: vba-daily-report の「ログ」): エラーだけ / エラー・断り・警告 / 操作も全部
+ONLY_CHOICES = ("errors", "problems", "all")
+
+
+def _pick(days: int, only: str, q: str, pc: str, limit: int) -> list[dict[str, Any]]:
+    only = only if only in ONLY_CHOICES else "problems"
+    recs = trace.read(days, only_problems=(only != "all"), q=q, limit=max(limit, 2000) if pc or only == "errors" else limit)
+    if only == "errors":
+        recs = [r for r in recs if why_sheet.is_error(r)]
+    if pc:
+        recs = [r for r in recs if r.get("pc") == pc]
+    return recs[:limit]
+
+
+def events(days: int = DEFAULT_DAYS, *, only: str = "problems", q: str = "", limit: int = 300,
+           pc: str = "") -> dict[str, Any]:
+    only = only if only in ONLY_CHOICES else "problems"
     found = trace.files(days)
+    rows = [row(r) for r in _pick(days, only, q, pc, limit)]
+    sheets = why_sheet.all_sheets()
+    for r in rows:
+        sh = sheets.get(r["rid"]) if r["rid"] else None
+        r["sheet"] = why_sheet.STATUS_LABELS.get(sh.get("status", ""), "") if sh else ""
+        r["sheet_status"] = sh.get("status", "") if sh else ""
+        r["is_error"] = r["lv"] == "ERROR"
     return {
         "dir": str(config.LOG_DIR),
         "days": days,
-        "only": "all" if only == "all" else "problems",
+        "only": only,
         "q": q,
+        "pc": pc,
         "files": len(found),
         "pcs": sorted({trace.pc_of(p) for p in found}),
-        "rows": [row(r) for r in recs],
+        "rows": rows,
         "limit": limit,
+        "open_errors": why_sheet.open_errors(),
+        "open_days": why_sheet.OPEN_DAYS,
     }
+
+
+def export(days: int, *, only: str, q: str, pc: str) -> dict[str, Any]:
+    """いまの絞り込みのまま CSV に書く(ログの出力先の 書き出し へ)。"""
+    rows = [row(r) for r in _pick(days, only, q, pc, 20000)]
+    path = why_sheet.export_csv(rows)
+    return {"path": str(path), "rows": len(rows)}
 
 
 def chain(rid: str) -> dict[str, Any]:
@@ -157,7 +202,9 @@ def chain(rid: str) -> dict[str, Any]:
     rows = [row(r) for r in got["events"]]
     for r in rows:
         r["center"] = r["rid"] == rid
-    return {"rid": rid, "found": True, "rows": rows, "draft": why_draft(rid, rows)}
+    return {"rid": rid, "found": True, "rows": rows, "draft": why_draft(rid, rows),
+            "sheet": why_sheet.get(rid), "statuses": [[k, v] for k, v in why_sheet.STATUS_LABELS.items()],
+            "why_count": why_sheet.WHY_COUNT}
 
 
 def _line(r: dict[str, Any]) -> str:

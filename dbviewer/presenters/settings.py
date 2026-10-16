@@ -44,7 +44,7 @@ TABS: tuple[tuple[str, str], ...] = (
     ("paths", "参照・出力"),
     ("behavior", "動作"),
     ("access", "Access 取り込み"),
-    ("log", "記録"),
+    ("log", "ログ"),
     ("terminal", "この端末"),
 )
 TAB_KEYS = frozenset(k for k, _ in TABS)
@@ -352,6 +352,14 @@ def _setup_section(db_path: Path) -> Section:
     return section
 
 
+def _open_errors() -> int:
+    from .. import why_sheet
+    try:
+        return why_sheet.open_errors()
+    except Exception:                                  # noqa: BLE001 - 数えられなくても画面は出す
+        return 0
+
+
 def log_state() -> dict[str, Any]:
     """記録の置き場所・残す日数・今日の問題の数。"""
     text = str(user_settings.get(config.KEY_LOG_DIR, "") or "").strip()
@@ -360,7 +368,7 @@ def log_state() -> dict[str, Any]:
     state = _folder_state(actual, create_later=True)
     problem = ""
     if wanted != actual:
-        problem = f"設定の場所({wanted})に書けないため、既定の場所に書いています。"
+        problem = f"設定の出力先({wanted})に書けないため、この PC の既定の場所に書いています(5 分ごとに試し直します)。"
         state = {"level": WARN, "text": "既定の場所に書いています"}
     try:
         keep = max(0, int(user_settings.get(config.KEY_LOG_KEEP_DAYS, config.DEFAULT_LOG_KEEP_DAYS)))
@@ -378,6 +386,8 @@ def log_state() -> dict[str, Any]:
         "file": trace.file_for().name,
         "errors_today": sum(1 for r in today if r.get("lv") == "ERROR"),
         "warns_today": sum(1 for r in today if r.get("lv") == "WARN"),
+        "open_errors": _open_errors(),
+        "open_days": 2,
         "can_open": os.name == "nt",
     }
 
@@ -417,11 +427,13 @@ def tab_badges(view: SettingsViewModel) -> dict[str, dict[str, str]]:
     if lv in (WARN, NG):
         out["status"] = {"level": lv, "text": LEVEL_LABEL[lv]}
         out["source"] = {"level": lv, "text": LEVEL_LABEL[lv]}
-    # 今日の思わぬエラー。開かなくても気づけるように
+    # まだ対策済にしていないエラー(この 2 日)。開かなくても気づけるように
+    from .. import why_sheet
+    open_errors = why_sheet.open_errors()
     if view.log.get("problem"):
-        out["log"] = {"level": WARN, "text": "置き場所"}
-    elif view.log.get("errors_today"):
-        out["log"] = {"level": WARN, "text": f"エラー {view.log['errors_today']}"}
+        out["log"] = {"level": WARN, "text": "出力先"}
+    elif open_errors:
+        out["log"] = {"level": WARN, "text": f"エラー{open_errors}件"}
     return out
 
 
