@@ -21,7 +21,7 @@ const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const DRIVE = /^[A-Za-z]:[\\/]|^\\\\/;
 const KINDS = {
   ".xlsx": "Excel", ".xlsm": "Excel", ".xls": "Excel", ".csv": "Excel",
-  ".docx": "Word", ".doc": "Word", ".pdf": "PDF",
+  ".docx": "Word", ".docm": "Word", ".doc": "Word", ".pdf": "PDF",
   ".png": "画像", ".jpg": "画像", ".jpeg": "画像", ".gif": "画像", ".bmp": "画像", ".webp": "画像",
   ".txt": "テキスト", ".log": "テキスト",
 };

@@ -72,7 +72,7 @@ _SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
 _DRIVE = re.compile(r"^[A-Za-z]:[\\/]|^\\\\")
 # 開くもの(拡張子 → 種類)。現物を開く のはこれだけ(実行ファイルなどは開かない)
 OPEN_KINDS = {".xlsx": "Excel", ".xlsm": "Excel", ".xls": "Excel", ".csv": "Excel",
-              ".docx": "Word", ".doc": "Word", ".pdf": "PDF",
+              ".docx": "Word", ".docm": "Word", ".doc": "Word", ".pdf": "PDF",
               ".png": "画像", ".jpg": "画像", ".jpeg": "画像", ".gif": "画像", ".bmp": "画像", ".webp": "画像",
               ".txt": "テキスト", ".log": "テキスト"}
 # アプリの窓の中で HTML にして見せるもの(office_preview)

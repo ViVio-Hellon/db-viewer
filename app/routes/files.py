@@ -2,7 +2,8 @@
 
 - `GET  /api/file/preview?table=&column=&value=` … アプリの窓の中で見る(プレビュー)
       PDF・画像・テキストはそのまま、Excel(.xlsx/.xlsm)・Word(.docx)は表と文にして(`office_preview`)、
-      URL は窓の中の枠に出す。古い .xls/.doc は読めないので「現物を開く」を案内する
+      URL は窓の中の枠に出す。古い .xls/.doc は、その PC の Excel・Word に PDF にしてもらう(`office_bridge`。
+      all-tools 点検表と同じ方式)。Python の標準で読めなかった .xlsx/.docx も同じ道に回す
 - `POST /api/file/open {table, column, value}` … 現物を開く(Excel・Word・PDF を、その PC の既定のアプリで)。
       URL は画面が既定のブラウザで開くので、ここでは行き先を返すだけ
 
@@ -15,10 +16,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 
 from flask import Blueprint, Response, jsonify, request
 
-from dbviewer import office_preview, session_setup, settings_tables, shared_db, simple_table, trace
+from dbviewer import office_bridge, office_preview, session_setup, settings_tables, shared_db, simple_table, trace
 from dbviewer.logging_utils import get_logger
 
 from .. import get_db
@@ -90,12 +92,14 @@ def preview():
         try:
             html = office_preview.xlsx_html(target) if suffix != ".docx" else office_preview.docx_html(target)
         except office_preview.PreviewError as exc:
-            return _page(f"{target.name}: {exc}", 415)
+            if not office_bridge.available():
+                return _page(f"{target.name}: {exc}", 415)
+            log.info("標準では読めないので Office に頼みます: %s (%s)", target, exc)
+            return _via_office(target, table, column)
         trace.event("file.preview", target.name, data={"table": table, "column": column, "path": str(target)})
         return Response(html, content_type="text/html; charset=utf-8")
-    if suffix in office_preview.OLD_FORMATS:
-        return _page(f"{target.name} は古い形式({office_preview.OLD_FORMATS[suffix]})なので、プレビューできません。"
-                     f"「現物を開く」で見てください(かんたん設定のクリック)。", 415)
+    if office_bridge.kind_of(target):
+        return _via_office(target, table, column)
     mime = simple_table.PREVIEW_TYPES.get(suffix)
     if mime is None:
         return _page(f"この形式({target.suffix or '拡張子なし'})はプレビューできません: {target.name}", 415)
@@ -118,6 +122,51 @@ def preview():
     resp.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(target.name)}"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
+
+
+def _waiting(target, app: str) -> Response:
+    """Excel・Word が PDF にするあいだの画面。すぐ同じ所を go=1 で開き直す(答えが来るまでこの画面が残る)。"""
+    from html import escape
+    body = (f"<!doctype html><html lang='ja'><meta charset='utf-8'><title>{escape(target.name)}</title>"
+            f"<style>body{{font:14px system-ui,'Yu Gothic UI',sans-serif;padding:32px;color:#1b2730;background:#f6f8f9}}"
+            f"@media (prefers-color-scheme: dark){{body{{color:#e2eaef;background:#11191f}}}}</style>"
+            f"<p><b>{escape(target.name)}</b></p><p>{app} で PDF にしています… "
+            f"(はじめは 10〜30 秒かかります。この窓は閉じずにお待ちください)</p>"
+            "<script>var u=new URL(location.href);u.searchParams.set('go','1');location.replace(u.toString());</script></html>")
+    return Response(body, content_type="text/html; charset=utf-8")
+
+
+def _via_office(target, table: str, column: str) -> Response:
+    """.xls / .doc(や標準で読めなかったもの): その PC の Excel・Word に PDF にしてもらう。"""
+    app = office_bridge.APP_LABEL[office_bridge.kind_of(target)]
+    if not office_bridge.available():
+        return _page(f"{target.name} は {app} の形式です。この PC では {app} に頼めないので、プレビューできません"
+                     f"(Windows で動かしてください)。「現物を開く」で見てください。", 415)
+    if request.args.get("go") != "1":
+        return _waiting(target, app)
+    started = time.monotonic()
+    try:
+        got = office_bridge.convert(target)
+    except office_bridge.ConvertError as exc:
+        trace.event("file.preview_failed", target.name, level="WARN",
+                    data={"table": table, "column": column, "path": str(target), "code": exc.code, "detail": exc.detail})
+        return _page(f"{target.name}: {exc}", 422)
+    trace.event("file.preview", target.name, data={"table": table, "column": column, "path": str(target),
+                                                   "via": app, "as": got.kind,
+                                                   "sec": round(time.monotonic() - started, 1)})
+    if got.kind == "pdf":
+        from urllib.parse import quote
+        resp = Response(got.data, content_type="application/pdf")
+        resp.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(target.stem)}.pdf"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
+    banner = f"{app} で PDF にできなかったので、中身だけを出しています(書式・図は出しません)。"
+    try:
+        html = (office_preview.xlsx_html(target, got.data, banner=banner) if got.kind == "xlsx"
+                else office_preview.docx_html(target, got.data, banner=banner))
+    except office_preview.PreviewError as exc:
+        return _page(f"{target.name}: {exc}", 415)
+    return Response(html, content_type="text/html; charset=utf-8")
 
 
 def launch(path) -> None:

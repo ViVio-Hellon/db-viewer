@@ -312,6 +312,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         result = stop(mode, force=args.force)
         print(result)
         failed = failed or not result.stopped
+    # プレビューで起こした隠れた Excel・Word が残っていれば止める(PID・作成時刻が合うものだけ)
+    try:
+        from dbviewer.office_bridge import procs as office_procs
+        n = office_procs.cleanup_leftovers(log)
+        if n:
+            print(f"[済] プレビューで起こした Excel・Word が {n} 個残っていたので止めました")
+    except Exception:                              # noqa: BLE001 - 片付けられなくても止める処理は終える
+        log.warning("残った Excel・Word を確かめられませんでした", exc_info=True)
     return 1 if failed else 0
 
 

@@ -454,6 +454,13 @@ def _initialize(srv, *, watch_idle: bool = True) -> None:
     「接続できません」としか出ず、理由が伝わらない。画面に理由を出す。
     """
     from dbviewer import shared_db
+    from dbviewer.office_bridge import procs as office_procs
+
+    # 前にプレビューで起こした隠れた Excel・Word が残っていれば止める(アプリごと止められたとき)
+    try:
+        office_procs.cleanup_leftovers(log())
+    except Exception:                             # noqa: BLE001 - 片付けられなくても起動は続ける
+        log().warning("残った Excel・Word を確かめられませんでした", exc_info=True)
 
     try:
         srv.mark_stage("アプリを準備中")

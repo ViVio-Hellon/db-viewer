@@ -5,12 +5,14 @@ HTML の表・文にして見せる(書式・図・グラフは出さない。**
 
     .xlsx / .xlsm … シートごとの表(値。日付の書式なら日付にする)。1 シート 2,000 行 × 100 列まで
     .docx         … 段落(見出しは太字)と表。図は出さない
-    .xls / .doc   … 古い形式は読めない → 「現物を開く」を案内する
+    .xls / .doc   … 古い形式は Python の標準では読めない → その PC の Excel・Word に PDF にしてもらう
+                    (`office_bridge`。PDF にできないときは .xlsx / .docx にしてもらい、ここで表・文にする)
 
 壊れたファイル・暗号のかかったファイルは `PreviewError`(理由を窓に出す)。
 """
 from __future__ import annotations
 
+import io
 import re
 import zipfile
 from datetime import datetime, timedelta
@@ -37,9 +39,9 @@ class PreviewError(Exception):
     """プレビューできない(理由は文で)。"""
 
 
-def _open(path: Path) -> zipfile.ZipFile:
+def _open(path: Path, data: bytes | None = None) -> zipfile.ZipFile:
     try:
-        return zipfile.ZipFile(path)
+        return zipfile.ZipFile(io.BytesIO(data) if data is not None else path)
     except zipfile.BadZipFile:
         raise PreviewError("ファイルが壊れているか、パスワードがかかっていて読めません。「現物を開く」で見てください。")
     except OSError as exc:
@@ -121,9 +123,9 @@ def _number(v: str) -> str:
     return f"{f:.15g}"
 
 
-def read_xlsx(path: Path) -> list[dict]:
+def read_xlsx(path: Path, data: bytes | None = None) -> list[dict]:
     """[{name, rows: [[値...]], cols, truncated}]。"""
-    with _open(path) as z:
+    with _open(path, data) as z:
         wb = _xml(z, "xl/workbook.xml")
         if wb is None:
             raise PreviewError("Excel のブックとして読めません。")
@@ -181,8 +183,9 @@ def read_xlsx(path: Path) -> list[dict]:
         return sheets
 
 
-def xlsx_html(path: Path) -> str:
-    sheets = read_xlsx(path)
+def xlsx_html(path: Path, data: bytes | None = None, *, banner: str = "") -> str:
+    """`data` があればその中身(Excel が .xls から作った .xlsx)。見出しの名前は `path` のまま。"""
+    sheets = read_xlsx(path, data)
     tabs, bodies = [], []
     for i, sh in enumerate(sheets):
         sid = f"s{i}"
@@ -198,7 +201,7 @@ def xlsx_html(path: Path) -> str:
         bodies.append(f"<section id='{sid}'><h2>{escape(sh['name'])}</h2>{note}{empty}"
                       f"<div class='wrap'><table><thead><tr><th></th>{head}</tr></thead>"
                       f"<tbody>{''.join(body)}</tbody></table></div></section>")
-    return _page(path, "Excel", f"<nav>{''.join(tabs)}</nav>{''.join(bodies)}")
+    return _page(path, "Excel", _banner(banner) + f"<nav>{''.join(tabs)}</nav>{''.join(bodies)}")
 
 
 # ------------------------------------------------------------------
@@ -231,8 +234,8 @@ def _para_html(p) -> str:
     return f"<p><b>{body}</b></p>" if bold and p.findall(f"{_W}r") else f"<p>{body}</p>"
 
 
-def docx_html(path: Path) -> str:
-    with _open(path) as z:
+def docx_html(path: Path, data: bytes | None = None, *, banner: str = "") -> str:
+    with _open(path, data) as z:
         root = _xml(z, "word/document.xml")
     if root is None:
         raise PreviewError("Word の文書として読めません。")
@@ -255,10 +258,14 @@ def docx_html(path: Path) -> str:
             out.append(f"<div class='wrap'><table class='doc'>{''.join(rows)}</table></div>")
     has_pics = any(True for _ in root.iter(f"{_W}drawing"))
     note = "<p class='note'>図・写真は出していません(「現物を開く」で見られます)。</p>" if has_pics else ""
-    return _page(path, "Word", note + "<article>" + "".join(out) + "</article>")
+    return _page(path, "Word", _banner(banner) + note + "<article>" + "".join(out) + "</article>")
 
 
 # ------------------------------------------------------------------
+def _banner(text: str) -> str:
+    return f"<p class='note'>{escape(text)}</p>" if text else ""
+
+
 def _page(path: Path, kind: str, inner: str) -> str:
     return f"""<!doctype html><html lang="ja"><meta charset="utf-8"><title>{escape(path.name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">

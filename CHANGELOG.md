@@ -1,5 +1,17 @@
 # 変更履歴
 
+## 0.14.0 (2026-10-17) — 古い .xls / .doc のプレビューを Excel・Word で PDF に(all-tools 点検表の方式)
+.xls / .doc は Python の標準では読めず、プレビューでエラーになりがちだった。all-tools の点検表と同じく、その PC の
+Excel・Word に PDF にしてもらう(`dbviewer/office_bridge`。Python に部品は足さない。docs/09)。
+- cscript → `office_pdf.vbs` → 隠れた Excel / Word(読み取り専用・確認なし・マクロ止め・仮のパスワード)→ ExportAsFixedFormat
+  → VBScript の TEMP に PDF → base64 で標準出力へ送ってすぐ消す(ファイルは受け渡さない)
+- PDF にできないとき(プリンターが無い・古い Office)は .xlsx / .docx にしてもらい、表・文で見せる
+- 起こした Excel・Word の PID と作成時刻を覚え、90 秒で終わらなければその PID だけ止める。利用者の Word は止めない。
+  記録は `runtime\office_processes.json`、次の起動・stop.bat で残りを止める
+- 変換中は「PDF にしています…」の窓。だめなときは理由と止まった所・「現物を開く」の案内。ログに残る
+- 一度に 1 つ・同じファイルは覚えておく。.docm も Word で開く・プレビューする
+- テスト 228 件(Python)
+
 ## 0.13.0 (2026-10-17) — クリックで 現物を開く / プレビュー(Excel・Word・PDF・URL)
 0.12.0 の「クリック」を広げた(docs/09)。開くもの(Excel・Word・PDF・URL)は値か「場所」の決まりから決まる。
 - **現物を開く** … Excel・Word・PDF をその PC の既定のアプリで、URL を既定のブラウザで(`POST /api/file/open`)

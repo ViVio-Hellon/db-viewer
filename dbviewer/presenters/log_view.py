@@ -53,6 +53,7 @@ EV_LABEL = {
     "easy.retire_vba": "VBA 版の設定を消した",
     "file.preview": "ファイルをプレビュー",
     "file.open": "ファイルを現物で開いた",
+    "file.preview_failed": "プレビューできなかった(Excel・Word で変換)",
     "app.start": "起動",
     "app.stop": "終了",
 }
