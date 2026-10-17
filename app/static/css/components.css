@@ -1149,10 +1149,10 @@ dialog::backdrop { background: var(--scrim); }
 .fld > .input.is-auto { color: var(--muted); background: var(--raised); }
 .dt__file { margin-left: 6px; padding: 0 8px; min-height: 22px; font-size: var(--fs-xs); }
 
-/* かんたん設定の「クリック」(0.12.0): 値を押すとコピー・URL を開く */
+/* かんたん設定の「クリック」(0.12.0・0.13.0): 値を押すとコピー・現物を開く・プレビュー */
 .cell-act { cursor: pointer; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .cell-act--copy { text-decoration-style: dotted; }
-.cell-act--url { color: var(--accent); }
+.cell-act--open, .cell-act--preview { color: var(--accent); }
 .cell-act:hover { text-decoration-thickness: 2px; }
-tr[aria-selected="true"] .cell-act--url { color: inherit; }
+tr[aria-selected="true"] .cell-act--open, tr[aria-selected="true"] .cell-act--preview { color: inherit; }
 .dt__act { margin-left: 6px; padding: 0 8px; min-height: 22px; font-size: var(--fs-xs); }

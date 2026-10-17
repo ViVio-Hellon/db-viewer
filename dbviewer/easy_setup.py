@@ -62,7 +62,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     table = table if table in names else setup.general.main_table
     types = _decl_types(conn, table)
     columns = [{"name": c.name, "type": types.get(c.name, ""), "show": c.show, "input": c.input,
-                "step": c.step, "print": c.print, "click": c.click, "url": c.url}
+                "step": c.step, "print": c.print, "click": c.click, "place": c.place}
                for c in simple_table.load(conn, table)]
     vba = vba_setting_tables(conn)
     try:

@@ -1,16 +1,24 @@
-"""ファイルの列のプレビュー(0.10.0)
+"""ファイルの列のプレビュー(0.10.0)と、クリックで開く(0.13.0)
 
-- `GET /api/file/preview?table=&column=&value=` … その表のその列に入っている値のファイルを、アプリの窓の中で見せる
+- `GET  /api/file/preview?table=&column=&value=` … アプリの窓の中で見る(プレビュー)
+      PDF・画像・テキストはそのまま、Excel(.xlsx/.xlsm)・Word(.docx)は表と文にして(`office_preview`)、
+      URL は窓の中の枠に出す。古い .xls/.doc は読めないので「現物を開く」を案内する
+- `POST /api/file/open {table, column, value}` … 現物を開く(Excel・Word・PDF を、その PC の既定のアプリで)。
+      URL は画面が既定のブラウザで開くので、ここでは行き先を返すだけ
 
-ほかのアプリでは開かない(VBA の ShellExecute はやめた)。見せるのは PDF・画像・テキストだけ。
-**その列に入っている値だけ**を見せる(どこのファイルでも読める口にしない)。相対パスは 設定「参照ファイルの起点」から。
+**その列に入っている値だけ**を開く(どこのファイルでも開ける口にしない)。現物を開く のは決まった形式だけ
+(Excel・Word・PDF・画像・テキスト。実行ファイルなどは開かない)。相対パスは 設定「参照ファイルの起点」から。
 ダウンロードはさせない(`Content-Disposition: inline`)。
 """
 from __future__ import annotations
 
-from flask import Blueprint, Response, request
+import os
+import shutil
+import subprocess
 
-from dbviewer import session_setup, settings_tables, shared_db, simple_table, trace
+from flask import Blueprint, Response, jsonify, request
+
+from dbviewer import office_preview, session_setup, settings_tables, shared_db, simple_table, trace
 from dbviewer.logging_utils import get_logger
 
 from .. import get_db
@@ -29,23 +37,66 @@ def _page(message: str, status: int) -> Response:
     return Response(body, status=status, content_type="text/html; charset=utf-8")
 
 
+def _url_page(url: str) -> Response:
+    """URL のプレビュー: アプリの窓の中の枠に出す。相手が枠に出すのを断るときのために、既定のブラウザで開く道も置く。"""
+    from html import escape
+    from urllib.parse import unquote
+    u = escape(url, quote=True)
+    shown = escape(unquote(url))
+    body = f"""<!doctype html><html lang="ja"><meta charset="utf-8"><title>{escape(url)}</title>
+<style>html,body{{margin:0;height:100%;font:13px system-ui,"Yu Gothic UI",sans-serif}}
+header{{display:flex;gap:10px;align-items:center;padding:6px 12px;border-bottom:1px solid #ccd5db;background:#eef3f5;color:#1b2730}}
+header code{{overflow-wrap:anywhere}} a{{color:#0e6b84}} iframe{{border:0;width:100%;height:calc(100% - 40px)}}
+@media (prefers-color-scheme: dark){{header{{background:#1a252c;color:#e2eaef;border-color:#2b3942}} a{{color:#5cc0d6}}}}</style>
+<header><b>URL</b><code>{shown}</code><a id="ext" href="{u}" target="_blank" rel="noopener">既定のブラウザで開く</a>
+<small>出ないときは、相手のページが枠の中に出すのを断っています。</small></header>
+<iframe src="{u}" referrerpolicy="no-referrer"></iframe>
+<script>/* デスクトップ版の窓は新しいタブを持たないので、外枠に既定のブラウザで開いてもらう */
+document.getElementById("ext").addEventListener("click", function (e) {{
+  var t = window.__TAURI__;
+  if (t && t.core && t.core.invoke) {{ e.preventDefault(); t.core.invoke("open_external", {{ url: this.href }}); }}
+}});</script></html>"""
+    return Response(body, content_type="text/html; charset=utf-8")
+
+
+def _where(table: str, column: str, value: str, need: str):
+    """(種類, 行き先, 断りの応答)。"""
+    try:
+        conn = get_db()
+        session_setup.get_setup(conn)
+    except (shared_db.DbNotFound, settings_tables.SetupError) as exc:
+        return "", None, (str(exc), 409)
+    kind, target, problem = simple_table.resolve(conn, table, column, value, ref_base(), need=need)
+    if problem:
+        return "", None, (problem, 403)
+    if kind == "file" and (target is None or not target.is_file()):
+        return "", None, (f"ファイルが見つかりません: {target or value}", 404)
+    return kind, target, None
+
+
 @bp.get("/api/file/preview")
 def preview():
     table = request.args.get("table", "")
     column = request.args.get("column", "")
     value = request.args.get("value", "")
-    try:
-        conn = get_db()
-        session_setup.get_setup(conn)
-    except (shared_db.DbNotFound, settings_tables.SetupError) as exc:
-        return _page(str(exc), 409)
-    problem = simple_table.preview_check(conn, table, column, value)
-    if problem:
-        return _page(problem, 403)
-    target = simple_table.file_target(value, ref_base())
-    if target is None or not target.is_file():
-        return _page(f"ファイルが見つかりません: {target or value}", 404)
-    mime = simple_table.PREVIEW_TYPES.get(target.suffix.lower())
+    kind, target, refuse = _where(table, column, value, simple_table.CLICK_PREVIEW)
+    if refuse:
+        return _page(*refuse)
+    if kind == "url":
+        trace.event("file.preview", target, data={"table": table, "column": column, "url": target})
+        return _url_page(target)
+    suffix = target.suffix.lower()
+    if suffix in simple_table.OFFICE_PREVIEW:
+        try:
+            html = office_preview.xlsx_html(target) if suffix != ".docx" else office_preview.docx_html(target)
+        except office_preview.PreviewError as exc:
+            return _page(f"{target.name}: {exc}", 415)
+        trace.event("file.preview", target.name, data={"table": table, "column": column, "path": str(target)})
+        return Response(html, content_type="text/html; charset=utf-8")
+    if suffix in office_preview.OLD_FORMATS:
+        return _page(f"{target.name} は古い形式({office_preview.OLD_FORMATS[suffix]})なので、プレビューできません。"
+                     f"「現物を開く」で見てください(かんたん設定のクリック)。", 415)
+    mime = simple_table.PREVIEW_TYPES.get(suffix)
     if mime is None:
         return _page(f"この形式({target.suffix or '拡張子なし'})はプレビューできません: {target.name}", 415)
     try:
@@ -67,3 +118,41 @@ def preview():
     resp.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(target.name)}"
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
+
+
+def launch(path) -> None:
+    """その PC の既定のアプリで開く(Windows は Excel・Word・PDF の読み手)。"""
+    if os.name == "nt":
+        os.startfile(str(path))                         # noqa: S606 - 形式は OPEN_KINDS だけに絞ってある
+        return
+    opener = shutil.which("xdg-open") or shutil.which("open")
+    if not opener:
+        raise OSError("この PC には開くアプリがありません")
+    subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+@bp.post("/api/file/open")
+def open_file():
+    body = request.get_json(silent=True) or {}
+    table, column = str(body.get("table") or ""), str(body.get("column") or "")
+    value = "" if body.get("value") is None else str(body.get("value"))
+    kind, target, refuse = _where(table, column, value, simple_table.CLICK_OPEN)
+    if refuse:
+        message, status = refuse
+        return jsonify({"error": {"code": "open", "message": message}}), status
+    if kind == "url":
+        return jsonify({"ok": True, "kind": "url", "url": target})
+    what = simple_table.open_kind(target)
+    if not what:
+        return jsonify({"error": {"code": "open", "message":
+                                  f"この形式({target.suffix or '拡張子なし'})は開きません: {target.name}"
+                                  "(開けるのは Excel・Word・PDF・画像・テキスト)"}}), 415
+    try:
+        launch(target)
+    except OSError as exc:
+        log.warning("開けませんでした: %s (%s)", target, exc)
+        return jsonify({"error": {"code": "open", "message": f"開けませんでした: {exc}"}}), 500
+    trace.event("file.open", target.name, data={"table": table, "column": column, "path": str(target), "kind": what})
+    return jsonify({"ok": True, "kind": "file", "what": what, "name": target.name,
+                    "message": f"{what}で開きました: {target.name}"})

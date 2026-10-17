@@ -6,7 +6,8 @@ VBA 版の決まり(全般設定・<表>_設定・管理番号・入力形式の
     表示   … 一覧・閲覧に出すか
     入力   … 文字 / コンボボックス(その列に入っている値から選ぶ・打つ) / スピンボタン(数。刻み) / カレンダー(日付)
     印刷   … 閲覧・出力で印刷・保存するときに入れるか
-    クリック … マスを押したときに すること(なし / 値をコピー / URL を開く)(0.12.0)
+    クリック … マスの値を押したときに すること(なし / 値をコピー / 現物を開く / プレビュー)(0.12.0・0.13.0)
+               開くもの(Excel・Word・PDF・URL)は値(または「場所」の決まり)から決まる
 
 【どこに覚えるか】DB の中の隠した表「ツールの設定」に、表ごとに 1 行(JSON)。DB を使う全員で同じ。
 **列名で**覚えるので、列の並びが変わっても・列が増えても(既定: 表示・文字・印刷)ずれない。
@@ -53,17 +54,29 @@ PREVIEW_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/
                  ".txt": "text/plain", ".csv": "text/plain", ".log": "text/plain"}
 INPUT_KEYS = tuple(k for k, _ in INPUTS)
 
-# マスを押したときにすること(0.12.0)。一覧・閲覧・マスタ管理で同じ
+# マスを押したときにすること(0.12.0・0.13.0)。一覧・閲覧・マスタ管理で同じ
+CLICK_COPY, CLICK_OPEN, CLICK_PREVIEW = "copy", "open", "preview"
 CLICKS: tuple[tuple[str, str], ...] = (
     ("", "なし"),
-    ("copy", "値をコピー"),
-    ("url", "URL を開く"),
+    (CLICK_COPY, "値をコピー"),
+    (CLICK_OPEN, "現物を開く(Excel・Word・PDF・URL)"),
+    (CLICK_PREVIEW, "プレビュー(アプリの窓の中で見る)"),
 )
 CLICK_KEYS = tuple(k for k, _ in CLICKS)
-# URL の決まりの中で、マスの値に置き換える印。無ければ末尾に付ける
-URL_MARK = "{値}"
-URL_MAX = 500
+OPENS = (CLICK_OPEN, CLICK_PREVIEW)
+# 「場所」の決まりの中で、マスの値に置き換える印。無ければ末尾に付ける
+PLACE_MARK = "{値}"
+PLACE_MAX = 500
 _URL_OK = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*:")
+_DRIVE = re.compile(r"^[A-Za-z]:[\\/]|^\\\\")
+# 開くもの(拡張子 → 種類)。現物を開く のはこれだけ(実行ファイルなどは開かない)
+OPEN_KINDS = {".xlsx": "Excel", ".xlsm": "Excel", ".xls": "Excel", ".csv": "Excel",
+              ".docx": "Word", ".doc": "Word", ".pdf": "PDF",
+              ".png": "画像", ".jpg": "画像", ".jpeg": "画像", ".gif": "画像", ".bmp": "画像", ".webp": "画像",
+              ".txt": "テキスト", ".log": "テキスト"}
+# アプリの窓の中で HTML にして見せるもの(office_preview)
+OFFICE_PREVIEW = {".xlsx", ".xlsm", ".docx"}
 MAX_CHOICES = 500
 
 MSG_CONFLICT = "ほかの端末が先にこの行を変えていました。いまの値に置き換えたので、もう一度直してください。"
@@ -78,7 +91,7 @@ class ColumnSetting:
     step: str = "1"
     print: bool = True
     click: str = ""
-    url: str = ""
+    place: str = ""
 
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
@@ -166,8 +179,9 @@ def load(conn: sqlite3.Connection, table: str) -> list[ColumnSetting]:
             c.input = s.get("input") if s.get("input") in INPUT_KEYS else "text"
             c.step = str(s.get("step") or "1")
             c.print = bool(s.get("print", True))
-            c.click = s.get("click") if s.get("click") in CLICK_KEYS else ""
-            c.url = str(s.get("url") or "") if c.click == "url" else ""
+            click = "open" if s.get("click") == "url" else s.get("click")       # 0.12.0 の「URL を開く」
+            c.click = click if click in CLICK_KEYS else ""
+            c.place = str(s.get("place") or s.get("url") or "") if c.click in OPENS else ""
         out.append(c)
     return out
 
@@ -194,12 +208,13 @@ def validate(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -
         click = str(r.get("click") or "")
         if click not in CLICK_KEYS:
             return [], f"「{name}」のクリックの種類が分かりません。"
-        url = str(r.get("url") or "").strip() if click == "url" else ""
-        if url and (len(url) > URL_MAX or not _URL_OK.match(url)):
-            return [], (f"「{name}」の URL は http:// か https:// で始めてください"
-                        f"(マスの値を入れる場所は {URL_MARK}。空なら値をそのまま URL として開く)。")
+        place = str(r.get("place") or "").strip().strip('"') if click in OPENS else ""
+        if place and (len(place) > PLACE_MAX or any(ord(ch) < 32 for ch in place)
+                      or (_SCHEME.match(place) and not _DRIVE.match(place) and not _URL_OK.match(place))):
+            return [], (f"「{name}」の場所は、http:// か https:// で始まる URL か、ファイルの場所にしてください"
+                        f"(マスの値を入れる所は {PLACE_MARK}。空なら値そのもの)。")
         got[name] = ColumnSetting(name, bool(r.get("show", True)), inp, step or "1", bool(r.get("print", True)),
-                                  click, url)
+                                  click, place)
     if got and not any(c.show for c in got.values()):
         return [], "表示する列を 1 つ以上選んでください。"
     return [got.get(n) or ColumnSetting(n) for n in known], ""
@@ -313,24 +328,39 @@ def choices(conn: sqlite3.Connection, table: str, column: str) -> list[str]:
     return [text_of(r[0]) for r in rows]
 
 
-def actions(settings) -> dict[str, dict[str, str]]:
+def actions(settings, table: str = "") -> dict[str, dict[str, str]]:
     """マスを押したときにすること(クリックを決めた列だけ)。画面へ渡す。"""
-    return {c.name: {"click": c.click, "url": c.url} for c in settings if c.click}
+    return {c.name: {"click": c.click, "place": c.place, "table": table, "column": c.name}
+            for c in settings if c.click}
 
 
-def click_url(setting: ColumnSetting, value: Any) -> str:
-    """URL を開く列の、そのマスの行き先。開けない(値が空・http(s) でない)なら空。
+def click_target(setting: ColumnSetting, value: Any) -> tuple[str, str]:
+    """開く列の、そのマスの行き先 → (種類, 行き先)。種類は "url" / "file" / ""(開けない)。
 
-    画面(`cellaction.js`)と同じ決まり。URL の決まりが空なら値そのもの、
-    {値} があればそこへ(URL 用に符号化して)、無ければ末尾に付ける。"""
+    画面(`cellaction.js`)と同じ決まり。場所の決まりが空なら値そのもの、{値} があればそこへ、
+    無ければ末尾に付ける。URL の決まりなら値は URL 用に符号化する。
+    `javascript:` などの URL でもファイルでもないものは開かない。"""
     from urllib.parse import quote
-    text = text_of(value).strip()
-    if setting.click != "url" or not text:
-        return ""
-    if not setting.url:
-        return text if _URL_OK.match(text) else ""
-    enc = quote(text, safe="")
-    return setting.url.replace(URL_MARK, enc) if URL_MARK in setting.url else setting.url + enc
+    text = text_of(value).strip().strip('"')
+    if setting.click not in OPENS or not text:
+        return "", ""
+    place = setting.place
+    if not place:
+        target = text
+    else:
+        put = quote(text, safe="") if _URL_OK.match(place) else text
+        target = place.replace(PLACE_MARK, put) if PLACE_MARK in place else place + put
+    if _URL_OK.match(target):
+        return "url", target
+    if _SCHEME.match(target) and not _DRIVE.match(target):
+        return "", ""
+    return "file", target
+
+
+def open_kind(path) -> str:
+    """ファイルの種類(Excel・Word・PDF…)。開けない形式なら空。"""
+    from pathlib import PurePath
+    return OPEN_KINDS.get(PurePath(str(path).replace("\\", "/")).suffix.lower(), "")
 
 
 def edit_spec(conn: sqlite3.Connection, table: str, s: ColumnSetting) -> dict[str, Any]:
@@ -509,13 +539,35 @@ def file_target(value: str, base) -> Optional["Path"]:
 
 
 def preview_check(conn: sqlite3.Connection, table: str, column: str, value: str) -> str:
-    """プレビューしてよいか。だめなら理由。**その表のその列に入っている値だけ**(ほかの場所は見せない)。"""
+    """プレビューしてよいか。だめなら理由(`resolve` の理由だけ)。"""
+    return resolve(conn, table, column, value, ".", need=CLICK_PREVIEW)[2]
+
+
+def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base, *,
+            need: str) -> tuple[str, Any, str]:
+    """押したマスの行き先 → (種類 "url"/"file", URL か Path, だめなら理由)。
+
+    **その表のその列に入っている値だけ**(どこのファイルでも開ける口にしない)。
+    プレビューは「入力: ファイル」の列か、クリックが 現物を開く / プレビュー の列。
+    現物を開く は、クリックが 現物を開く の列だけ。"""
     if not table_exists(conn, table) or column not in column_names(conn, table):
-        return "その表・列がありません。"
+        return "", None, "その表・列がありません。"
     s = by_name(conn, table).get(column)
-    if s is None or s.input != "file":
-        return f"「{column}」はファイルの列ではありません(かんたん設定の入力を「ファイル」に)。"
+    if s is None:
+        return "", None, "その表・列がありません。"
+    if need == CLICK_OPEN and s.click != CLICK_OPEN:
+        return "", None, f"「{column}」は現物を開く列ではありません(かんたん設定のクリックを「現物を開く」に)。"
+    if need == CLICK_PREVIEW and s.input != "file" and s.click not in OPENS:
+        return "", None, (f"「{column}」は開く列ではありません"
+                          f"(かんたん設定のクリックを「プレビュー」か、入力を「ファイル」に)。")
     hit = conn.execute(f"SELECT 1 FROM {q(table)} WHERE CAST({q(column)} AS TEXT) = ? LIMIT 1", (value,)).fetchone()
     if hit is None:
-        return "その値は表に入っていません(保存してからプレビューしてください)。"
-    return ""
+        return "", None, "その値は表に入っていません(保存してから開いてください)。"
+    if s.click in OPENS:
+        kind, target = click_target(s, value)
+        if not kind:
+            return "", None, f"この値は開けません(URL でもファイルの場所でもない): {value}"
+        if kind == "url":
+            return "url", target, ""
+        return "file", file_target(target, base), ""
+    return "file", file_target(value, base), ""

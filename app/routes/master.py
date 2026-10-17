@@ -118,7 +118,7 @@ def rows():
                     "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()],
                     "page": v.page_label, "count": len(v.rows),
                     # マスを押したときにすること(かんたん設定の「クリック」。設定の無い表は空)
-                    "actions": simple_table.actions(simple_table.load(conn, table))})
+                    "actions": simple_table.actions(simple_table.load(conn, table), table)})
 
 
 @bp.post("/api/master/form")

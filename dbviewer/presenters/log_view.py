@@ -52,6 +52,7 @@ EV_LABEL = {
     "easy.start": "ログインを使い始めた",
     "easy.retire_vba": "VBA 版の設定を消した",
     "file.preview": "ファイルをプレビュー",
+    "file.open": "ファイルを現物で開いた",
     "app.start": "起動",
     "app.stop": "終了",
 }

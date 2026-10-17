@@ -88,20 +88,22 @@ function columnRow(c) {
   sel.disabled = step.disabled = !st.can_write;
   pick.append(sel, stepLab);
   kind.appendChild(pick);
-  // クリック(0.12.0): 値を押したときにすること。URL を開くなら行き先の決まり({値} にマスの値が入る)
+  // クリック(0.12.0・0.13.0): 値を押したときにすること。開くときは「場所」({値} にマスの値が入る。空なら値そのもの)
   const clickTd = document.createElement("td");
   const clickPick = document.createElement("div"); clickPick.className = "pick";
   const click = document.createElement("select"); click.className = "input"; click.dataset.f = "click";
   click.setAttribute("aria-label", `${c.name} を押したとき`);
   for (const [v, label] of st.clicks || []) click.appendChild(option(v, label, v === (c.click || "")));
-  const url = document.createElement("input"); url.className = "input"; url.dataset.f = "url";
-  url.type = "text"; url.value = c.url || ""; url.style.width = "22em";
-  url.placeholder = "空 = 値そのものが URL / 例 https://社内/品番?no={値}";
-  url.setAttribute("aria-label", `${c.name} の URL`);
-  url.hidden = click.value !== "url";
-  click.addEventListener("change", () => { url.hidden = click.value !== "url"; if (!url.hidden) url.focus(); });
-  click.disabled = url.disabled = !st.can_write;
-  clickPick.append(click, url);
+  const place = document.createElement("input"); place.className = "input"; place.dataset.f = "place";
+  place.type = "text"; place.value = c.place || ""; place.style.width = "22em";
+  place.placeholder = "場所: 空 = 値そのもの / 例 図面\\{値}.pdf ・ https://社内/?no={値}";
+  place.title = "開くもの(Excel・Word・PDF・URL)は、値か この場所 から決まります。{値} にマスの値が入ります";
+  place.setAttribute("aria-label", `${c.name} の開く場所`);
+  const opens = () => ["open", "preview"].includes(click.value);
+  place.hidden = !opens();
+  click.addEventListener("change", () => { place.hidden = !opens(); });
+  click.disabled = place.disabled = !st.can_write;
+  clickPick.append(click, place);
   clickTd.appendChild(clickPick);
   tr.append(name, box("show", c.show, "表示"), kind, box("print", c.print, "印刷"), clickTd);
   tr.addEventListener("change", () => {
@@ -116,7 +118,8 @@ function collect() {
     const f = (name) => tr.querySelector(`[data-f="${name}"]`);
     return { name: tr.dataset.name, show: f("show").checked, input: f("input").value,
              step: f("step").value, print: f("print").checked,
-             click: f("click").value, url: f("click").value === "url" ? f("url").value.trim() : "" };
+             click: f("click").value,
+             place: ["open", "preview"].includes(f("click").value) ? f("place").value.trim() : "" };
   });
 }
 

@@ -303,56 +303,183 @@ class AutoAndFileTest(_Case):
         self.assertEqual((r.status_code, r.get_data(as_text=True)), (200, "手順メモ"))
 
 
+def _docx(path: Path) -> Path:
+    """Word の最小の文書(見出し・段落・表)。"""
+    import zipfile
+    w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    doc = (f'<?xml version="1.0" encoding="UTF-8"?><w:document {w}><w:body>'
+           '<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>作業手順書 A-1</w:t></w:r></w:p>'
+           '<w:p><w:r><w:t>箱を</w:t></w:r><w:r><w:tab/><w:t>組み立てる &amp; 確かめる</w:t></w:r></w:p>'
+           '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>工程</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>時間</w:t></w:r></w:p></w:tc></w:tr>'
+           '<w:tr><w:tc><w:p><w:r><w:t>折る</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>30秒</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+           '</w:body></w:document>')
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        z.writestr("word/document.xml", doc)
+    return path
+
+
+def _xlsx_shared(path: Path) -> Path:
+    """Excel が書く形(共有文字列・日付の書式・空いた列)の最小のブック。"""
+    import zipfile
+    s = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    r = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("xl/workbook.xml", f'<workbook {s} {r}><sheets><sheet name="検査表" sheetId="1" r:id="rId1"/>'
+                                      f'<sheet name="空" sheetId="2" r:id="rId2"/></sheets></workbook>')
+        z.writestr("xl/_rels/workbook.xml.rels",
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/>'
+                   '</Relationships>')
+        z.writestr("xl/sharedStrings.xml", f'<sst {s}><si><t>品番</t></si><si><t>検査日</t></si><si><r><t>A-</t></r><r><t>1</t></r></si></sst>')
+        z.writestr("xl/styles.xml", f'<styleSheet {s}><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>')
+        z.writestr("xl/worksheets/sheet1.xml", f'<worksheet {s}><sheetData>'
+                   '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row>'
+                   '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>0.30000000000000004</v></c><c r="C2" s="1"><v>46310</v></c></row>'
+                   '</sheetData></worksheet>')
+        z.writestr("xl/worksheets/sheet2.xml", f'<worksheet {s}><sheetData/></worksheet>')
+    return path
+
+
 class ClickActionTest(_Case):
-    """クリックで実行(0.12.0): 列ごとに 値をコピー / URL を開く。一覧・閲覧・マスタ管理へ同じ決まりを渡す。"""
+    """クリックで実行(0.12.0・0.13.0): 値をコピー / 現物を開く / プレビュー。開くもの = Excel・Word・PDF・URL。"""
 
     def setUp(self):
         super().setUp()
         self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
         with closing(sqlite3.connect(self.path)) as c:
             c.execute("ALTER TABLE 部品 ADD COLUMN 資料 TEXT")
-            c.execute("UPDATE 部品 SET 資料 = 'https://intra.example/doc/A-1' WHERE 品番 = 'A-1'")
+            c.executemany("UPDATE 部品 SET 資料 = ? WHERE 品番 = ?",
+                          [("https://intra.example/doc/A-1", "A-1"), ("手順/A-2.docx", "A-2"), ("手順/B-1.xlsx", "B-1")])
             c.commit()
+        self.ref = self.tmp / "参照"
+        (self.ref / "手順").mkdir(parents=True)
+        (self.ref / "図面").mkdir()
+        user_settings.save(config.KEY_REF_DIR, str(self.ref))
+        self.addCleanup(user_settings.save, config.KEY_REF_DIR, "")
         self.login()
 
     def save(self, **changes):
         st = self.ok("/api/easy/state", table="部品")
-        self.assertEqual([k for k, _ in st["clicks"]], ["", "copy", "url"])
+        self.assertEqual([k for k, _ in st["clicks"]], ["", "copy", "open", "preview"])
         rows = [dict(c, **changes.get(c["name"], {})) for c in st["columns"]]
         return self.post("/api/easy/columns", table="部品", rows=rows)
 
     def test_saved_and_handed_to_every_screen(self):
-        r = self.save(品番={"click": "copy"}, 名前={"click": "url", "url": "https://intra.example/search?q={値}"},
-                      資料={"click": "url"}, 単価={"click": "copy", "url": "https://無視される"})
+        r = self.save(品番={"click": "copy"}, 名前={"click": "open", "place": "https://intra.example/search?q={値}"},
+                      資料={"click": "preview"}, 単価={"click": "copy", "place": "無視される"})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        want = {"品番": {"click": "copy", "url": ""},
-                "名前": {"click": "url", "url": "https://intra.example/search?q={値}"},
-                "資料": {"click": "url", "url": ""},
-                "単価": {"click": "copy", "url": ""}}                       # コピーに URL は要らない
+        a = lambda click, place="", col="": {"click": click, "place": place, "table": "部品", "column": col}
+        want = {"品番": a("copy", col="品番"), "名前": a("open", "https://intra.example/search?q={値}", "名前"),
+                "資料": a("preview", col="資料"), "単価": a("copy", col="単価")}     # コピーに場所は要らない
         self.assertEqual(self.ok("/api/list/data", table="部品")["actions"], want)
         self.assertEqual(self.ok("/api/browse/data", table="部品")["actions"], want)
         self.assertEqual(self.ok("/api/master/rows", table="部品")["actions"], want)
-        st = self.ok("/api/easy/state", table="部品")
-        self.assertEqual({c["name"]: c["click"] for c in st["columns"]}["品番"], "copy")
-        # 決めていない表は空
-        self.assertEqual(self.ok("/api/list/data", table="仕入先")["actions"], {})
+        self.assertEqual(self.ok("/api/list/data", table="仕入先")["actions"], {})   # 決めていない表は空
 
-    def test_url_must_be_http(self):
-        for bad in ("javascript:alert(1)", "file:///C:/x", "\\\\server\\共有", "intra/doc"):
-            r = self.save(名前={"click": "url", "url": bad})
+    def test_old_url_setting_reads_as_open(self):
+        with closing(sqlite3.connect(self.path)) as c:
+            simple_table._ensure(c)
+            c.execute(f"INSERT INTO {config.TOOL_SETTINGS_TABLE} VALUES (?, ?, '', '')",
+                      ("部品", '{"columns": {"名前": {"click": "url", "url": "https://x.example/{値}"}}}'))
+            c.commit()
+        a = self.ok("/api/list/data", table="部品")["actions"]["名前"]
+        self.assertEqual((a["click"], a["place"]), ("open", "https://x.example/{値}"))
+
+    def test_bad_place_refused(self):
+        for bad in ("javascript:alert(1)", "file:///C:/x", "vbscript:x"):
+            r = self.save(名前={"click": "open", "place": bad})
             self.assertEqual(r.status_code, 422, bad)
             self.assertIn("http", r.get_json()["message"])
+        for good in ("図面\\{値}.pdf", "C:\\共有\\{値}.xlsx", "\\\\server\\共有\\", "https://intra.example/"):
+            self.assertEqual(self.save(名前={"click": "preview", "place": good}).status_code, 200, good)
         self.assertEqual(self.save(名前={"click": "jump"}).status_code, 422)
 
-    def test_click_url_rule(self):
-        s = simple_table.ColumnSetting("名前", click="url", url="https://intra.example/search?q={値}&x=1")
-        self.assertEqual(simple_table.click_url(s, "箱 A&B"), "https://intra.example/search?q=%E7%AE%B1%20A%26B&x=1")
-        s.url = "https://intra.example/item/"                               # {値} が無ければ末尾に
-        self.assertEqual(simple_table.click_url(s, "A-1"), "https://intra.example/item/A-1")
-        s.url = ""                                                          # 空なら値そのもの(http(s) だけ)
-        self.assertEqual(simple_table.click_url(s, "https://intra.example/doc"), "https://intra.example/doc")
-        self.assertEqual(simple_table.click_url(s, "javascript:alert(1)"), "")
-        self.assertEqual(simple_table.click_url(s, ""), "")
+    def test_click_target_rule(self):
+        s = simple_table.ColumnSetting("名前", click="open", place="https://intra.example/search?q={値}&x=1")
+        self.assertEqual(simple_table.click_target(s, "箱 A&B"),
+                         ("url", "https://intra.example/search?q=%E7%AE%B1%20A%26B&x=1"))
+        s.place = "https://intra.example/item/"                             # {値} が無ければ末尾に
+        self.assertEqual(simple_table.click_target(s, "A-1"), ("url", "https://intra.example/item/A-1"))
+        s.place = "図面\\{値}.pdf"                                          # ファイルの決まり(符号化しない)
+        self.assertEqual(simple_table.click_target(s, "A 1"), ("file", "図面\\A 1.pdf"))
+        s.place = ""                                                        # 空なら値そのもの
+        self.assertEqual(simple_table.click_target(s, "https://intra.example/doc"), ("url", "https://intra.example/doc"))
+        self.assertEqual(simple_table.click_target(s, "Z:\\手順\\x.docx"), ("file", "Z:\\手順\\x.docx"))
+        self.assertEqual(simple_table.click_target(s, "javascript:alert(1)"), ("", ""))
+        self.assertEqual(simple_table.click_target(s, ""), ("", ""))
+        self.assertEqual((simple_table.open_kind("a.XLSX"), simple_table.open_kind("b.doc"),
+                          simple_table.open_kind("c.pdf"), simple_table.open_kind("d.exe")), ("Excel", "Word", "PDF", ""))
+
+    def test_open_real_file(self):
+        from app.routes import files
+        self.save(資料={"click": "open"}, 名前={"click": "open", "place": "図面/{値}.pdf"}, 単価={"click": "preview"})
+        _docx(self.ref / "手順" / "A-2.docx")
+        (self.ref / "図面" / "箱.pdf").write_bytes(b"%PDF-1.4 x")
+        opened = []
+        with mock.patch.object(files, "launch", side_effect=opened.append):
+            j = self.ok("/api/file/open", table="部品", column="資料", value="手順/A-2.docx")
+            self.assertEqual((j["kind"], j["what"]), ("file", "Word"))
+            self.assertIn("Wordで開きました", j["message"])
+            j = self.ok("/api/file/open", table="部品", column="名前", value="箱")       # 場所の決まりから
+            self.assertEqual(j["what"], "PDF")
+            j = self.ok("/api/file/open", table="部品", column="資料", value="https://intra.example/doc/A-1")
+            self.assertEqual((j["kind"], j["url"]), ("url", "https://intra.example/doc/A-1"))  # URL は画面が開く
+            # 断る: 表に無い値・ファイルが無い・開く列でない(プレビューだけの列)
+            self.assertEqual(self.post("/api/file/open", table="部品", column="資料", value="手順/無い.docx").status_code, 403)
+            self.assertEqual(self.post("/api/file/open", table="部品", column="資料", value="手順/B-1.xlsx").status_code, 404)
+            self.assertEqual(self.post("/api/file/open", table="部品", column="単価", value="30").status_code, 403)
+        self.assertEqual([p.name for p in opened], ["A-2.docx", "箱.pdf"])
+        # 開かない形式(実行ファイルなど)
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 部品 SET 資料 = '手順/x.bat' WHERE 品番 = 'A-1'")
+            c.commit()
+        (self.ref / "手順" / "x.bat").write_text("echo", encoding="ascii")
+        with mock.patch.object(files, "launch", side_effect=opened.append):
+            r = self.post("/api/file/open", table="部品", column="資料", value="手順/x.bat")
+        self.assertEqual(r.status_code, 415)
+        self.assertEqual(len(opened), 2)
+
+    def test_preview_excel_word_url(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor"))
+        import datetime as dt
+        import xlsx_writer
+        self.save(資料={"click": "preview"})
+        _docx(self.ref / "手順" / "A-2.docx")
+        xlsx_writer.write_xlsx([{"name": "検査", "columns": ["品番", "日付", "数"],
+                                 "rows": [["B-1", dt.date(2026, 10, 15), 2502.5]]}], str(self.ref / "手順" / "B-1.xlsx"))
+        get = lambda v: self.c.get("/api/file/preview", query_string={"table": "部品", "column": "資料", "value": v},
+                                   headers=self.h)
+        r = get("手順/B-1.xlsx")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        html = r.get_data(as_text=True)
+        for want in ("検査", "品番", "B-1", "2026/10/15", "2502.5"):
+            self.assertIn(want, html)
+        html = get("手順/A-2.docx").get_data(as_text=True)
+        self.assertIn("<h2>作業手順書 A-1</h2>", html)
+        self.assertIn("組み立てる &amp; 確かめる", html)
+        self.assertIn("<td>30秒</td>", html)
+        html = get("https://intra.example/doc/A-1").get_data(as_text=True)
+        self.assertIn('<iframe src="https://intra.example/doc/A-1"', html)
+        self.assertIn("既定のブラウザで開く", html)
+        # Excel が書く形(共有文字列・日付の書式)と、古い形式
+        from dbviewer import office_preview
+        sheets = office_preview.read_xlsx(_xlsx_shared(self.tmp / "s.xlsx"))
+        self.assertEqual(sheets[0]["rows"], [["品番", "", "検査日"], ["A-1", "0.3", "2026/10/15"]])
+        self.assertEqual((sheets[1]["name"], sheets[1]["rows"]), ("空", []))
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 部品 SET 資料 = '手順/古い.xls' WHERE 品番 = 'A-1'")
+            c.commit()
+        (self.ref / "手順" / "古い.xls").write_bytes(b"\xd0\xcf\x11\xe0")
+        r = get("手順/古い.xls")
+        self.assertEqual(r.status_code, 415)
+        self.assertIn("現物を開く", r.get_data(as_text=True))
+        # 壊れた .xlsx は理由を出す(落ちない)
+        (self.ref / "手順" / "B-1.xlsx").write_bytes(b"not a zip")
+        r = get("手順/B-1.xlsx")
+        self.assertEqual(r.status_code, 415)
+        self.assertIn("壊れている", r.get_data(as_text=True))
 
 
 class VbaDbTest(_Case):

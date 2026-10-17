@@ -95,7 +95,7 @@ def _simple_data(conn, setup):
                  "columns": {c: simple_table.edit_spec(conn, table, settings[c]) for c in v["columns"]}},
         "can": {"add": lv >= auth.required_level("新規"), "delete": lv >= auth.required_level("削除")},
         # マスを押したときにすること(かんたん設定の「クリック」)
-        "actions": simple_table.actions(settings.values()),
+        "actions": simple_table.actions(settings.values(), table),
         "db_mtime": shared_db.probe().get("mtime"),
         "setup": _setup_dict(setup),
     })
