@@ -113,6 +113,7 @@ def data():
                     "rows": rows, "count": len(rows), "key_index": -1,
                     # かんたん設定の「印刷」: 印刷・保存・コピーに入れる列
                     "print_columns": v["print_columns"],
+                    "actions": simple_table.actions(simple_table.load(conn, table)),
                     "view": grid_data.load_view(_view_key(table), v["columns"])})
 
 

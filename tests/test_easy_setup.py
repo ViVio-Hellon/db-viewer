@@ -303,6 +303,58 @@ class AutoAndFileTest(_Case):
         self.assertEqual((r.status_code, r.get_data(as_text=True)), (200, "手順メモ"))
 
 
+class ClickActionTest(_Case):
+    """クリックで実行(0.12.0): 列ごとに 値をコピー / URL を開く。一覧・閲覧・マスタ管理へ同じ決まりを渡す。"""
+
+    def setUp(self):
+        super().setUp()
+        self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("ALTER TABLE 部品 ADD COLUMN 資料 TEXT")
+            c.execute("UPDATE 部品 SET 資料 = 'https://intra.example/doc/A-1' WHERE 品番 = 'A-1'")
+            c.commit()
+        self.login()
+
+    def save(self, **changes):
+        st = self.ok("/api/easy/state", table="部品")
+        self.assertEqual([k for k, _ in st["clicks"]], ["", "copy", "url"])
+        rows = [dict(c, **changes.get(c["name"], {})) for c in st["columns"]]
+        return self.post("/api/easy/columns", table="部品", rows=rows)
+
+    def test_saved_and_handed_to_every_screen(self):
+        r = self.save(品番={"click": "copy"}, 名前={"click": "url", "url": "https://intra.example/search?q={値}"},
+                      資料={"click": "url"}, 単価={"click": "copy", "url": "https://無視される"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        want = {"品番": {"click": "copy", "url": ""},
+                "名前": {"click": "url", "url": "https://intra.example/search?q={値}"},
+                "資料": {"click": "url", "url": ""},
+                "単価": {"click": "copy", "url": ""}}                       # コピーに URL は要らない
+        self.assertEqual(self.ok("/api/list/data", table="部品")["actions"], want)
+        self.assertEqual(self.ok("/api/browse/data", table="部品")["actions"], want)
+        self.assertEqual(self.ok("/api/master/rows", table="部品")["actions"], want)
+        st = self.ok("/api/easy/state", table="部品")
+        self.assertEqual({c["name"]: c["click"] for c in st["columns"]}["品番"], "copy")
+        # 決めていない表は空
+        self.assertEqual(self.ok("/api/list/data", table="仕入先")["actions"], {})
+
+    def test_url_must_be_http(self):
+        for bad in ("javascript:alert(1)", "file:///C:/x", "\\\\server\\共有", "intra/doc"):
+            r = self.save(名前={"click": "url", "url": bad})
+            self.assertEqual(r.status_code, 422, bad)
+            self.assertIn("http", r.get_json()["message"])
+        self.assertEqual(self.save(名前={"click": "jump"}).status_code, 422)
+
+    def test_click_url_rule(self):
+        s = simple_table.ColumnSetting("名前", click="url", url="https://intra.example/search?q={値}&x=1")
+        self.assertEqual(simple_table.click_url(s, "箱 A&B"), "https://intra.example/search?q=%E7%AE%B1%20A%26B&x=1")
+        s.url = "https://intra.example/item/"                               # {値} が無ければ末尾に
+        self.assertEqual(simple_table.click_url(s, "A-1"), "https://intra.example/item/A-1")
+        s.url = ""                                                          # 空なら値そのもの(http(s) だけ)
+        self.assertEqual(simple_table.click_url(s, "https://intra.example/doc"), "https://intra.example/doc")
+        self.assertEqual(simple_table.click_url(s, "javascript:alert(1)"), "")
+        self.assertEqual(simple_table.click_url(s, ""), "")
+
+
 class VbaDbTest(_Case):
     """VBA 版の DB(全般設定・<表>_設定・管理番号)も同じ道(0.9.0)。_設定 は取り込んで消せる。"""
 

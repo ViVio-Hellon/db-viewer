@@ -6,6 +6,7 @@ VBA 版の決まり(全般設定・<表>_設定・管理番号・入力形式の
     表示   … 一覧・閲覧に出すか
     入力   … 文字 / コンボボックス(その列に入っている値から選ぶ・打つ) / スピンボタン(数。刻み) / カレンダー(日付)
     印刷   … 閲覧・出力で印刷・保存するときに入れるか
+    クリック … マスを押したときに すること(なし / 値をコピー / URL を開く)(0.12.0)
 
 【どこに覚えるか】DB の中の隠した表「ツールの設定」に、表ごとに 1 行(JSON)。DB を使う全員で同じ。
 **列名で**覚えるので、列の並びが変わっても・列が増えても(既定: 表示・文字・印刷)ずれない。
@@ -51,6 +52,18 @@ PREVIEW_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/
                  ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
                  ".txt": "text/plain", ".csv": "text/plain", ".log": "text/plain"}
 INPUT_KEYS = tuple(k for k, _ in INPUTS)
+
+# マスを押したときにすること(0.12.0)。一覧・閲覧・マスタ管理で同じ
+CLICKS: tuple[tuple[str, str], ...] = (
+    ("", "なし"),
+    ("copy", "値をコピー"),
+    ("url", "URL を開く"),
+)
+CLICK_KEYS = tuple(k for k, _ in CLICKS)
+# URL の決まりの中で、マスの値に置き換える印。無ければ末尾に付ける
+URL_MARK = "{値}"
+URL_MAX = 500
+_URL_OK = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
 MAX_CHOICES = 500
 
 MSG_CONFLICT = "ほかの端末が先にこの行を変えていました。いまの値に置き換えたので、もう一度直してください。"
@@ -64,6 +77,8 @@ class ColumnSetting:
     input: str = "text"
     step: str = "1"
     print: bool = True
+    click: str = ""
+    url: str = ""
 
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
@@ -151,6 +166,8 @@ def load(conn: sqlite3.Connection, table: str) -> list[ColumnSetting]:
             c.input = s.get("input") if s.get("input") in INPUT_KEYS else "text"
             c.step = str(s.get("step") or "1")
             c.print = bool(s.get("print", True))
+            c.click = s.get("click") if s.get("click") in CLICK_KEYS else ""
+            c.url = str(s.get("url") or "") if c.click == "url" else ""
         out.append(c)
     return out
 
@@ -174,7 +191,15 @@ def validate(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -
             n = _number(step)
             if n is None or n <= 0:
                 return [], f"「{name}」の刻みは 0 より大きい数にしてください。"
-        got[name] = ColumnSetting(name, bool(r.get("show", True)), inp, step or "1", bool(r.get("print", True)))
+        click = str(r.get("click") or "")
+        if click not in CLICK_KEYS:
+            return [], f"「{name}」のクリックの種類が分かりません。"
+        url = str(r.get("url") or "").strip() if click == "url" else ""
+        if url and (len(url) > URL_MAX or not _URL_OK.match(url)):
+            return [], (f"「{name}」の URL は http:// か https:// で始めてください"
+                        f"(マスの値を入れる場所は {URL_MARK}。空なら値をそのまま URL として開く)。")
+        got[name] = ColumnSetting(name, bool(r.get("show", True)), inp, step or "1", bool(r.get("print", True)),
+                                  click, url)
     if got and not any(c.show for c in got.values()):
         return [], "表示する列を 1 つ以上選んでください。"
     return [got.get(n) or ColumnSetting(n) for n in known], ""
@@ -286,6 +311,26 @@ def choices(conn: sqlite3.Connection, table: str, column: str) -> list[str]:
     rows = conn.execute(f"SELECT DISTINCT {q(column)} FROM {q(table)} WHERE {q(column)} IS NOT NULL "
                         f"AND CAST({q(column)} AS TEXT) <> '' ORDER BY 1 LIMIT {MAX_CHOICES}").fetchall()
     return [text_of(r[0]) for r in rows]
+
+
+def actions(settings) -> dict[str, dict[str, str]]:
+    """マスを押したときにすること(クリックを決めた列だけ)。画面へ渡す。"""
+    return {c.name: {"click": c.click, "url": c.url} for c in settings if c.click}
+
+
+def click_url(setting: ColumnSetting, value: Any) -> str:
+    """URL を開く列の、そのマスの行き先。開けない(値が空・http(s) でない)なら空。
+
+    画面(`cellaction.js`)と同じ決まり。URL の決まりが空なら値そのもの、
+    {値} があればそこへ(URL 用に符号化して)、無ければ末尾に付ける。"""
+    from urllib.parse import quote
+    text = text_of(value).strip()
+    if setting.click != "url" or not text:
+        return ""
+    if not setting.url:
+        return text if _URL_OK.match(text) else ""
+    enc = quote(text, safe="")
+    return setting.url.replace(URL_MARK, enc) if URL_MARK in setting.url else setting.url + enc
 
 
 def edit_spec(conn: sqlite3.Connection, table: str, s: ColumnSetting) -> dict[str, Any]:

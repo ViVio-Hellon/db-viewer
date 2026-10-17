@@ -88,7 +88,22 @@ function columnRow(c) {
   sel.disabled = step.disabled = !st.can_write;
   pick.append(sel, stepLab);
   kind.appendChild(pick);
-  tr.append(name, box("show", c.show, "表示"), kind, box("print", c.print, "印刷"));
+  // クリック(0.12.0): 値を押したときにすること。URL を開くなら行き先の決まり({値} にマスの値が入る)
+  const clickTd = document.createElement("td");
+  const clickPick = document.createElement("div"); clickPick.className = "pick";
+  const click = document.createElement("select"); click.className = "input"; click.dataset.f = "click";
+  click.setAttribute("aria-label", `${c.name} を押したとき`);
+  for (const [v, label] of st.clicks || []) click.appendChild(option(v, label, v === (c.click || "")));
+  const url = document.createElement("input"); url.className = "input"; url.dataset.f = "url";
+  url.type = "text"; url.value = c.url || ""; url.style.width = "22em";
+  url.placeholder = "空 = 値そのものが URL / 例 https://社内/品番?no={値}";
+  url.setAttribute("aria-label", `${c.name} の URL`);
+  url.hidden = click.value !== "url";
+  click.addEventListener("change", () => { url.hidden = click.value !== "url"; if (!url.hidden) url.focus(); });
+  click.disabled = url.disabled = !st.can_write;
+  clickPick.append(click, url);
+  clickTd.appendChild(clickPick);
+  tr.append(name, box("show", c.show, "表示"), kind, box("print", c.print, "印刷"), clickTd);
   tr.addEventListener("change", () => {
     tr.classList.add("is-changed");
     tr.classList.toggle("is-off", !tr.querySelector('[data-f="show"]').checked);
@@ -100,7 +115,8 @@ function collect() {
   return [...el.easyCols.children].map((tr) => {
     const f = (name) => tr.querySelector(`[data-f="${name}"]`);
     return { name: tr.dataset.name, show: f("show").checked, input: f("input").value,
-             step: f("step").value, print: f("print").checked };
+             step: f("step").value, print: f("print").checked,
+             click: f("click").value, url: f("click").value === "url" ? f("url").value.trim() : "" };
   });
 }
 

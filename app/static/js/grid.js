@@ -11,7 +11,11 @@
 
   絞り込み・並べ替え・選んだ行はタブごとに覚える(sessionStorage)。列の見せ方は
   サーバに保存し、次に開いたときも同じ(`onViewChange`)。
+
+  かんたん設定で「クリック」を決めた列(`actions`)は、マスの値に下線が付き、
+  **値を 1 回押すと** コピー・URL を開く(`cellaction.js`)。値の外を押せば今までどおり行を選ぶだけ。
 */
+import { isActive as actsOn, actionHint, runAction } from "./cellaction.js";
 
 const CHUNK = 300;                       // 一度に描く行数(下まで見たら足す)
 const MAX_VALUES = 1000;                 // 値の一覧に並べる上限
@@ -94,6 +98,7 @@ export function createGrid(root, opts = {}) {
     view: { order: [], hidden: [], widths: {} }, auto: {},
     sort: [], filters: {}, search: "", terms: [],
     selectedKey: null, shown: [], limit: CHUNK, hayVersion: 0,
+    actions: {},                         // 列名 → { click, url }(マスを押したときにすること)
   };
 
   /* ---------------- 骨組み ---------------- */
@@ -259,8 +264,15 @@ export function createGrid(root, opts = {}) {
     for (const n of cols) {
       const col = st.byName[n];
       const v = row.r[col.i] ?? "";
-      const td = el("td", { class: col.kind === "num" ? "n" : "", text: v });
-      if (v.length > 12) td.title = v;
+      const act = st.actions[n];
+      let td;
+      if (act && actsOn(act, v)) {
+        td = el("td", { class: col.kind === "num" ? "n" : "" },
+                el("span", { class: `cell-act cell-act--${act.click}`, text: v, title: actionHint(act, v) }));
+      } else {
+        td = el("td", { class: col.kind === "num" ? "n" : "", text: v });
+        if (v.length > 12) td.title = v;
+      }
       tr.appendChild(td);
     }
     return tr;
@@ -337,11 +349,21 @@ export function createGrid(root, opts = {}) {
 
   tbody.addEventListener("click", (e) => {
     const tr = e.target.closest("tr[data-k]");
-    if (tr) select(tr.dataset.k);
+    if (!tr) return;
+    select(tr.dataset.k);
+    // 値を押した(1 回目だけ。ダブルクリックで 2 回動かさない)
+    const act = e.target.closest(".cell-act");
+    if (!act || e.detail > 1) return;
+    const name = visible()[[...tr.cells].indexOf(act.closest("td"))];
+    const row = rowByKey(tr.dataset.k);
+    if (name && row && st.actions[name]) runAction(st.actions[name], row.r[st.byName[name].i] ?? "");
   });
+  // 値を押す列は、2 回目の押し下げで文字を選ばない(ダブルクリックで青く塗られて見えるのを防ぐ)
+  tbody.addEventListener("mousedown", (e) => { if (e.detail > 1 && e.target.closest(".cell-act")) e.preventDefault(); });
   tbody.addEventListener("dblclick", (e) => {
     const tr = e.target.closest("tr[data-k]");
     if (!tr || e.target.closest(".cell-edit")) return;
+    if (e.target.closest(".cell-act")) return;            // 値を押す列(コピー・URL)は 1 回押しで動いた
     select(tr.dataset.k);
     const row = rowByKey(tr.dataset.k);
     if (!row) return;
@@ -655,7 +677,8 @@ export function createGrid(root, opts = {}) {
 
   /* ---------------- 外から使うもの ---------------- */
   return {
-    setData({ columns, rows, keyIndex = -1, view }) {
+    setData({ columns, rows, keyIndex = -1, view, actions = {} }) {
+      st.actions = actions || {};
       st.columns = columns.map((c, i) => ({ ...c, i }));
       st.byName = Object.fromEntries(st.columns.map((c) => [c.name, c]));
       st.keyIndex = keyIndex;

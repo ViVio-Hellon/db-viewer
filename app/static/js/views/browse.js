@@ -55,7 +55,7 @@ async function selectTable(t) {
         },
       });
     }
-    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: -1, view: data.view });
+    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: -1, view: data.view, actions: data.actions });
   } catch (err) { toastError(err); }
 }
 

@@ -14,6 +14,7 @@ import * as out from "../export_ui.js";
 import { createHelpers } from "../helpers.js";
 import { openAddColumn } from "../addcolumn.js";
 import { makeField, inputOf, previewFile } from "../fieldinput.js";
+import { actionButton } from "../cellaction.js";
 import { openRowForm, showProblem } from "../rowform.js";
 import { confirmBox } from "../askbox.js";
 
@@ -47,7 +48,7 @@ async function load(table = "") {
     el.actNew.hidden = !keyOk || !data.can.add; el.actEdit.hidden = !keyOk; el.actDelete.hidden = !keyOk || !data.can.delete;
     el.actAddCol.hidden = !data.setup.can_add_column;
     showNotices(data.setup.notices || []);
-    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view });
+    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view, actions: data.actions });
   } catch (err) {
     if (err.status === 401) { location.href = "/login?next=/list"; return; }
     if (err.status === 409 || err.status === 422) problem(err.message);
@@ -136,6 +137,8 @@ function renderDetail(row) {
       b.addEventListener("click", () => previewFile(data.table, n, row[idx[n]]));
       dd.appendChild(b);
     }
+    const act = actionButton((data.actions || {})[n], row[idx[n]]);
+    if (act) dd.appendChild(act);
     dl.append(dt, dd);
   };
   for (const n of shown) add(n);

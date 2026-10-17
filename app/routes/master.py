@@ -116,7 +116,9 @@ def rows():
                     "read_only": not caps["rows"], "caps": caps,
                     # 並びに意味がある(文字が既定)ので、辞書でなく並びで渡す(JSON は鍵を並べ替える)
                     "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()],
-                    "page": v.page_label, "count": len(v.rows)})
+                    "page": v.page_label, "count": len(v.rows),
+                    # マスを押したときにすること(かんたん設定の「クリック」。設定の無い表は空)
+                    "actions": simple_table.actions(simple_table.load(conn, table))})
 
 
 @bp.post("/api/master/form")

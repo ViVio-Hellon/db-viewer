@@ -62,7 +62,8 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     table = table if table in names else setup.general.main_table
     types = _decl_types(conn, table)
     columns = [{"name": c.name, "type": types.get(c.name, ""), "show": c.show, "input": c.input,
-                "step": c.step, "print": c.print} for c in simple_table.load(conn, table)]
+                "step": c.step, "print": c.print, "click": c.click, "url": c.url}
+               for c in simple_table.load(conn, table)]
     vba = vba_setting_tables(conn)
     try:
         db = str(shared_db.db_path())
@@ -71,6 +72,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     return {
         "db": db, "tables": tables, "table": table, "columns": columns,
         "inputs": [[k, label] for k, label in simple_table.INPUTS],
+        "clicks": [[k, label] for k, label in simple_table.CLICKS],
         "level": level, "can_write": level >= WRITE_LEVEL, "has_id": setup.has_id,
         # VBA 版の設定の表(<表>_設定)。画面では使わない。取り込んで消せる
         "vba_tables": vba,

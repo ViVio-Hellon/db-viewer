@@ -5,10 +5,11 @@ import { toast, toastError } from "../toast.js";
 import { confirmBox } from "../askbox.js";
 import { createHelpers, isNumericVba } from "../helpers.js";
 import { makeSortable } from "../sort_table.js";
+import { isActive, actionHint, runAction } from "../cellaction.js";
 
 const el = {};
 const state = { table: "", columns: [], rows: [], selected: -1, mode: "", fields: [], readOnly: false,
-                caps: { rows: false, columns: false, note: "" }, kinds: [], newColumn: "" };
+                caps: { rows: false, columns: false, note: "" }, kinds: [], newColumn: "", actions: {} };
 // 表の名前 → 左の一覧の要素(列を足したあと、設定の表へ移るため)
 const tableNodes = new Map();
 let helpers = null;
@@ -64,6 +65,7 @@ async function loadRows({ selectKey = null, selectNew = false } = {}) {
     state.columns = d.columns; state.rows = d.rows; state.readOnly = d.read_only;
     state.caps = d.caps || { rows: !d.read_only, columns: false, note: "" };
     state.kinds = d.kinds || [];
+    state.actions = d.actions || {};
     el.msName.textContent = d.table; el.msPage.textContent = `${d.page} (${d.count} 件)`;
     let pick = -1;
     if (selectKey !== null) pick = state.rows.findIndex((r) => String(r[0]) === String(selectKey));
@@ -107,7 +109,19 @@ function renderTable() {
     r.dataset.i = String(i);
     if (i === state.selected) r.setAttribute("aria-selected", "true");
     row.forEach((v, j) => {
-      const td = document.createElement("td"); td.textContent = v; td.className = j === fresh ? "l is-new" : "l";
+      const td = document.createElement("td"); td.className = j === fresh ? "l is-new" : "l";
+      const act = state.actions[state.columns[j]];
+      if (isActive(act, v)) {
+        // かんたん設定の「クリック」: 値を 1 回押すとコピー・URL を開く(ダブルクリックで 2 回動かさない)
+        const span = document.createElement("span");
+        span.className = `cell-act cell-act--${act.click}`; span.textContent = v; span.title = actionHint(act, v);
+        span.addEventListener("click", (e) => { if (e.detail <= 1) runAction(act, v); });
+        span.addEventListener("dblclick", (e) => e.stopPropagation());
+        span.addEventListener("mousedown", (e) => { if (e.detail > 1) e.preventDefault(); });
+        td.appendChild(span);
+      } else {
+        td.textContent = v;
+      }
       r.appendChild(td);
     });
     r.addEventListener("click", () => selectRow(i));
