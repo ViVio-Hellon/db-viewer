@@ -124,7 +124,7 @@ def terminate_verified(ident: Identity, *, wait_sec: float = 5.0) -> bool:
     now = identity(ident.pid)
     if now is None or ident.create_time is None or now.create_time != ident.create_time:
         return True                                        # 終わった・別のプロセス(PID の使い回し)
-    if os.path.basename(now.exe or "").lower() not in OFFICE_EXES and IS_WINDOWS:
+    if IS_WINDOWS and os.path.basename((now.exe or "").replace("\\", "/")).lower() not in OFFICE_EXES:
         return True                                        # Excel・Word でなければ触らない
     _terminate(ident.pid)
     return wait_gone(ident, wait_sec)

@@ -10,7 +10,7 @@ Excel・Word に PDF にしてもらう(`dbviewer/office_bridge`。Python に部
   記録は `runtime\office_processes.json`、次の起動・stop.bat で残りを止める
 - 変換中は「PDF にしています…」の窓。だめなときは理由と止まった所・「現物を開く」の案内。ログに残る
 - 一度に 1 つ・同じファイルは覚えておく。.docm も Word で開く・プレビューする
-- テスト 228 件(Python)
+- テスト 229 件(Python)
 
 ## 0.13.0 (2026-10-17) — クリックで 現物を開く / プレビュー(Excel・Word・PDF・URL)
 0.12.0 の「クリック」を広げた(docs/09)。開くもの(Excel・Word・PDF・URL)は値か「場所」の決まりから決まる。

@@ -291,7 +291,9 @@ class AutoAndFileTest(_Case):
         self.assertEqual((r.status_code, r.mimetype), (200, "application/pdf"))
         self.assertTrue(r.headers["Content-Disposition"].startswith("inline"))   # ダウンロードさせない
         self.assertEqual(r.data, b"%PDF-1.4 test")
-        self.assertEqual(self.preview("図面/A-2.xlsx").status_code, 415)          # 見られない形式
+        from dbviewer import office_bridge                                     # Office に頼めない PC では
+        with mock.patch.object(office_bridge, "available", return_value=False):
+            self.assertEqual(self.preview("図面/A-2.xlsx").status_code, 415)      # 読めない中身は断る
         self.assertEqual(self.preview("../../etc/passwd").status_code, 403)      # 表に無い値は見せない
         self.assertEqual(self.preview("箱", column="名前").status_code, 403)      # ファイルの列でない
         with closing(sqlite3.connect(self.path)) as c:
@@ -441,6 +443,11 @@ class ClickActionTest(_Case):
         self.assertEqual(len(opened), 2)
 
     def test_preview_excel_word_url(self):
+        # Office に頼めない PC のとき(Windows の試験機は cscript があるので、そちらの道は test_office_bridge で)
+        from dbviewer import office_bridge
+        p = mock.patch.object(office_bridge, "available", return_value=False)
+        p.start()
+        self.addCleanup(p.stop)
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor"))
         import datetime as dt

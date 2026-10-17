@@ -43,6 +43,10 @@ class _Fake(unittest.TestCase):
         self.addCleanup(p.stop)
         office_bridge.forget_cache()
         self.addCleanup(office_bridge.forget_cache)
+        # 「起こした Office」の代わりは python。Windows は実行ファイル名まで確かめるので、試験では python も許す
+        p = mock.patch.object(procs, "OFFICE_EXES", procs.OFFICE_EXES + ("python.exe",))
+        p.start()
+        self.addCleanup(p.stop)
 
     def mode(self, name):
         os.environ["FAKE_OFFICE"] = name
@@ -102,7 +106,10 @@ class ConvertTest(_Fake):
         self.assertEqual(cm.exception.code, "TIMEOUT")
         self.assertIn("文書を開く所", str(cm.exception))
         pid = self.office_pid()
-        self.assertTrue(procs.wait_gone(procs.Identity(pid, None), 0) or procs.identity(pid) is None)
+        deadline = time.monotonic() + 10
+        while procs.identity(pid) is not None and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertIsNone(procs.identity(pid))                                 # 起こした Office は止めた
         self.assertEqual(procs._load(), [])                                    # 記録も片付いた
 
     def test_users_word_is_never_ended(self):
@@ -132,6 +139,18 @@ class ConvertTest(_Fake):
         procs.track(procs.Identity(other.pid, 12345, "excel.exe"), "Excel")
         self.assertEqual(procs.cleanup_leftovers(), 0)
         self.assertIsNone(other.poll())
+
+    def test_other_programs_are_never_ended(self):
+        """Excel・Word でない実行ファイルは、PID と作成時刻が合っても止めない(Windows の決まり)。"""
+        sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (sleeper.poll() is None and sleeper.kill(), sleeper.wait()))
+        ident = procs.identity(sleeper.pid)
+        with mock.patch.object(procs, "OFFICE_EXES", ("excel.exe", "winword.exe")), \
+                mock.patch.object(procs, "IS_WINDOWS", True), \
+                mock.patch.object(procs, "identity", return_value=procs.Identity(ident.pid, ident.create_time,
+                                                                                r"C:\Python\python.exe")):
+            self.assertTrue(procs.terminate_verified(ident, wait_sec=0.2))
+        self.assertIsNone(sleeper.poll())
 
 
 class VbsTest(unittest.TestCase):
