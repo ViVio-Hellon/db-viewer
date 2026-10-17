@@ -154,18 +154,47 @@ def _via_office(target, table: str, column: str) -> Response:
     trace.event("file.preview", target.name, data={"table": table, "column": column, "path": str(target),
                                                    "via": app, "as": got.kind,
                                                    "sec": round(time.monotonic() - started, 1)})
+    if got.kind == "sheets":
+        return _sheets(target, got)
     if got.kind == "pdf":
-        from urllib.parse import quote
-        resp = Response(got.data, content_type="application/pdf")
-        resp.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(target.stem)}.pdf"
-        resp.headers["X-Content-Type-Options"] = "nosniff"
-        return resp
+        return _pdf(got.data, target.stem)
     banner = f"{app} で PDF にできなかったので、中身だけを出しています(書式・図は出しません)。"
     try:
         html = (office_preview.xlsx_html(target, got.data, banner=banner) if got.kind == "xlsx"
                 else office_preview.docx_html(target, got.data, banner=banner))
     except office_preview.PreviewError as exc:
         return _page(f"{target.name}: {exc}", 415)
+    return Response(html, content_type="text/html; charset=utf-8")
+
+
+def _pdf(data: bytes, stem: str) -> Response:
+    from urllib.parse import quote
+    resp = Response(data, content_type="application/pdf")
+    resp.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(stem)}.pdf"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+def _sheets(target, got) -> Response:
+    """Excel がシートごとに作った PDF(0.15.0)。`sheet` が無ければシートのタブの画面、あればそのシートの PDF。
+    PDF は覚えてあるので、タブを押すたびに Excel を起こさない。"""
+    from urllib.parse import urlencode
+    raw = request.args.get("sheet")
+    if raw is not None:
+        if not raw.isdigit() or int(raw) >= len(got.sheets):
+            return _page("そのシートはありません。", 404)
+        sh = got.sheets[int(raw)]
+        if not sh.data:
+            return _page(f"{sh.name}: {sh.note or 'PDF にできませんでした'}", 422)
+        return _pdf(sh.data, f"{target.stem}_{sh.name}")
+    args = {k: v for k, v in request.args.items() if k != "sheet"}
+    args["go"] = "1"
+
+    def src(i: int) -> str:
+        return f"{request.path}?{urlencode({**args, 'sheet': str(i)})}"
+
+    rows = [{"name": sh.name, "ok": bool(sh.data), "note": "" if sh.data else "空"} for sh in got.sheets]
+    html = office_preview.pdf_sheets_html(target, rows, src, hidden=got.hidden_sheets)
     return Response(html, content_type="text/html; charset=utf-8")
 
 

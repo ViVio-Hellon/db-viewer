@@ -61,12 +61,14 @@ class ConvertTest(_Fake):
         src = self.tmp / "点検表 A-1.xls"
         src.write_bytes(b"\xd0\xcf\x11\xe0old")
         got = office_bridge.convert(src)
-        self.assertEqual((got.kind, got.app, got.data), ("pdf", "Excel", PDF))
+        self.assertEqual((got.kind, got.app), ("sheets", "Excel"))             # Excel はシートごと(0.15.0)
+        self.assertEqual([(sh.name, sh.data) for sh in got.sheets], [("Sheet1", PDF)])
         job = json.loads((self.tmp / "job.json").read_text(encoding="utf-8"))
         self.assertEqual(job["path"], str(src))                                # 日本語のパスも 16 進で届く
         self.assertEqual(job["kind"], "excel")
         self.assertEqual(job["password"], office_bridge.DUMMY_PASSWORD)        # 待たずに失敗させる
         self.assertEqual(job["max_pages"], str(office_bridge.MAX_PAGES))
+        self.assertEqual(job["max_sheets"], str(office_bridge.MAX_SHEETS))
         self.assertEqual(office_bridge.kind_of(Path("a.DOC")), "word")
         # 同じファイルは覚えておく(Excel をもう一度起こさない)
         (self.tmp / "job.json").unlink()
@@ -75,6 +77,19 @@ class ConvertTest(_Fake):
         os.utime(src, (time.time() + 5, time.time() + 5))                      # 直されたら作り直す
         office_bridge.convert(src)
         self.assertTrue((self.tmp / "job.json").exists())
+
+    def test_one_pdf_per_sheet(self):
+        """シートが何枚もあるブック: シートごとの PDF。空のシートは理由、隠しシートは数だけ(0.15.0)。"""
+        self.mode("sheets")
+        src = self.tmp / "月報.xls"
+        src.write_bytes(b"x")
+        got = office_bridge.convert(src)
+        self.assertEqual(got.kind, "sheets")
+        self.assertEqual([sh.name for sh in got.sheets], ["検査表", "空", "集計"])
+        self.assertEqual([sh.data for sh in got.sheets], [PDF, b"", PDF[::-1]])
+        self.assertIn("空のシート", got.sheets[1].note)
+        self.assertEqual(got.hidden_sheets, 1)
+        self.assertTrue(any("印刷する物がありません" in n for n in got.notes))
 
     def test_failure_says_why_and_where(self):
         self.mode("fail")
@@ -153,6 +168,30 @@ class ConvertTest(_Fake):
         self.assertIsNone(sleeper.poll())
 
 
+class NativeSheetsTest(unittest.TestCase):
+    """.xlsx(標準で読む)もシートのタブで 1 枚ずつ。隠しシートは出さず数だけ(0.15.0)。"""
+
+    def test_tabs_and_hidden(self):
+        import zipfile
+        from dbviewer import office_preview
+        from tests.test_easy_setup import _xlsx_shared
+        with tempfile.TemporaryDirectory() as d:
+            src = _xlsx_shared(Path(d) / "a.xlsx")
+            with zipfile.ZipFile(src) as z:
+                parts = {n: z.read(n) for n in z.namelist()}
+            parts["xl/workbook.xml"] = parts["xl/workbook.xml"].replace(
+                'name="空" sheetId="2"'.encode(), 'name="空" sheetId="2" state="hidden"'.encode())
+            with zipfile.ZipFile(src, "w") as z:
+                for n, b in parts.items():
+                    z.writestr(n, b)
+            page = office_preview.xlsx_html(src)
+        tabs = re.findall(r"class='tab'[^>]*>([^<]+)", page)
+        self.assertEqual(tabs, ["検査表"])
+        self.assertIn("隠しシート 1 枚", page)
+        self.assertEqual(page.count("<section class='sheet'"), 1)
+        self.assertIn("history.replaceState", page)
+
+
 class VbsTest(unittest.TestCase):
     """VBScript の書き方(点検表で現場の PC を通った決まり)。"""
 
@@ -197,18 +236,23 @@ class VbsTest(unittest.TestCase):
             args = [a.strip() for a in c.split(",")]
             self.assertEqual(args[:4], ["outPath", "wdExportFormatPDF", "False", "wdExportOptimizeForOnScreen"])
             self.assertEqual(len(args), 14)
-        xl = re.findall(r"wb\.ExportAsFixedFormat (.*)\r?$", self.text, re.M)
+        xl = re.findall(r"sh\.ExportAsFixedFormat (.*)\r?$", self.text, re.M)   # シートごと(0.15.0)
         self.assertTrue(xl)
         for c in xl:
             args = [a.strip() for a in c.split(",")]
             self.assertEqual(args[:2], ["xlTypePDF", "outPath"])
             self.assertEqual(args[-1], "False")                                # PDF の読み手を起こさない
         self.assertLess(self.text.index('Stage "word.pdf"'), self.text.index("doc.ExportAsFixedFormat"))
-        self.assertLess(self.text.index('Stage "excel.pdf"'), self.text.index("wb.ExportAsFixedFormat"))
+        self.assertLess(self.text.index('Stage "excel.pdf"'), self.text.index("sh.ExportAsFixedFormat"))
+        self.assertNotIn("wb.ExportAsFixedFormat", self.text)
+        # 隠しシートは出さない・シート名は 16 進で送る
+        run = self.body("Function RunExcel(")
+        self.assertIn("If vis = xlSheetVisible Then", run)
+        self.assertIn('Emit "SHEET " & index & " " & HexW(SheetName(sh))', run)
 
     def test_temp_is_its_own_and_deleted(self):
         self.assertIn('"dbv_preview"', self.text)
-        for fn in ("Function RunExcel(", "Function RunWord("):
+        for fn in ("Function ExportSheet(", "Function RunWord("):
             body = self.body(fn)
             self.assertGreaterEqual(body.count("DeleteTempFile outPath"), 3, fn)
 
@@ -242,10 +286,12 @@ class PreviewRouteTest(_Fake):
         p.start()
         self.addCleanup(p.stop)
 
-    def get(self, value, go=False):
+    def get(self, value, go=False, sheet=None):
         q = {"table": "部品", "column": "資料", "value": value}
         if go:
             q["go"] = "1"
+        if sheet is not None:
+            q["sheet"] = sheet
         return self.case.c.get("/api/file/preview", query_string=q, headers=self.case.h)
 
     def test_wait_then_pdf(self):
@@ -255,12 +301,37 @@ class PreviewRouteTest(_Fake):
         page = r.get_data(as_text=True)
         self.assertIn("Excel で PDF にしています", page)
         self.assertIn("searchParams.set('go','1')", page)
-        r = self.get("手順/A-1.xls", go=True)
+        r = self.get("手順/A-2.doc")
+        self.assertIn("Word で PDF にしています", r.get_data(as_text=True))
+        r = self.get("手順/A-2.doc", go=True)                                   # Word は PDF のまま
         self.assertEqual((r.status_code, r.content_type), (200, "application/pdf"))
         self.assertEqual(r.data, PDF)
         self.assertIn("inline", r.headers["Content-Disposition"])
-        r = self.get("手順/A-2.doc")
-        self.assertIn("Word で PDF にしています", r.get_data(as_text=True))
+
+    def test_excel_sheets_as_tabs(self):
+        """シートが何枚もあるブック: シートのタブの画面 → タブごとの PDF(Excel は 1 回だけ起こす)。"""
+        self.mode("sheets")
+        r = self.get("手順/A-1.xls", go=True)
+        self.assertEqual((r.status_code, r.content_type.split(";")[0]), (200, "text/html"))
+        page = r.get_data(as_text=True)
+        tabs = re.findall(r"<button type='button' class='tab'[^>]*data-s='(\d)'[^>]*>([^<]+)", page)
+        self.assertEqual([name for _, name in tabs], ["検査表", "空", "集計"])
+        srcs = re.findall(r"data-src='([^']+)'", page)
+        self.assertEqual(len(srcs), 2)                                         # 空のシートには PDF が無い
+        self.assertIn("隠しシート 1 枚", page)
+        self.assertIn("<iframe id='pdf'", page)
+        import html as _html
+        (self.tmp / "job.json").unlink()
+        first = self.case.c.get(_html.unescape(srcs[0]), headers=self.case.h)
+        self.assertEqual((first.content_type, first.data), ("application/pdf", PDF))
+        third = self.case.c.get(_html.unescape(srcs[1]), headers=self.case.h)
+        self.assertEqual(third.data, PDF[::-1])
+        self.assertIn("sheet=2", srcs[1])
+        self.assertFalse((self.tmp / "job.json").exists())                     # タブを押しても Excel は起こさない
+        empty = self.get("手順/A-1.xls", go=True, sheet="1")
+        self.assertEqual(empty.status_code, 422)
+        self.assertIn("空のシート", empty.get_data(as_text=True))
+        self.assertEqual(self.get("手順/A-1.xls", go=True, sheet="9").status_code, 404)
 
     def test_xlsx_fallback_is_shown_as_tables(self):
         sys.path.insert(0, str(ROOT / "vendor"))

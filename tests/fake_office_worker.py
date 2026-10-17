@@ -1,6 +1,7 @@
 """office_pdf.vbs の代わり(試験用)。同じ決まりで標準入出力をやり取りする。
 
-FAKE_OFFICE = pdf | xlsx | fail | hang | shared | garbage
+FAKE_OFFICE = pdf | sheets | xlsx | fail | hang | shared | garbage
+  Excel の pdf / sheets はシートごとの PDF(SHEET → PDFDATA → SHEETDONE / SHEETFAIL → DONE sheets)
 FAKE_OFFICE_JOB = 受け取った指示を書き出す場所(試験が確かめる)
 FAKE_OFFICE_PDF / FAKE_OFFICE_XLSX = 送る中身のファイル
 FAKE_OFFICE_PIDFILE = hang / shared のとき「起こした Office」の代わりのプロセスの PID を書く場所
@@ -82,9 +83,27 @@ def main():
         emit("DONE xlsx")
         emit("FINISH 0")
         return 0
-    emit(f"STAGE {app}.pdf")
     with open(os.environ["FAKE_OFFICE_PDF"], "rb") as f:
-        send("PDFDATA", f.read())
+        pdf = f.read()
+    if app == "excel":
+        emit("STAGE excel.sheets")
+        plan = [("Sheet1", pdf)] if mode == "pdf" else [
+            ("検査表", pdf), ("空", None), ("集計", pdf[::-1])]
+        for i, (name, data) in enumerate(plan, start=1):
+            emit(f"SHEET {i} {hexw(name)}")
+            emit("STAGE excel.pdf")
+            if data is None:
+                result("log", "Sheet.ExportAsFixedFormat (PDF) failed: 0x800A03EC")
+                emit(f"SHEETFAIL {hexw('0x800A03EC 印刷する物がありません')}")
+                continue
+            send("PDFDATA", data)
+            emit("SHEETDONE 1")
+        result("hidden_sheets", "1" if mode == "sheets" else "0")
+        emit("DONE sheets")
+        emit("FINISH 0")
+        return 0
+    emit(f"STAGE {app}.pdf")
+    send("PDFDATA", pdf)
     emit("DONE pdf")
     emit(f"STAGE {app}.quit")
     emit("FINISH 0")

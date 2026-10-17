@@ -41,7 +41,8 @@ KINDS = {".xls": "excel", ".xlsx": "excel", ".xlsm": "excel",
          ".doc": "word", ".docx": "word", ".docm": "word"}
 APP_LABEL = {"excel": "Excel", "word": "Word"}
 TIMEOUT_SEC = 90.0
-MAX_PAGES = 30                          # 長い文書・大きいブックは先頭のページまで
+MAX_PAGES = 30                          # 長い文書・大きいシートは先頭のページまで
+MAX_SHEETS = 30                         # Excel はシートごとに PDF(0.15.0)。これより多いシートは出さない
 DUMMY_PASSWORD = "__dbv_no_password__"  # パスワード付きは待たずに失敗させる
 CACHE_ITEMS = 6
 CACHE_MAX_BYTES = 30 * 1024 * 1024
@@ -74,11 +75,25 @@ class ConvertError(Exception):
 
 
 @dataclass
+class Sheet:
+    """Excel の 1 シート(0.15.0)。PDF にできなかったシート(空など)は data が空で、note に理由。"""
+    name: str
+    data: bytes = b""
+    note: str = ""
+
+
+@dataclass
 class Converted:
-    kind: str                       # "pdf" | "xlsx" | "docx"
+    kind: str                       # "pdf"(Word) | "sheets"(Excel。シートごとの PDF) | "xlsx" | "docx"
     data: bytes
     app: str                        # "Excel" | "Word"
     notes: list[str] = field(default_factory=list)
+    sheets: list[Sheet] = field(default_factory=list)
+    hidden_sheets: int = 0
+
+    @property
+    def size(self) -> int:
+        return len(self.data) + sum(len(sh.data) for sh in self.sheets)
 
 
 def kind_of(path: Path) -> str:
@@ -136,7 +151,7 @@ def convert(path: Path, *, timeout: float = TIMEOUT_SEC) -> Converted:
             _cache.move_to_end(key)
             return hit
         result = _run(path, kind, timeout)
-        if len(result.data) <= CACHE_MAX_BYTES:
+        if result.size <= CACHE_MAX_BYTES:
             _cache[key] = result
             while len(_cache) > CACHE_ITEMS:
                 _cache.popitem(last=False)
@@ -145,6 +160,13 @@ def convert(path: Path, *, timeout: float = TIMEOUT_SEC) -> Converted:
 
 def forget_cache() -> None:
     _cache.clear()
+
+
+def _b64(text: str) -> bytes:
+    try:
+        return base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError):
+        return b""
 
 
 def _reader(stream, out: "queue.Queue[Optional[str]]") -> None:
@@ -169,7 +191,8 @@ def _run(path: Path, kind: str, timeout: float) -> Converted:
                                 stderr=subprocess.DEVNULL, creationflags=flags)
     except OSError as exc:
         raise ConvertError(f"cscript を起こせませんでした: {exc}", "WORKER_FAILED") from None
-    job = [("path", str(path)), ("kind", kind), ("max_pages", str(MAX_PAGES)), ("password", DUMMY_PASSWORD)]
+    job = [("path", str(path)), ("kind", kind), ("max_pages", str(MAX_PAGES)), ("max_sheets", str(MAX_SHEETS)),
+           ("password", DUMMY_PASSWORD)]
     try:
         proc.stdin.write("".join(f"SET {k} {_hex(v)}\n" for k, v in job).encode("ascii") + b"ENDJOB\n")
         proc.stdin.close()
@@ -182,6 +205,8 @@ def _run(path: Path, kind: str, timeout: float) -> Converted:
     shared = False
     stage = ""
     chunks: dict[str, list[str]] = {}
+    sheets: list[Sheet] = []
+    sheet_chunks: list[str] = []
     done = ""
     results: dict[str, str] = {}
     notes: list[str] = []
@@ -217,6 +242,22 @@ def _run(path: Path, kind: str, timeout: float) -> Converted:
                 if office is not None:
                     procs.untrack(office)
                 office = None
+            elif head == "SHEET":
+                _, _, name = rest.partition(" ")
+                sheets.append(Sheet(_unhex(name.strip())))
+                sheet_chunks = []
+            elif head == "SHEETDONE" and sheets:
+                sheets[-1].data = _b64("".join(sheet_chunks))
+                if not sheets[-1].data:
+                    sheets[-1].note = "PDF を受け取れませんでした"
+                sheet_chunks = []
+            elif head == "SHEETFAIL" and sheets:
+                why = _unhex(rest.strip())
+                sheets[-1].note = "空のシート(印刷する物がありません)か、PDF にできませんでした"
+                notes.append(f"{sheets[-1].name}: {why}")
+                sheet_chunks = []
+            elif head == "PDFDATA" and sheets and not done:
+                sheet_chunks.append(rest.strip())          # Excel: いまのシートの PDF
             elif head in ("PDFDATA", "XLSXDATA", "DOCXDATA"):
                 chunks.setdefault(head, []).append(rest.strip())
             elif head == "DONE":
@@ -239,12 +280,12 @@ def _run(path: Path, kind: str, timeout: float) -> Converted:
         log.warning("%s の変換が %.0f 秒で終わりませんでした(%s): %s", app, timeout, where, path)
         raise ConvertError(f"{app} が {timeout:.0f} 秒で応答しませんでした(止まった所: {where})。"
                            f"隠れた {app} は止めました。「現物を開く」で見てください。", "TIMEOUT", where)
+    if done == "sheets" and any(sh.data for sh in sheets):
+        hidden = int(results.get("hidden_sheets") or 0) if (results.get("hidden_sheets") or "0").isdigit() else 0
+        return Converted("sheets", b"", app, notes, sheets, hidden)
     if done:
         prefix = {"pdf": "PDFDATA", "xlsx": "XLSXDATA", "docx": "DOCXDATA"}.get(done, "")
-        try:
-            data = base64.b64decode("".join(chunks.get(prefix, [])), validate=True)
-        except (binascii.Error, ValueError):
-            data = b""
+        data = _b64("".join(chunks.get(prefix, [])))
         if data:
             if shared:
                 notes.append("もともと開いていた Word を使いました(終えていません)")

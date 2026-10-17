@@ -36,7 +36,7 @@
 '
 ' Protocol
 '   stdin (from Python)
-'     SET <key> <hex>     (path, kind = excel | word, max_pages, password)
+'     SET <key> <hex>     (path, kind = excel | word, max_pages, max_sheets, password)
 '     ENDJOB
 '   stdout (ASCII, one command per line)
 '     READY
@@ -44,7 +44,10 @@
 '     EXCEL <hwnd>        (Python records the Excel PID from this)
 '     WORDPID <pid>       (the Word just started; 0 is never sent)
 '     WORDSHARED 1        (the user's running Word: Python must never end it)
-'     PDFDATA <base64>    (several lines)   then  DONE pdf
+'     SHEET <i> <hex name>  (Excel: one PDF per visible sheet, VER 0.15.0)
+'       PDFDATA <base64>  (several lines)   then  SHEETDONE 1 | SHEETFAIL <hex why>
+'     DONE sheets         (Excel: at least one sheet was sent)
+'     PDFDATA <base64>    (several lines)   then  DONE pdf     (Word)
 '     XLSXDATA <base64>   (several lines)   then  DONE xlsx
 '     DOCXDATA <base64>   (several lines)   then  DONE docx
 '     RESULT <key> <hex>  (code, errno, message, step, log, pages)
@@ -53,6 +56,7 @@
 Option Explicit
 
 Const msoAutomationSecurityForceDisable = 3
+Const xlSheetVisible = -1
 Const adTypeBinary = 1
 Const TemporaryFolder = 2
 Const xlTypePDF = 0
@@ -116,53 +120,50 @@ End Function
 ' Excel
 ' ----------------------------------------------------------------------------
 Function RunExcel(path)
-    Dim wb, outPath, number, description, maxPages, sent
+    Dim wb, sh, outPath, number, description, maxPages, maxSheets, sent, index, made, hidden, vis
 
     RunExcel = RC_FAILED
     If Not StartExcel() Then Exit Function
     Set wb = OpenBook(path)
     If wb Is Nothing Then Exit Function
 
-    maxPages = 0
     On Error Resume Next
+    maxPages = 0
     maxPages = CLng(JobValue("max_pages", "0"))
+    maxSheets = 0
+    maxSheets = CLng(JobValue("max_sheets", "30"))
     Err.Clear
 
-    ' ExportAsFixedFormat(Type, Filename, Quality, IncludeDocProperties,
-    '   IgnorePrintAreas, From, To, OpenAfterPublish)
-    outPath = NewTempPath(".pdf")
-    Stage "excel.pdf"
-    Err.Clear
-    If maxPages > 0 Then
-        wb.ExportAsFixedFormat xlTypePDF, outPath, xlQualityMinimum, False, False, 1, maxPages, False
-    Else
-        wb.ExportAsFixedFormat xlTypePDF, outPath, xlQualityMinimum, False, False, , , False
-    End If
-    number = Err.Number
-    description = Err.Description
-    Err.Clear
-    If number <> 0 And maxPages > 0 Then
-        ' fewer pages than From/To on some versions: try the whole workbook
-        NoteLog "Workbook.ExportAsFixedFormat (pages 1-" & maxPages & ") failed: 0x" & Hex(number) & " " & description
-        DeleteTempFile outPath
-        Err.Clear
-        wb.ExportAsFixedFormat xlTypePDF, outPath, xlQualityMinimum, False, False, , , False
-        number = Err.Number
-        description = Err.Description
-        Err.Clear
-    End If
-    If number = 0 Then
-        sent = SendFile(outPath, "PDFDATA")
-        DeleteTempFile outPath
-        If sent Then
-            Emit "DONE pdf"
-            CloseBook wb
-            RunExcel = RC_OK
-            Exit Function
+    ' One PDF per sheet (VER 0.15.0): the screen shows the sheets as tabs.
+    ' SHEET <i> <hex name>, then PDFDATA lines, then SHEETDONE 1 | SHEETFAIL <hex why>.
+    ' Hidden sheets are counted, not exported (Excel does not print them either).
+    index = 0
+    made = 0
+    hidden = 0
+    Stage "excel.sheets"
+    For Each sh In wb.Sheets
+        index = index + 1
+        If maxSheets > 0 And index > maxSheets Then
+            NoteLog "more sheets than " & maxSheets & ": the rest are not shown"
+            Exit For
         End If
-    Else
-        NoteLog "Workbook.ExportAsFixedFormat (PDF) failed: 0x" & Hex(number) & " " & description
-        DeleteTempFile outPath
+        vis = 0
+        vis = sh.Visible
+        Err.Clear
+        If vis = xlSheetVisible Then
+            Emit "SHEET " & index & " " & HexW(SheetName(sh))
+            If ExportSheet(sh, maxPages) Then made = made + 1
+        Else
+            hidden = hidden + 1
+        End If
+    Next
+    Err.Clear
+    WriteResult "hidden_sheets", CStr(hidden)
+    If made > 0 Then
+        Emit "DONE sheets"
+        CloseBook wb
+        RunExcel = RC_OK
+        Exit Function
     End If
 
     ' No PDF (no printer driver, old Excel): the workbook as .xlsx instead
@@ -189,6 +190,60 @@ Function RunExcel(path)
     RunExcel = RC_OK
 End Function
 
+
+
+' One sheet as a PDF -> PDFDATA lines. An empty sheet has nothing to print:
+' Excel fails, and the screen says so on that tab.
+' ExportAsFixedFormat(Type, Filename, Quality, IncludeDocProperties,
+'   IgnorePrintAreas, From, To, OpenAfterPublish)
+Function ExportSheet(sh, maxPages)
+    Dim outPath, number, description, sent
+
+    ExportSheet = False
+    On Error Resume Next
+    outPath = NewTempPath(".pdf")
+    Stage "excel.pdf"
+    Err.Clear
+    If maxPages > 0 Then
+        sh.ExportAsFixedFormat xlTypePDF, outPath, xlQualityMinimum, False, False, 1, maxPages, False
+    Else
+        sh.ExportAsFixedFormat xlTypePDF, outPath, xlQualityMinimum, False, False, , , False
+    End If
+    number = Err.Number
+    description = Err.Description
+    Err.Clear
+    If number <> 0 And maxPages > 0 Then
+        ' fewer pages than From/To on some versions: try the whole sheet
+        DeleteTempFile outPath
+        Err.Clear
+        sh.ExportAsFixedFormat xlTypePDF, outPath, xlQualityMinimum, False, False, , , False
+        number = Err.Number
+        description = Err.Description
+        Err.Clear
+    End If
+    If number <> 0 Then
+        NoteLog "Sheet.ExportAsFixedFormat (PDF) failed: 0x" & Hex(number) & " " & description
+        DeleteTempFile outPath
+        Emit "SHEETFAIL " & HexW("0x" & Hex(number) & " " & description)
+        Exit Function
+    End If
+    sent = SendFile(outPath, "PDFDATA")
+    DeleteTempFile outPath
+    If sent Then
+        Emit "SHEETDONE 1"
+        ExportSheet = True
+    Else
+        Emit "SHEETFAIL " & HexW("the PDF was not written or could not be read")
+    End If
+End Function
+
+
+Function SheetName(sh)
+    SheetName = ""
+    On Error Resume Next
+    SheetName = sh.Name
+    Err.Clear
+End Function
 
 Function StartExcel()
     Dim hwnd, number, description

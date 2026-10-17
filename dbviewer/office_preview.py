@@ -3,7 +3,8 @@
 ライン PC の Python には部品を足せないので、`zipfile` と `xml.etree` だけで .xlsx / .docx の中身を読み、
 HTML の表・文にして見せる(書式・図・グラフは出さない。**中身を確かめる**ためのプレビュー)。
 
-    .xlsx / .xlsm … シートごとの表(値。日付の書式なら日付にする)。1 シート 2,000 行 × 100 列まで
+    .xlsx / .xlsm … シートごとの表(値。日付の書式なら日付にする)。1 シート 2,000 行 × 100 列まで。
+                    **シートのタブで 1 枚ずつ**見る(0.15.0)。隠しシートは出さない(数だけ知らせる)
     .docx         … 段落(見出しは太字)と表。図は出さない
     .xls / .doc   … 古い形式は Python の標準では読めない → その PC の Excel・Word に PDF にしてもらう
                     (`office_bridge`。PDF にできないときは .xlsx / .docx にしてもらい、ここで表・文にする)
@@ -179,17 +180,18 @@ def read_xlsx(path: Path, data: bytes | None = None) -> list[dict]:
                     width = max(width, len(cells))
             while rows and not any(rows[-1]):
                 rows.pop()
-            sheets.append({"name": name, "rows": rows, "cols": width, "truncated": truncated})
+            sheets.append({"name": name, "rows": rows, "cols": width, "truncated": truncated,
+                           "hidden": sh.get("state") in ("hidden", "veryHidden")})
         return sheets
 
 
 def xlsx_html(path: Path, data: bytes | None = None, *, banner: str = "") -> str:
-    """`data` があればその中身(Excel が .xls から作った .xlsx)。見出しの名前は `path` のまま。"""
+    """`data` があればその中身(Excel が .xls から作った .xlsx)。見出しの名前は `path` のまま。
+    シートのタブで 1 枚ずつ見せる(0.15.0)。"""
     sheets = read_xlsx(path, data)
+    shown = [sh for sh in sheets if not sh["hidden"]] or sheets
     tabs, bodies = [], []
-    for i, sh in enumerate(sheets):
-        sid = f"s{i}"
-        tabs.append(f"<a href='#{sid}'>{escape(sh['name'])}</a>")
+    for i, sh in enumerate(shown):
         head = "".join(f"<th>{_col_name(c)}</th>" for c in range(sh["cols"]))
         body = []
         for r, row in enumerate(sh["rows"]):
@@ -197,11 +199,71 @@ def xlsx_html(path: Path, data: bytes | None = None, *, banner: str = "") -> str
             body.append(f"<tr><th>{r + 1}</th>{cells}</tr>")
         note = (f"<p class='note'>大きいので {MAX_ROWS:,} 行 × {MAX_COLS} 列までを出しています。全部は「現物を開く」で。</p>"
                 if sh["truncated"] else "")
-        empty = "<p class='note'>(空のシート)</p>" if not sh["rows"] else ""
-        bodies.append(f"<section id='{sid}'><h2>{escape(sh['name'])}</h2>{note}{empty}"
-                      f"<div class='wrap'><table><thead><tr><th></th>{head}</tr></thead>"
-                      f"<tbody>{''.join(body)}</tbody></table></div></section>")
-    return _page(path, "Excel", _banner(banner) + f"<nav>{''.join(tabs)}</nav>{''.join(bodies)}")
+        size = f"{len(sh['rows']):,} 行" if sh["rows"] else "空"
+        tabs.append(sheet_tab(i, sh["name"], size))
+        table = (f"<div class='wrap'><table><thead><tr><th></th>{head}</tr></thead>"
+                 f"<tbody>{''.join(body)}</tbody></table></div>" if sh["rows"] else "<p class='note'>(空のシート)</p>")
+        bodies.append(f"<section class='sheet' data-s='{i}'{'' if i == 0 else ' hidden'}>{note}{table}</section>")
+    return _page(path, "Excel", _banner(banner) + sheet_bar(tabs, len(sheets) - len(shown)) + "".join(bodies),
+                 script=TAB_SCRIPT)
+
+
+def pdf_sheets_html(path: Path, sheets: list[dict], src, *, hidden: int = 0) -> str:
+    """Excel がシートごとに作った PDF を、シートのタブで 1 枚ずつ(0.15.0)。`src(i)` はそのシートの PDF の場所。
+    sheets: [{name, ok, note}]。PDF にできなかったシート(空など)はタブに印を付け、押すと理由を出す。"""
+    tabs, bodies = [], []
+    for i, sh in enumerate(sheets):
+        tabs.append(sheet_tab(i, sh["name"], "" if sh.get("ok") else (sh.get("note") or "出せない"),
+                              src=src(i) if sh.get("ok") else ""))
+        if not sh.get("ok"):
+            bodies.append(f"<section class='sheet' data-s='{i}' hidden><p class='note'>"
+                          f"{escape(sh['name'])}: {escape(sh.get('note') or 'PDF にできませんでした')}</p></section>")
+    frame = "<iframe id='pdf' title='シートの PDF'></iframe>"
+    return _page(path, "Excel", sheet_bar(tabs, hidden) + "".join(bodies) + frame, script=TAB_SCRIPT, full=True)
+
+
+def sheet_tab(i: int, name: str, sub: str, *, src: str = "") -> str:
+    data_src = f" data-src='{escape(src, quote=True)}'" if src else ""
+    small = f"<small>{escape(sub)}</small>" if sub else ""
+    return (f"<button type='button' class='tab' role='tab' data-s='{i}'{data_src} "
+            f"aria-selected='{'true' if i == 0 else 'false'}'>{escape(name)}{small}</button>")
+
+
+def sheet_bar(tabs: list[str], hidden: int) -> str:
+    more = f"<span class='note'>隠しシート {hidden} 枚は出していません</span>" if hidden else ""
+    return f"<nav class='tabs' role='tablist' aria-label='シート'>{''.join(tabs)}{more}</nav>"
+
+
+# シートのタブ: 押したシートだけを出す。#s2 のように覚える(開き直しても同じシート)
+TAB_SCRIPT = r"""
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var frame = document.getElementById('pdf');
+  function pick(i) {
+    tabs.forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.s === String(i))); });
+    Array.prototype.forEach.call(document.querySelectorAll('section.sheet'), function (s) {
+      s.hidden = s.dataset.s !== String(i);
+    });
+    var tab = tabs.filter(function (t) { return t.dataset.s === String(i); })[0];
+    if (frame) {
+      var src = tab && tab.dataset.src;
+      frame.hidden = !src;
+      if (src && frame.getAttribute('src') !== src) frame.setAttribute('src', src);
+    }
+    if (tab) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    try { history.replaceState(null, '', '#s' + i); } catch (e) { /* 覚えられないだけ */ }
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { pick(t.dataset.s); }); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+    var cur = tabs.findIndex(function (t) { return t.getAttribute('aria-selected') === 'true'; });
+    var next = Math.max(0, Math.min(tabs.length - 1, cur + (e.key === 'ArrowRight' ? 1 : -1)));
+    if (next !== cur) pick(tabs[next].dataset.s);
+  });
+  var m = /^#s(\d+)$/.exec(location.hash);
+  pick(m && tabs.some(function (t) { return t.dataset.s === m[1]; }) ? m[1] : (tabs[0] ? tabs[0].dataset.s : 0));
+})();
+"""
 
 
 # ------------------------------------------------------------------
@@ -266,7 +328,7 @@ def _banner(text: str) -> str:
     return f"<p class='note'>{escape(text)}</p>" if text else ""
 
 
-def _page(path: Path, kind: str, inner: str) -> str:
+def _page(path: Path, kind: str, inner: str, *, script: str = "", full: bool = False) -> str:
     return f"""<!doctype html><html lang="ja"><meta charset="utf-8"><title>{escape(path.name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -281,6 +343,17 @@ header small {{ color:var(--muted); }}
 .kind {{ font-size:11px; padding:1px 8px; border:1px solid var(--accent); color:var(--accent); border-radius:99px; }}
 nav {{ display:flex; gap:6px; flex-wrap:wrap; margin:0 0 12px; }}
 nav a {{ color:var(--accent); text-decoration:none; padding:2px 10px; border:1px solid var(--line); border-radius:6px; }}
+nav.tabs {{ flex-wrap:nowrap; overflow-x:auto; gap:4px; border-bottom:1px solid var(--line); margin:0 0 12px; padding-bottom:0;
+  align-items:flex-end; }}
+nav.tabs .note {{ flex:none; margin-left:8px; align-self:center; }}
+.tab {{ flex:none; font:inherit; color:var(--muted); background:transparent; border:1px solid transparent; border-bottom:0;
+  border-radius:6px 6px 0 0; padding:4px 12px; cursor:pointer; display:flex; gap:6px; align-items:baseline; }}
+.tab small {{ font-size:11px; color:var(--muted); }}
+.tab:hover {{ color:var(--ink); background:var(--head); }}
+.tab[aria-selected="true"] {{ color:var(--ink); background:var(--bg); border-color:var(--line); font-weight:700;
+  margin-bottom:-1px; box-shadow:inset 0 2px 0 var(--accent); }}
+body.full {{ height:100vh; box-sizing:border-box; display:flex; flex-direction:column; padding-bottom:12px; }}
+body.full iframe {{ flex:1; width:100%; border:1px solid var(--line); border-radius:6px; background:#fff; }}
 h2 {{ font-size:15px; margin:18px 0 6px; }}
 .wrap {{ overflow:auto; max-height:75vh; width:fit-content; max-width:100%; border:1px solid var(--line); border-radius:6px; }}
 table {{ border-collapse:collapse; font-size:13px; }}
@@ -292,7 +365,9 @@ article {{ max-width:52em; }}
 article p {{ margin:0 0 .6em; white-space:pre-wrap; }} article p.blank {{ margin:0 0 .6em; min-height:.6em; }}
 .note {{ color:var(--muted); font-size:12px; }}
 </style>
+<body class="{'full' if full else ''}">
 <header><span class="kind">{kind}</span><b>{escape(path.name)}</b><small>{escape(str(path.parent))}</small>
-<small>プレビュー(中身だけ。書式・図は出しません)</small></header>
+<small>{'プレビュー(Excel が作った PDF。シートのタブで切り替え)' if full else 'プレビュー(中身だけ。書式・図は出しません)'}</small></header>
 {inner}
-</html>"""
+{f'<script>{script}</script>' if script else ''}
+</body></html>"""
