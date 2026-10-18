@@ -83,8 +83,8 @@
       {# かんたん設定(0.8.0): 決めるのは 見る DB と 列ごとの 表示・入力・印刷 だけ。中身は views/easy.js が描く #}
       <section class="tabpanel tabpanel--scroll" id="panel-easy" role="tabpanel" aria-labelledby="tab-easy" hidden>
         <p class="status status--warn" id="easyLogin" hidden>
-          ログインすると、ここで決められます。
-          <a class="btn btn--find" href="/login?next=%2Fsettings%3Ftab%3Deasy" style="margin-left:8px">ログイン</a>
+          起動モードを決めると、ここで決められます。
+          <a class="btn btn--find" href="/login?next=%2Fsettings%3Ftab%3Deasy" style="margin-left:8px">起動モードへ</a>
         </p>
         <p class="status status--ng" id="easyProblem" hidden></p>
         <div class="pathcards" id="easyBody" hidden>
@@ -145,23 +145,33 @@
 
           <section class="card">
             <header>
-              <i class="ib ib--sm" aria-hidden="true">人</i>
-              <h3>ログイン</h3>
-              <span class="eyebrow">使わなくてもよい</span>
+              <i class="ib ib--sm" aria-hidden="true">権</i>
+              <h3>権限(編集可 / 閲覧のみ)</h3>
+              <span class="eyebrow">梱包資材マスタの「アクセス権限」</span>
             </header>
             <div class="pad">
-              <p class="why" id="easyIdState"></p>
-              <div id="easyStartBox" hidden>
-                <div class="optgrid">
-                  <span>ログイン ID</span><b id="easyStartId"></b>
-                  <label for="easyStartName">名前</label>
-                  <input class="input" id="easyStartName" autocomplete="off" placeholder="空なら ID と同じ" style="width:16em">
-                  <label for="easyStartPass">パスワード</label>
-                  <input class="input" id="easyStartPass" type="password" autocomplete="new-password" style="width:16em">
-                </div>
-                <div class="btn-row" style="margin-top:8px">
-                  <button class="btn btn--commit" type="button" id="easyStart">自分を Level 5 で登録してログインを使う</button>
-                </div>
+              <p class="why">パスワードは使いません。Windows の<b>ログイン ID</b>と<b>PC 名</b>で、梱包資材マスタ
+                (<code>梱包資材マスタ.sqlite3</code>)の「アクセス権限」を引き、権限に <code>dbviewer:edit</code> の行があれば
+                <b>編集可</b>、無ければ<b>閲覧のみ</b>です。空欄は「問わない」、有効が 0 の行は効きません(all-tools と同じ読み方)。</p>
+              <div class="optgrid">
+                <span>この PC</span><b id="rightsWho"></b>
+                <span>いまの権限</span><b id="rightsNow"></b>
+                <span>理由</span><span id="rightsWhy" class="why" style="margin:0"></span>
+                <label for="rightsPath">アクセス権限マスタ</label>
+                <span class="easyrow" style="margin:0">
+                  <input class="input" id="rightsPath" spellcheck="false" style="width:30em; max-width:100%"
+                         placeholder="空 = 見ている DB と同じフォルダの 梱包資材マスタ.sqlite3">
+                  <button class="btn btn--commit" type="button" id="rightsSave">保存</button>
+                  <button class="btn btn--find" type="button" id="rightsRecheck">読み直す</button>
+                </span>
+                <span>読んでいる所</span><span id="rightsUsing" class="why" style="margin:0"></span>
+              </div>
+              <p class="why" id="rightsHint"></p>
+              <div class="tablewrap" id="rightsRowsWrap" hidden>
+                <table class="table">
+                  <thead><tr><th>管理番号</th><th>ログインID</th><th>PC名</th><th>有効</th><th>備考</th></tr></thead>
+                  <tbody id="rightsRows"></tbody>
+                </table>
               </div>
             </div>
           </section>
@@ -321,7 +331,7 @@
               </label>
             </div>
             <div class="field" style="margin-top:8px">
-              <label for="reloginMinutes">無操作で再ログイン(分)</label>
+              <label for="reloginMinutes">無操作で権限を読み直す(分)</label>
               <input class="input" id="reloginMinutes" type="number" min="0" step="1" style="width:6em" value="{{ view.relogin_minutes }}">
               <span class="why" style="margin:0">0 = しない(VBA と同じく、閉じるまで有効)</span>
             </div>
@@ -533,7 +543,7 @@
     <button class="btn btn--danger" type="button" id="bringRefresh" disabled>選んだ表を入れ替える・作り直す</button>
   </div>
   <p class="why">
-    Level 5 でログインしている必要があります。書く前に、本体の控えを
+    編集可の権限が必要です。書く前に、本体の控えを
     この端末の <code>backup</code> フォルダへ取ります。
   </p>
 </dialog>

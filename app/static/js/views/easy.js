@@ -1,5 +1,6 @@
 /*
-  かんたん設定(設定 → かんたん設定)。決めるのは 見る DB と、列ごとの 表示・入力・印刷 だけ。
+  かんたん設定(設定 → かんたん設定)。決めるのは 見る DB と、列ごとの 表示・入力・印刷・クリック、
+  権限を読む アクセス権限マスタ(0.16.0)。
   判断(誰が書けるか・値の確かめ)はサーバ(easy_setup.py / simple_table.py)。ここは選ばせて送るだけ。
 */
 import { api } from "../api.js";
@@ -8,7 +9,7 @@ import { confirmBox } from "../askbox.js";
 
 const el = {};
 let st = null;                    // /api/easy/state
-let sessionId = "";               // ログインした ID(ログインを使うで登録する ID)
+let rights = null;                // /api/easy/rights(0.16.0: 編集可 / 閲覧のみ)
 
 function show(id, on) { el[id].hidden = !on; }
 
@@ -45,14 +46,56 @@ function render() {
   el.easyRetire.disabled = !st.can_write;
   el.easyCols.replaceChildren(...st.columns.map(columnRow));
   el.easyColsSave.disabled = !st.can_write;
-  el.easyColsHint.textContent = st.can_write ? "" : "見るだけです(保存は Level 5)。";
+  el.easyColsHint.textContent = st.can_write ? "" : "閲覧のみです(保存は 編集可 の権限で)。";
+}
 
-  // ログイン
-  show("easyStartBox", !st.has_id);
-  el.easyStartId.textContent = sessionId || "(ログインした ID)";
-  el.easyIdState.textContent = st.has_id
-    ? "ID の表で、人とレベルを決めています(人を足すのは マスタ管理 の ID)。"
-    : "この DB には ID の表が無いので、誰でも見て直せます。人とレベルを決めたいときだけ、自分を登録してログインを使います。";
+/* ---------------- 権限(梱包資材マスタの「アクセス権限」) ---------------- */
+async function loadRights() {
+  try { rights = await api.post("/api/easy/rights", {}); } catch (err) { toastError(err); return; }
+  const me = rights.me || {};
+  el.rightsWho.textContent = `${me.login_id || "?"} / ${me.pc || "?"}`;
+  el.rightsNow.textContent = me.label || "-";
+  el.rightsNow.style.color = me.edit ? "var(--ok)" : "";
+  el.rightsWhy.textContent = me.reason || "";
+  const o = rights.master || {};
+  if (document.activeElement !== el.rightsPath) el.rightsPath.value = o.configured || "";
+  el.rightsUsing.textContent = !o.path ? "(決めていません。誰でも 編集可)"
+    : `${o.path}${o.auto ? "(見ている DB と同じフォルダ)" : ""}`
+      + (o.found ? ` ・ ${o.rows} 行` : ` ・ 読めません: ${o.problem}`);
+  el.rightsSave.disabled = !rights.can_change;
+  el.rightsPath.disabled = !rights.can_change;
+  const rows = o.edit_rows || [];
+  el.rightsHint.textContent = !o.found ? ""
+    : rows.length ? `${o.permission} の行(この行に当てはまる ID・PC が 編集可):`
+    : `${o.permission} の行がまだありません。編集させたい人・PC の行を「${o.table}」に足してください`
+      + "(権限 = dbviewer:edit、有効 = 1。ログインID・PC名の空欄は「問わない」)。";
+  el.rightsRowsWrap.hidden = !rows.length;
+  el.rightsRows.replaceChildren(...rows.map((r) => {
+    const tr = document.createElement("tr");
+    for (const k of ["管理番号", "ログインID", "PC名", "有効", "備考"]) {
+      const td = document.createElement("td"); td.textContent = r[k] ?? ""; tr.appendChild(td);
+    }
+    return tr;
+  }));
+}
+
+async function saveRightsPath() {
+  try {
+    const res = await api.post("/api/easy/rights", { path: el.rightsPath.value.trim(), save: true });
+    toast(res.message || "保存しました。", "ok");
+    rights = null;
+    await recheckRights();
+  } catch (err) { toastError(err, "warn"); }
+}
+
+async function recheckRights() {
+  try {
+    const s = await api.post("/api/login", {});
+    const lv = document.getElementById("rb-level");          // 上の帯の権限も替える
+    if (lv) lv.textContent = s.label;
+    await loadRights();
+    await load(st ? st.table : "");
+  } catch (err) { toastError(err); }
 }
 
 function columnRow(c) {
@@ -141,32 +184,11 @@ async function retireVba() {
   } catch (err) { toastError(err, "warn"); }
 }
 
-async function startLogin() {
-  const password = el.easyStartPass.value;
-  if (!password) { toast("パスワードを入れてください。", "warn"); el.easyStartPass.focus(); return; }
-  if (!(await confirmBox("あなたを Level 5(管理者)で登録して、この DB に ID の表を作ります。次からはログインが要ります。よろしいですか？",
-                         { ok: "登録する" }))) return;
-  try {
-    const res = await api.post("/api/easy/start", { password, name: el.easyStartName.value });
-    el.easyStartPass.value = "";
-    toast(res.message, "ok");
-    const lv = document.getElementById("rb-level");          // 上の帯のレベルも替える
-    if (lv && res.level) lv.textContent = String(res.level);
-    await load(st.table);
-  } catch (err) { toastError(err, "warn"); }
-}
-
-async function loadSession() {
-  try {
-    const s = await api.get("/api/session");
-    sessionId = s.user_id || "";
-  } catch { /* 出せないだけ */ }
-}
-
 export function start() {
   for (const id of ["easyLogin", "easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
-                    "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyIdState", "easyStartBox",
-                    "easyStartId", "easyStartName", "easyStartPass", "easyStart", "easyVbaCard", "easyVbaList",
+                    "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyVbaCard", "easyVbaList",
+                    "rightsWho", "rightsNow", "rightsWhy", "rightsPath", "rightsSave", "rightsRecheck", "rightsUsing",
+                    "rightsHint", "rightsRowsWrap", "rightsRows",
                     "easyRetire"]) {
     el[id] = document.getElementById(id);
   }
@@ -179,10 +201,12 @@ export function start() {
     load(el.easyTable.value);
   });
   el.easyColsSave.addEventListener("click", saveColumns);
-  el.easyStart.addEventListener("click", startLogin);
+  el.rightsSave.addEventListener("click", saveRightsPath);
+  el.rightsRecheck.addEventListener("click", recheckRights);
   el.easyRetire.addEventListener("click", retireVba);
   el.easyGoSource.addEventListener("click", () => document.getElementById("tab-source")?.click());
   // タブを開くたびに読み直す(接続先で DB を替えたかもしれない)
-  document.getElementById("tab-easy")?.addEventListener("click", () => load());
-  loadSession().then(() => load());
+  document.getElementById("tab-easy")?.addEventListener("click", () => { load(); loadRights(); });
+  load();
+  loadRights();
 }

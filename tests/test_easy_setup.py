@@ -86,7 +86,7 @@ class PlainDbTest(_Case):
 
     def test_open_and_edit_any_table_without_settings(self):
         j = self.login()
-        self.assertEqual(j["level"], auth.NO_ID_LEVEL)                    # ID が無い = 誰でも直せる
+        self.assertEqual(j["level"], auth.EDIT_LEVEL)                     # アクセス権限マスタ未設定 = 誰でも直せる
         self.assertIn("誰でも", j["note"])
         d = self.ok("/api/list/data")
         self.assertEqual((d["mode"], d["table"]), ("simple", "部品"))
@@ -191,21 +191,6 @@ class PlainDbTest(_Case):
                          .status_code, 422)
         self.assertEqual(self.save_cols("部品", 単価={"input": "なにか"}).status_code, 422)
         self.assertEqual(self.post("/api/easy/columns", table=config.ID_TABLE, rows=[]).status_code, 422)
-
-    def test_start_login(self):
-        self.login()
-        st = self.ok("/api/easy/state")
-        self.assertFalse(st["has_id"])
-        self.assertEqual(self.post("/api/easy/start", password="").status_code, 422)
-        r = self.ok("/api/easy/start", password="Pass1", name="試験")
-        self.assertEqual(auth.level(), 5)
-        self.assertTrue(Path(r["backup"]).is_file())
-        self.assertIn("ID", self.tables())
-        self.assertNotIn("全般設定", self.tables())                               # 全般設定 は作らない
-        self.assertEqual(self.post("/api/easy/start", password="x").get_json()["reason"], "has_id")
-        auth.end()
-        self.assertEqual(self.post("/api/login", id=auth.network_id(), password="bad").status_code, 403)
-        self.assertEqual(self.login("pass1")["level"], 5)
 
     def test_master_rows_in_any_table(self):
         """マスタ管理にどの表も並び、1 列目が番号でない表も行を足す・直せる。"""

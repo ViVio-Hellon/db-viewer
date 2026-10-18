@@ -1,5 +1,5 @@
 /* 閲覧・出力。全般設定「テーブル閲覧」の表(空なら業務の表ぜんぶ)を、一覧と同じ表(grid.js)で見る。
-   Level 5 なら、見ている表に列を足せる(addcolumn.js)。 */
+   編集可 なら、見ている表に列を足せる(addcolumn.js)。 */
 import { api } from "../api.js";
 import { openAddColumn } from "../addcolumn.js";
 import { toast, toastError } from "../toast.js";

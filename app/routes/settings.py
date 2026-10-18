@@ -107,14 +107,11 @@ BRING_LEVEL = 5
 
 def _bring_refused():
     from dbviewer import auth
-    s = auth.current()
-    if s is None:
-        return jsonify({"error": {"code": "login", "message":
-                                  "ログインが必要です。一覧からログインしてください。"}}), 401
+    s = auth.ensure()                              # 画面を開いた PC の権限(0.16.0。パスワードは無い)
     if s.level < BRING_LEVEL:
         return jsonify({"error": {"code": "not_allowed", "message":
-                                  f"表を持ってくる・入れ替えるには Level {BRING_LEVEL} が必要です"
-                                  f"(いまは Level {s.level})。"}}), 403
+                                  "表を持ってくる・入れ替えるには 編集可 の権限が要ります"
+                                  f"(いまは {s.label if s else '未確認'})。"}}), 403
     return None
 
 

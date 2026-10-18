@@ -187,8 +187,7 @@ class ReportWebTest(unittest.TestCase):
 
     def test_run_without_excel_template(self):
         """原紙(出力原紙.xlsx)が無くても帳票が出る。Excel は使わない。"""
-        self.assertEqual(self.c.post("/api/report/run", json={}, headers=self.h).status_code, 401)
-        self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
+        self.c.post("/api/login", json={}, headers=self.h)                 # 0.16.0: 画面を開けば自動で入る
         self.assertFalse(any(Path(self.tmp.name).glob("*.xlsx")))
         r = self.c.post("/api/report/run", json={}, headers=self.h)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))

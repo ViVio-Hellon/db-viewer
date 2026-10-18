@@ -11,7 +11,7 @@ python-web-tools(梱包資材総合ツール)の `app/__init__.py` を複製し�
 - 静的ファイルの URL への版付与とキャッシュ方針
 
 【DBビューアの権限】
-誰が何をできるかは VBA と同じく `ID` テーブルの Level が決める
+誰が何をできるかは 梱包資材マスタの「アクセス権限」が決める(編集可 / 閲覧のみ。0.16.0)
 (`dbviewer/auth.py`)。ログインは Phase 4 で `before_request` に足す。
 """
 from __future__ import annotations
@@ -259,8 +259,11 @@ LOGIN_EXEMPT_PATHS = frozenset({"/", "/login", "/api/login", "/api/logout", "/ap
 
 
 def _login_required():
-    """VBA は Login を通らないと MF1 を出さない。Web も同じ(設定だけは前から触れる)。"""
+    """画面を開けば、この PC のログイン ID・PC 名で自動で入る(0.16.0。パスワードは無い)。
+    編集可 / 閲覧のみ は 梱包資材マスタの「アクセス権限」が決める(`access_rights`)。
+    起動モード(オンライン / オフライン)が未設定のときだけ、先にそれを決める画面へ。"""
     from dbviewer import auth
+    from dbviewer.presenters import settings as settings_presenter
     from flask import redirect
 
     path = request.path
@@ -269,12 +272,11 @@ def _login_required():
         if s:
             s.touch()
         return None
-    s = auth.current()
-    if s is None:
+    if auth.current() is None and not settings_presenter.mode_is_set():
         if path.startswith("/api/"):
             return jsonify(_error("login", auth.MSG_NEED_LOGIN)), 401
         return redirect("/login?next=" + path)
-    s.touch()
+    auth.ensure().touch()
     return None
 
 

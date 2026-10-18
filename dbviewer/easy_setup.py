@@ -6,7 +6,8 @@ VBA 版は 全般設定・ID・<メイン>_設定 を Access で開いて決ま�
     見る DB          … 設定「接続先」で選ぶ(ここでは今の DB を見せるだけ)
     列ごとの設定      … 表を選び、列ごとに 表示 / 入力(文字・コンボボックス・スピンボタン・カレンダー)/ 印刷
                          → DB の中の隠した表「ツールの設定」に表ごとに書く(simple_table.py)
-    ログインを使う    … ID の表が無い DB は誰でも直せる。人とレベルを決めたいときだけ、自分を Level 5 で登録
+    権限             … 0.16.0 から 梱包資材マスタの「アクセス権限」(編集可 / 閲覧のみ。access_rights.py)。
+                         ID の表・パスワード・Level は使わない
 
 全般設定・<表>_設定 は要らない。<表>_設定 は画面では使わず(0.9.0)、入力の種類を取り込んで消せる(`retire_vba`)。
 """
@@ -18,23 +19,18 @@ from typing import Any
 
 from . import config, shared_db, simple_table
 from .logging_utils import get_logger
-from .settings_tables import SystemSetup, q, table_exists, table_names, user_tables
-from .vba_compat import to_narrow
+from .settings_tables import SystemSetup, q, table_names, user_tables
 
 log = get_logger("easy_setup")
 
-WRITE_LEVEL = 5
-ID_COLUMNS = (("番号", "INTEGER"), ("名前", "TEXT"), ("ID", "TEXT"), ("PC", "TEXT"), ("PASS", "TEXT"),
-              ("Level", "TEXT"), ("備考", "TEXT"))
+WRITE_LEVEL = 5                 # 編集可(auth.EDIT_LEVEL)
 
 REFUSE_LEVEL = "level"
 REFUSE_INPUT = "bad_input"
 REFUSE_TABLE = "no_table"
-REFUSE_HAS_ID = "has_id"
-REFUSE_PASSWORD = "password"
 REFUSE_FAILED = "failed"
 
-MSG_LEVEL = f"設定を保存するには Level {WRITE_LEVEL} が必要です。"
+MSG_LEVEL = "設定を保存するには 編集可 の権限が要ります(梱包資材マスタの「アクセス権限」に dbviewer:edit の行)。"
 
 
 @dataclass
@@ -43,7 +39,7 @@ class EasyResult:
     message: str
     reason: str = ""
     backup: str = ""
-    level: int = 0             # ログインを使い始めたときの新しいレベル
+    level: int = 0
 
 
 def _decl_types(conn: sqlite3.Connection, table: str) -> dict[str, str]:
@@ -148,36 +144,3 @@ def save_columns(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
 def _backup(conn: sqlite3.Connection, why: str) -> str:
     from .master_admin import _backup as backup
     return backup(conn, why)
-
-
-def start_login(conn: sqlite3.Connection, setup: SystemSetup, *, user_id: str, pc: str, name: str,
-                password: str) -> EasyResult:
-    """ID の表を作って、自分を Level 5 で登録する(このあとはログインで人とレベルを決める)。"""
-    if setup.has_id or table_exists(conn, config.ID_TABLE):
-        return EasyResult(False, "この DB には ID の表があります。人を足すのは マスタ管理 の ID で、"
-                                 "Level 4 以上の人がします。", REFUSE_HAS_ID)
-    if not user_id or not pc:
-        return EasyResult(False, "この PC のログイン ID・PC 名が分かりません。", REFUSE_FAILED)
-    if not password:
-        return EasyResult(False, "パスワードを入れてください(次のログインから使います)。", REFUSE_PASSWORD)
-    try:
-        backup = _backup(conn, "ログインを使い始める前")
-    except OSError as exc:
-        return EasyResult(False, f"書く前の控えを取れなかったので、やめました: {exc}", REFUSE_FAILED)
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute(f"CREATE TABLE {q(config.ID_TABLE)} ({', '.join(f'{q(n)} {t}' for n, t in ID_COLUMNS)})")
-        conn.execute(f"INSERT INTO {q(config.ID_TABLE)} ({', '.join(q(n) for n, _ in ID_COLUMNS)}) "
-                     f"VALUES (?, ?, ?, ?, ?, ?, ?)",
-                     (1, name or user_id, user_id, pc, to_narrow(password.lower()), str(WRITE_LEVEL),
-                      "かんたん設定で登録"))
-        conn.execute("COMMIT")
-    except sqlite3.Error as exc:
-        try:
-            conn.execute("ROLLBACK")
-        except sqlite3.Error:
-            pass
-        log.exception("ID の表を作れません")
-        return EasyResult(False, f"書けませんでした: {exc}", REFUSE_FAILED, backup=backup)
-    return EasyResult(True, f"{user_id} を Level {WRITE_LEVEL} で登録しました。次からはこの ID とパスワードで"
-                            f"ログインします。人を足すときは マスタ管理 の ID で。", backup=backup, level=WRITE_LEVEL)

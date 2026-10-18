@@ -44,7 +44,7 @@ MSG_NO_TARGET_DELETE = "削除対象データがありません。"
 MSG_DELETE_ASK = "削除しますか？"
 MSG_DELETE_CANCEL = "キャンセルしました。"
 MSG_DELETE_DONE = "削除しました。"
-MSG_NOT_EDITABLE = "この表はこのレベルでは直せません。"
+MSG_NOT_EDITABLE = "この表は直せません(閲覧のみの権限か、直せない表です)。"
 
 
 def used_tables(conn: sqlite3.Connection, setup: SystemSetup) -> list[tuple[str, str]]:
@@ -297,7 +297,7 @@ REFUSE_DELETE_ITEM = "delete_item"
 REFUSE_NO_ROW = "no_row"
 REFUSE_FAILED = "failed"
 
-MSG_COLUMN_LEVEL = f"列を足すには Level {COLUMN_LEVEL} が必要です(表の形を変えるため)。"
+MSG_COLUMN_LEVEL = "列を足すには 編集可 の権限が要ります(表の形を変えるため)。"
 MSG_ROWS_IN_LIST = "本体の行は一覧で直します(登録の決まり・履歴を通すため)。ここでは列の追加だけです。"
 
 
@@ -315,6 +315,9 @@ class ColumnResult:
 def listed_tables(conn: sqlite3.Connection, setup: SystemSetup, level: int) -> list[str]:
     """マスタ管理の左に並べる表。直せる表 + Level 5 なら本体(列の追加だけ)。並びは VBA `sortTblArr` と同じく
     ID, 全般設定, <メイン>, <メイン>_設定, …"""
+    if level < 3:
+        # 閲覧のみ(0.16.0): 直せる表は無いが、見るだけなら同じ表を並べる(ID の表は出さない)
+        return [t for t in editable_tables(conn, setup, COLUMN_LEVEL) if t != config.ID_TABLE]
     tables = editable_tables(conn, setup, level)
     main = setup.general.main_table
     if level >= COLUMN_LEVEL and main and table_exists(conn, main) and main not in tables:
@@ -345,13 +348,16 @@ def capabilities(setup: SystemSetup, table: str, level: int,
     can_columns = level >= COLUMN_LEVEL and not fixed
     setting = (_setting_table_of(conn, setup, table) or "") if conn is not None and can_columns else ""
     note = ""
-    if is_history(table):
+    if level < 3:
+        note = "閲覧のみの権限です(直すには 編集可 の権限が要ります)。"
+    elif is_history(table):
         note = "履歴は見るだけです。"
     elif fixed:
         note = fixed
     elif level < COLUMN_LEVEL:
         note = MSG_COLUMN_LEVEL
-    return {"rows": not is_history(table), "columns": can_columns, "note": note, "setting_table": setting}
+    return {"rows": not is_history(table) and level >= 3, "columns": can_columns, "note": note,
+            "setting_table": setting}
 
 
 def validate_column_name(conn: sqlite3.Connection, setup: SystemSetup, table: str, name: str) -> str:
@@ -496,7 +502,7 @@ def add_item(conn: sqlite3.Connection, setup: SystemSetup, values: list[str], *,
     """`<メイン>_設定` に行を足す = 本体に項目(列)を足す。行の値は画面で入れたもの。"""
     conv, main = setup.general.conv_table, setup.general.main_table
     if level < COLUMN_LEVEL:
-        return ado_sql.AdoResult(False, f"項目(本体の列)を足すには Level {COLUMN_LEVEL} が必要です。", REFUSE_LEVEL)
+        return ado_sql.AdoResult(False, "項目(本体の列)を足すには 編集可 の権限が要ります。", REFUSE_LEVEL)
     cols = column_names(conn, conv)
     fj = field_dic(cols)
     j = fj.get(config.ITEM_NAME, 0)

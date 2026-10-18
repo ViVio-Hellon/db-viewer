@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}ログイン — {{ display_name }}{% endblock %}
+{% block title %}権限 — {{ display_name }}{% endblock %}
 {% block content %}
 <div class="pane">
   <div class="pane__head">
-    <div><span class="eyebrow">ログイン</span><h2>{{ ribbon.system }}</h2></div>
+    <div><span class="eyebrow">この PC の権限</span><h2>{{ ribbon.system }}</h2></div>
   </div>
   <span class="dimline" aria-hidden="true"></span>
   {# VBA regUF: 起動モードが未設定のときだけ、ログインより先に選ばせる #}
@@ -18,23 +18,23 @@
       </div>
     </div>
   </section>
-  <section class="card" style="max-width:32em; margin-top:12px" id="loginCard" {% if not mode_set %}hidden{% endif %}>
-    <header><i class="ib ib--sm" aria-hidden="true">認</i><h3>ID とパスワード</h3></header>
+  {# 0.16.0: パスワードは無い。この PC のログイン ID・PC 名で、梱包資材マスタの「アクセス権限」を引く #}
+  <section class="card" style="max-width:36em; margin-top:12px" id="loginCard" {% if not mode_set %}hidden{% endif %}>
+    <header><i class="ib ib--sm" aria-hidden="true">権</i><h3>この PC の権限</h3></header>
     <div class="pad">
       <form id="loginForm" autocomplete="off">
-        <div class="field"><label for="loginId" style="width:8em">ID</label>
-          <input class="input" id="loginId" value="{{ last_user }}" spellcheck="false" style="flex:1">
-          <button class="btn btn--find" type="button" id="useMyId" title="この PC のログイン ID を入れる">{{ use_id }}</button>
-        </div>
-        <div class="field" style="margin-top:8px"><label for="loginPass" style="width:8em">パスワード</label>
-          <input class="input" id="loginPass" type="password" style="flex:1">
-          <button class="btn btn--find" type="button" id="showPass">表示</button>
-        </div>
-        <p class="why">この PC: <b>{{ use_pc }}</b> / OS のログイン ID: <b>{{ use_id }}</b>。ID テーブルの ID と PC の両方が一致する行のパスワードで確かめます(VBA 版と同じ)。</p>
+        <dl style="display:grid; grid-template-columns:8em 1fr; gap:4px 12px; margin:0">
+          <dt class="why" style="margin:0">ログイン ID</dt><dd style="margin:0"><b>{{ use_id }}</b></dd>
+          <dt class="why" style="margin:0">PC 名</dt><dd style="margin:0"><b>{{ use_pc }}</b></dd>
+          <dt class="why" style="margin:0">権限</dt><dd style="margin:0"><b id="rightsLabel">{{ rights.label if rights else "-" }}</b></dd>
+        </dl>
+        <p class="why" id="rightsReason">{{ rights.reason if rights else "" }}</p>
+        <p class="why">編集可 / 閲覧のみ は、梱包資材マスタの「アクセス権限」で決めます(この ID・PC に
+          <code>dbviewer:edit</code> の行があれば 編集可)。パスワードは要りません。</p>
         <p class="status status--ng" id="loginProblem" hidden></p>
         <div class="btn-row" style="margin-top:8px">
-          <button class="btn btn--commit" type="submit" id="loginExe">ログイン</button>
-          <a class="btn btn--find" href="/settings">設定へ</a>
+          <button class="btn btn--commit" type="submit" id="loginExe">使い始める</button>
+          <a class="btn btn--find" href="/settings?tab=easy">設定へ</a>
           <button class="btn btn--find" type="button" id="resetMode" title="VBA 版の鍵ボタンのダブルクリックと同じ(オンライン/オフラインの設定を消して選び直す)" data-ask="{{ reset_ask }}">起動モードを初期化</button>
         </div>
       </form>

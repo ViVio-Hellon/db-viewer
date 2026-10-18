@@ -99,7 +99,8 @@ def tables():
                     # 「表を持ってくる」で足した表(一覧に「足」の印を付ける)
                     "brought": sorted(table_bring.brought_tables(conn)),
                     "why": why,
-                    "title": f"マスタメンテナンス アクセスレベル:{lv}"})
+                    "edit": lv >= 3, "label": auth.current().label if auth.current() else "",
+                    "title": f"マスタメンテナンス 権限:{auth.current().label if auth.current() else '-'}"})
 
 
 @bp.post("/api/master/rows")

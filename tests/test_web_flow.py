@@ -1,4 +1,4 @@
-"""画面と API の通し試験(ログインの関門 → 一覧 → 編集 → 登録)"""
+"""画面と API の通し試験(権限 → 一覧 → 編集 → 登録)"""
 from __future__ import annotations
 
 import os
@@ -39,18 +39,21 @@ class WebFlowTest(unittest.TestCase):
         return self.c.post("/api/login", json={"id": uid, "password": pw}, headers=self.h)
 
     def test_gate(self):
+        """0.16.0: パスワードは無い。画面を開けば この PC の ID・PC 名で自動で入る。"""
+        self.assertEqual(self.c.get("/list").status_code, 200)
+        s = self.c.get("/api/session", headers=self.h).get_json()
+        self.assertEqual((s["user_id"], s["label"], s["edit"]), ("Xfa-Ngyinazawa", "編集可", True))   # マスタ未設定
+        self.assertEqual(s["rights"]["source"], "unset")
+        self.assertEqual(self.c.get("/login").status_code, 200)
+        r = self.login("nobody", "なんでも")                                  # ID・パスワードは使わない
+        self.assertEqual((r.status_code, r.get_json()["user_id"]), (200, "Xfa-Ngyinazawa"))
+        self.assertEqual(self.c.post("/api/logout", json={}, headers=self.h).status_code, 200)
+        self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 200)  # 読み直して入る
+        # 起動モードが未設定なら、先にそれ
+        user_settings.save(config.KEY_ONLINE, None)
+        auth.end()
         self.assertEqual(self.c.get("/list").status_code, 302)
         self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 401)
-        self.assertEqual(self.c.get("/settings").status_code, 200)
-        self.assertEqual(self.c.get("/login").status_code, 200)
-        r = self.login("nobody")
-        self.assertEqual(r.status_code, 403)
-        self.assertIn("IDが登録されていません", r.get_json()["error"]["message"])
-        r = self.login()
-        self.assertEqual((r.status_code, r.get_json()["level"]), (200, 5))
-        self.assertEqual(self.c.get("/list").status_code, 200)
-        self.assertEqual(self.c.post("/api/logout", json={}, headers=self.h).status_code, 200)
-        self.assertEqual(self.c.get("/list").status_code, 302)
 
     def test_list_and_edit_cycle(self):
         self.login()
@@ -79,18 +82,24 @@ class WebFlowTest(unittest.TestCase):
         self.assertEqual((r.get_json()["executed"], r.get_json()["reset_filters"]), ("DELETE", True))
 
     def test_level_refusal(self):
-        os.environ["USERNAME"] = "Xfa-Ngykonpo"
-        os.environ["COMPUTERNAME"] = "NLM-NGY-232010"
-        # PASS は伏せ字 *** のまま基準データに入っている
-        r = self.login("Xfa-Ngykonpo", "***")
-        self.assertEqual((r.status_code, r.get_json()["level"]), (200, 3))
+        """閲覧のみ(アクセス権限に dbviewer:edit の行が無い)→ 新規は断る・ダブルクリックは参照。行を足すと 編集可。"""
+        from tests.test_access_rights import access_db
+        master = access_db(Path(self.tmp.name) / "梱包資材マスタ.sqlite3",
+                           [("Xfa-Ngyinazawa", "NLM-NGY-240638", "mode:field", 1)])
+        user_settings.save(config.KEY_ACCESS_DB, str(master))
+        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
+        r = self.login()
+        self.assertEqual((r.status_code, r.get_json()["level"], r.get_json()["label"]), (200, 1, "閲覧のみ"))
         r = self.c.post("/api/record/form", json={"mode": "新規"}, headers=self.h)
-        self.assertEqual(r.status_code, 200)
-        auth.current().level = 1
-        r = self.c.post("/api/record/form", json={"mode": "新規"}, headers=self.h)
-        self.assertEqual((r.status_code, r.get_json()["error"]["message"]), (403, auth.MSG_NO_LEVEL.format(lv=1)))
+        self.assertEqual((r.status_code, r.get_json()["error"]["message"]), (403, auth.MSG_NO_LEVEL))
         r = self.c.post("/api/record/form", json={"mode": "修正", "key": "2", "click": "DblClick"}, headers=self.h)
         self.assertEqual(r.get_json()["mode"], "参照")
+        self.assertIn("閲覧のみ", self.c.get("/list").get_data(as_text=True))    # 上の帯
+        access_db(master, [("Xfa-Ngyinazawa", "", "dbviewer:edit", 1)])
+        r = self.login()
+        self.assertEqual((r.get_json()["level"], r.get_json()["label"]), (5, "編集可"))
+        r = self.c.post("/api/record/form", json={"mode": "新規"}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
 
 
 if __name__ == "__main__":
@@ -155,11 +164,11 @@ class OperationTest(unittest.TestCase):
         from dbviewer import access_log
         user_settings.save(config.KEY_ACCESS_LOG, True)
         self.addCleanup(user_settings.save, config.KEY_ACCESS_LOG, False)
-        self.c.post("/api/login", json={"id": "nobody", "password": ""}, headers=self.h)
-        self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
+        self.c.post("/api/login", json={}, headers=self.h)                # 権限を引くたびに 1 行(0.16.0)
+        self.c.post("/api/login", json={}, headers=self.h)
         log_path = self.path.parent / config.ACCESS_LOG_NAME
         lines = log_path.read_bytes().decode("cp932").split("\r\n")
-        self.assertEqual([l.split("\t")[4] for l in lines if l], ["認証失敗", "認証成功"])
+        self.assertEqual([l.split("\t")[4] for l in lines if l], ["認証成功", "認証成功"])
         self.assertEqual(len(lines[0].split("\t")), 6)
         self.assertTrue(lines[0].split("\t")[5].startswith("VER"))
         self.assertEqual(access_log.write.__doc__.split("。")[0], "1 行追記する")

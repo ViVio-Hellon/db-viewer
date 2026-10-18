@@ -185,11 +185,10 @@ class TableBringWebTest(unittest.TestCase):
         r = self.c.get(f"/api/settings/table-bring/plan?path={self.src}", headers=self.h)
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.get_json()["ok"])
-        self.assertEqual(self.c.post("/api/settings/table-bring", json=body, headers=self.h).status_code, 401)
-        self._login(4)
+        self._login(auth.VIEW_LEVEL)                                          # 閲覧のみ
         r = self.c.post("/api/settings/table-bring", json=body, headers=self.h)
         self.assertEqual(r.status_code, 403)
-        self.assertIn("Level 5", r.get_json()["error"]["message"])
+        self.assertIn("編集可", r.get_json()["error"]["message"])
         self._login(5)
         r = self.c.post("/api/settings/table-bring", json=body, headers=self.h)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))

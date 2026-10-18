@@ -331,8 +331,7 @@ def _setup_section(db_path: Path) -> Section:
     section.checks.append(Check(
         "列の設定", "かんたん設定(表示・入力・印刷)",
         INFO if setup.auto_conv else OK, f"本体 {len(setup.main_columns)} 列"))
-    section.checks.append(Check("直せる人", "ID で登録した人" if setup.has_id else "誰でも(ID の表が無い)",
-                                OK if setup.has_id else INFO))
+    section.checks.append(_rights_check())
     for note in setup.notices:
         if "自動" in note and setup.auto_main and note.startswith("表示する表"):
             continue
@@ -506,6 +505,21 @@ _TEXT_KEYS = {
 MSG_RESET_ASK = "起動モード設定情報を初期化しますか？"
 MSG_RESET_DONE = "起動モード設定情報を初期化しました!"
 MSG_MODE_SET = "設定しました。"
+
+
+def _rights_check() -> "Check":
+    """直せる人(0.16.0): 梱包資材マスタの「アクセス権限」。"""
+    from .. import access_rights, auth
+    s = auth.current()
+    me = f"この PC は {s.label}" if s else ""
+    o = access_rights.overview()
+    if not o["path"]:
+        return Check("直せる人", "誰でも(アクセス権限マスタを決めていない)", INFO,
+                     "かんたん設定 → 権限 で 梱包資材マスタ を決めると 編集可 / 閲覧のみ が効きます")
+    if not o["found"]:
+        return Check("直せる人", "アクセス権限マスタを読めません", WARN, f"{o['path']}: {o['problem']} {me}")
+    return Check("直せる人", f"{access_rights.EDIT} の行の人・PC({len(o['edit_rows'])} 行)", OK,
+                 f"{o['path']} {me}")
 
 
 def mode_is_set() -> bool:

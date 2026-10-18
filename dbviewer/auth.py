@@ -1,39 +1,28 @@
-"""ログインとアクセスレベル(VBA `Login` フォームの移植)
+"""誰が使っているか と、編集可 / 閲覧のみ(0.16.0)
 
-【VBA の判定順(`LOGINEXE_Botton_Click`)】
-    1. 本体ファイルのフォルダに届くか / 本体があるか
-    2. DEVELOPERFLAG(固定の ID / PC 名)なら無条件で通す
-    3. ID テーブルに入力 ID の行が無い     → 「IDが登録されていません。…」
-    4. 入力 ID ≠ この PC のログイン ID    → 「使用中のIDはPC使用者と一致しません」
-    5. ID テーブルにこの PC の行が無い     → 「PCが登録されていません。…」
-    6. ID と PC の両方が一致する行が無い   → 「IDと使用PCの登録で一致するものがありません。」
-    7. その行の PASS と入力(小文字・半角)が違う → 「入力パスワード「x」が違います。」
-    Level は一致した行の Level。行が無い開発者は 5、それ以外は 1 で
-    「登録がないので最低権限で仮設定されます。」
+【0.16.0 から】VBA 版から続いていた「ID の表 + パスワード + Level 1〜5」をやめた。
+Windows の**ログインID**と**PC名**で、梱包資材マスタの `アクセス権限` 表を引き、
+**編集可**(`dbviewer:edit` の行がある)か **閲覧のみ** かを決める(`access_rights`)。パスワードは要らない。
+画面を開けば自動で入る(ログインの画面は無い。起動モードが未設定のときだけ先にそれを決める)。
 
-【文字の比べ方】
-Access の `=` は大文字小文字を区別しない(ID・PC)。パスワードは VBA が
-`StrConv(LCase(x), vbNarrow)` で両方をそろえてから比べる。
+中の決まり(どの操作に何が要るか)は Level の数のまま持つ: 編集可 = 5、閲覧のみ = 1。
+閲覧のみは 新規・修正・削除・列の追加・設定の保存 ができない(ダブルクリックは参照で開く)。
 
-【セッション】
-VBA は Excel を閉じるまで有効。Web 版は**プロセスに 1 つ**(1 台の PC を
-1 人が使う前提。タブを増やしても同じ人)。設定「無操作で再ログイン(分)」が
-0 より大きければ、その時間だけ触っていないと再ログインを求める。
+【セッション】プロセスに 1 つ(1 台の PC を 1 人が使う前提)。権限は `access_rights.RECHECK_SEC` ごとに
+読み直す(取り消しが効くように。読み直しは裏で、画面は待たせない)。設定「無操作で権限を読み直す(分)」が
+0 より大きければ、その時間触っていないと次の操作で読み直す。
 """
 from __future__ import annotations
 
 import os
 import socket
-import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
 
-from . import access_log, config, user_settings
+from . import access_log, access_rights, config, user_settings
 from .logging_utils import get_logger
-from .settings_tables import field_dic, read_table, table_exists
-from .vba_compat import to_narrow, val_int
 
 log = get_logger("auth")
 
@@ -41,18 +30,11 @@ log = get_logger("auth")
 DEVELOPER_IDS = ("Satoshi-Harada", "satoshi")
 DEVELOPER_PCS = ("NLM-NGY-221790", "PCH370")
 
-MSG_NO_ID = "IDが登録されていません。\n管理者に問い合わせて登録してからご使用ください。"
-MSG_ID_MISMATCH = "使用中のIDはPC使用者と一致しません"
-MSG_NO_PC = "PCが登録されていません。\n管理者に問い合わせて登録してからご使用ください。"
-MSG_NO_PAIR = "IDと使用PCの登録で一致するものがありません。"
-MSG_BAD_PASS = "入力パスワード「{pw}」が違います。"
-MSG_TEMP_LEVEL = "登録がないので最低権限で仮設定されます。"
-MSG_NEED_LOGIN = "ログインしてください。"
-# ID の表が無い DB(0.8.0): 誰でも見て直せる(ファイルを開ける人はもともと直せる)。
-# 人とレベルを決めたいときは 設定 → かんたん設定 →「ログインを使う」で ID の表を作る
-MSG_NO_ID_TABLE = "この DB には ID の表が無いので、誰でも見て直せます(人を決めるには 設定 → かんたん設定)。"
-NO_ID_LEVEL = 5
-MSG_NO_LEVEL = "使用中の権限レベルは{lv}です。権限がありません。"
+EDIT_LEVEL = 5
+VIEW_LEVEL = 1
+MSG_NEED_LOGIN = "起動モード(オンライン / オフライン)を先に決めてください。"
+MSG_NO_LEVEL = ("閲覧のみの権限です。直すには、アクセス権限マスタ(梱包資材マスタの「アクセス権限」)に、"
+                "この ID・PC で dbviewer:edit の行を足してもらってください。")
 
 
 def network_id() -> str:
@@ -72,72 +54,24 @@ def is_developer(use_id: str, use_pc: str) -> bool:
 @dataclass
 class LoginResult:
     ok: bool
-    message: str = ""          # 断りの文言(VBA の Msg.Box)
-    note: str = ""             # 通ったが伝えること(仮設定など)
+    message: str = ""
+    note: str = ""
     user_id: str = ""
     level: int = 0
     developer: bool = False
+    rights: Optional[access_rights.Decision] = None
 
 
-def _same(a: str, b: str) -> bool:
-    """Access の `=`(大文字小文字を区別しない)。"""
-    return (a or "").casefold() == (b or "").casefold()
-
-
-def authenticate(conn: sqlite3.Connection, inp_id: str, inp_pass: str, *,
-                 use_id: Optional[str] = None, use_pc: Optional[str] = None) -> LoginResult:
-    use_id = network_id() if use_id is None else use_id
-    use_pc = pc_name() if use_pc is None else use_pc
-    inp_pass_n = to_narrow((inp_pass or "").lower())
-
-    if not table_exists(conn, config.ID_TABLE):
-        dev = is_developer(use_id, use_pc)
-        access_log.write("認証成功")
-        user_settings.save(config.KEY_LAST_USER, inp_id or use_id)
-        return LoginResult(True, note="" if dev else MSG_NO_ID_TABLE, user_id=inp_id or use_id,
-                           level=config.DEVELOP_LV if dev else NO_ID_LEVEL, developer=dev)
-
-    cols, rows = read_table(conn, config.ID_TABLE)
-    fj = field_dic(cols)
-    ci, cp, cpw, clv = fj.get("ID", 0), fj.get("PC", 0), fj.get("PASS", 0), fj.get("Level", 0)
-    ck_id = [r for r in rows if ci and _same(r[ci - 1], inp_id)]
-    ck_pc = [r for r in rows if cp and _same(r[cp - 1], use_pc)]
-    temp = [r for r in rows if ci and cp and _same(r[ci - 1], inp_id) and _same(r[cp - 1], use_pc)]
-
+def rights_result() -> LoginResult:
+    """この PC のログイン ID・PC 名で、アクセス権限マスタを引く(パスワードは無い)。"""
+    use_id, use_pc = network_id(), pc_name()
+    d = access_rights.evaluate(use_id, use_pc)
     dev = is_developer(use_id, use_pc)
-    ng = True
-    message = ""
-    if dev:
-        ng = False
-    elif not ck_id:
-        message = MSG_NO_ID
-    elif inp_id != use_id:
-        message = MSG_ID_MISMATCH
-    elif not ck_pc:
-        message = MSG_NO_PC
-    elif not temp:
-        message = MSG_NO_PAIR
-    else:
-        tgt = to_narrow((temp[0][cpw - 1] if cpw else "").lower())
-        if inp_pass_n != tgt:
-            message = MSG_BAD_PASS.format(pw=inp_pass_n)
-        else:
-            ng = False
-    if ng:
-        access_log.write("認証失敗")
-        return LoginResult(False, message=message, user_id=inp_id)
-
+    edit = d.edit or dev
     access_log.write("認証成功")
-    note = ""
-    if temp:
-        level = val_int(temp[0][clv - 1]) if clv else 0
-    elif dev:
-        level = config.DEVELOP_LV
-    else:
-        level = 1
-        note = MSG_TEMP_LEVEL
-    user_settings.save(config.KEY_LAST_USER, inp_id)
-    return LoginResult(True, note=note, user_id=inp_id, level=level, developer=dev)
+    user_settings.save(config.KEY_LAST_USER, use_id)
+    return LoginResult(True, note=d.reason + ("(開発者)" if dev and not d.edit else ""), user_id=use_id,
+                       level=EDIT_LEVEL if edit else VIEW_LEVEL, developer=dev, rights=d)
 
 
 # ------------------------------------------------------------------
@@ -150,6 +84,16 @@ class Session:
     developer: bool
     logged_in_at: float
     last_seen: float
+    rights: Optional[access_rights.Decision] = None
+    checked_at: float = 0.0
+
+    @property
+    def can_edit(self) -> bool:
+        return self.level >= EDIT_LEVEL
+
+    @property
+    def label(self) -> str:
+        return access_rights.LABEL_EDIT if self.can_edit else access_rights.LABEL_VIEW
 
     def touch(self) -> None:
         self.last_seen = time.time()
@@ -170,7 +114,7 @@ def current() -> Optional[Session]:
     global _session
     with _lock:
         if _session is not None and _session.expired():
-            log.info("無操作のため再ログインが必要です: %s", _session.user_id)
+            log.info("無操作だったので権限を読み直します: %s", _session.user_id)
             _session = None
         return _session
 
@@ -179,8 +123,46 @@ def start(result: LoginResult) -> Session:
     global _session
     now = time.time()
     with _lock:
-        _session = Session(result.user_id, result.level, result.developer, now, now)
+        _session = Session(result.user_id, result.level, result.developer, now, now, result.rights, now)
         return _session
+
+
+def sign_in() -> Session:
+    """アクセス権限マスタを引いて、セッションを始める(画面を開けば自動で)。"""
+    result = rights_result()
+    s = start(result)
+    log.info("権限: %s / %s → %s(%s)", s.user_id, pc_name(), s.label, result.rights.source if result.rights else "")
+    return s
+
+
+_refreshing = threading.Event()
+
+
+def ensure() -> Session:
+    """いまのセッション。無ければ始める。古ければ裏で読み直す(取り消しが効くように)。"""
+    s = current()
+    if s is None:
+        return sign_in()
+    if time.time() - s.checked_at > access_rights.RECHECK_SEC and not _refreshing.is_set():
+        _refreshing.set()
+        s.checked_at = time.time()
+
+        def again() -> None:
+            try:
+                result = rights_result()
+                with _lock:
+                    if _session is s:
+                        if s.level != result.level:
+                            log.info("権限が変わりました: %s → %s", s.label,
+                                     access_rights.LABEL_EDIT if result.level >= EDIT_LEVEL else access_rights.LABEL_VIEW)
+                        s.level, s.rights, s.checked_at = result.level, result.rights, time.time()
+            except Exception:                            # noqa: BLE001 - 読み直せなければ今のまま
+                log.warning("権限を読み直せませんでした", exc_info=True)
+            finally:
+                _refreshing.clear()
+
+        threading.Thread(target=again, daemon=True, name="rights-recheck").start()
+    return s
 
 
 def end() -> None:
@@ -194,8 +176,12 @@ def level() -> int:
     return s.level if s else 0
 
 
+def can_edit() -> bool:
+    return level() >= EDIT_LEVEL
+
+
 # ------------------------------------------------------------------
-# レベル判定(VBA `ボタンクリック制御`)
+# レベル判定(VBA `ボタンクリック制御`。編集可 = 5 / 閲覧のみ = 1)
 # ------------------------------------------------------------------
 def required_level(mode: str) -> int:
     if mode in ("新規", "削除"):
@@ -212,4 +198,4 @@ def check_mode(mode: str, lv: int, click_type: str = "ButtonClick") -> tuple[str
         return mode, ""
     if mode == "修正" and click_type == "DblClick":
         return "参照", ""
-    return "", MSG_NO_LEVEL.format(lv=lv)
+    return "", MSG_NO_LEVEL

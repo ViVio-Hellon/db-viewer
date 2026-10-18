@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import tempfile
+import os
 import unittest
+from unittest import mock
 from datetime import datetime
 from pathlib import Path
 
@@ -38,23 +40,17 @@ class InputTypesTest(unittest.TestCase):
 
 
 class AuthTest(unittest.TestCase):
-    def test_vba_order_of_refusals(self):
-        with connect() as conn:
-            a = auth.authenticate
-            self.assertEqual(a(conn, "nobody", "", use_id="nobody", use_pc="PC").message, auth.MSG_NO_ID)
-            self.assertEqual(a(conn, "Xfa-Ngykonpo", "", use_id="someone", use_pc="PC").message, auth.MSG_ID_MISMATCH)
-            self.assertEqual(a(conn, "Xfa-Ngykonpo", "", use_id="Xfa-Ngykonpo", use_pc="PC-X").message, auth.MSG_NO_PC)
-            # ID も PC も登録はあるが、組み合わせが無い
-            self.assertEqual(a(conn, "Xfa-Ngyinazawa", "", use_id="Xfa-Ngyinazawa", use_pc="NLM-NGY-232010").message, auth.MSG_NO_PAIR)
-            self.assertEqual(a(conn, "Xfa-Ngykonpo", "ｘ", use_id="Xfa-Ngykonpo", use_pc="NLM-NGY-232010").message,
-                             auth.MSG_BAD_PASS.format(pw="x"))
-            ok = a(conn, "xfa-ngyinazawa", "", use_id="xfa-ngyinazawa", use_pc="nlm-ngy-240638")   # 大文字小文字は問わない
-            self.assertTrue(ok.ok)
-            self.assertEqual(ok.level, 5)
-            dev = a(conn, "satoshi", "", use_id="satoshi", use_pc="PC")
-            self.assertTrue(dev.ok and dev.developer and dev.level == 5)
-            dev2 = a(conn, "x", "", use_id="x", use_pc="PCH370")
-            self.assertTrue(dev2.ok and dev2.developer)
+    def test_developer_pc_can_edit(self):
+        """0.16.0: パスワードは無い。開発者の ID・PC は、アクセス権限マスタに行が無くても 編集可(VBA DEVELOPERFLAG)。"""
+        from dbviewer import access_rights
+        view = access_rights.Decision(False, "master", "行がありません")
+        with mock.patch.object(access_rights, "evaluate", return_value=view), \
+                mock.patch.dict(os.environ, {"USERNAME": "satoshi", "COMPUTERNAME": "PC"}):
+            r = auth.rights_result()
+        self.assertEqual((r.level, r.developer), (auth.EDIT_LEVEL, True))
+        with mock.patch.object(access_rights, "evaluate", return_value=view), \
+                mock.patch.dict(os.environ, {"USERNAME": "someone", "COMPUTERNAME": "PC"}):
+            self.assertEqual(auth.rights_result().level, auth.VIEW_LEVEL)
 
     def test_level_rules(self):
         self.assertEqual(auth.check_mode("新規", 3), ("新規", ""))

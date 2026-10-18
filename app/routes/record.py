@@ -90,6 +90,7 @@ def form():
                               base_dir=d["base_dir"], server_dir=d["server_dir"])
     out = form.to_dict()
     out["level"] = auth.level()
+    out["label"] = auth.current().label if auth.current() else ""
     out["main_table"] = setup.general.main_table
     return jsonify(out)
 

@@ -83,7 +83,7 @@ def home_url(mode: str = modes.DEFAULT) -> str:
 
 
 def ribbon_values() -> dict[str, str]:
-    """帯に常時出す値。ログイン(Phase 4)でユーザーと Level が入る。"""
+    """帯に常時出す値。利用者(この PC のログイン ID)と 権限(編集可 / 閲覧のみ。0.16.0)。"""
     from dbviewer import shared_db
 
     try:
@@ -98,7 +98,7 @@ def ribbon_values() -> dict[str, str]:
     return {
         "system": sys_name,
         "user": s.user_id if s else "",
-        "level": str(s.level) if s else "",
+        "level": s.label if s else "",
         "developer": bool(s and s.developer),
         "mode": "オンライン" if online else "オフライン",
     }

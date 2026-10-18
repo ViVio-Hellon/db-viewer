@@ -2,16 +2,18 @@
 
 - `POST /api/easy/state`    … 見る DB・表・列ごとの設定(表示・入力・印刷)`{"table"}`
 - `POST /api/easy/columns`  … 列ごとの設定を保存 `{"table", "rows": [{name, show, input, step, print}]}`
-- `POST /api/easy/start`    … ログインを使う(ID の表が無い DB で、自分を Level 5 で登録) `{"password", "name"}`
-- `POST /api/easy/retire`   … VBA 版の <表>_設定 を取り込んで消す(Level 5。控えを取る)
+- `POST /api/easy/retire`   … VBA 版の <表>_設定 を取り込んで消す(編集可。控えを取る)
+- `POST /api/easy/rights`   … 権限: アクセス権限マスタ・この PC の 編集可 / 閲覧のみ・誰が編集可か(0.16.0)
+                              `{"path", "save": true}` でアクセス権限マスタの場所を保存
 
-どれもログインが要る(ID の表が無い DB は誰でも Level 5 で入れる)。保存は Level 5。
+保存は 編集可 の権限で(梱包資材マスタの「アクセス権限」に dbviewer:edit の行)。
 """
 from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from dbviewer import auth, easy_setup, session_setup, settings_tables, shared_db, trace
+from dbviewer import access_rights, auth, config, easy_setup, session_setup, settings_tables, shared_db, trace, \
+    user_settings
 from dbviewer.logging_utils import get_logger
 
 from .. import get_db
@@ -68,21 +70,33 @@ def columns():
     return _reply(result, "easy.columns", {"table": table, "count": len(rows)})
 
 
-@bp.post("/api/easy/start")
-def start_login():
-    conn, setup, err = _open()
-    if err:
-        return err
+@bp.post("/api/easy/rights")
+def rights():
+    """権限の様子。保存は「編集可」か、アクセス権限マスタをまだ決めていない・読めないときだけ
+    (読めないままだと誰も直せなくなるので、場所を直す道は残す)。"""
     body = request.get_json(silent=True) or {}
-    s = auth.current()
-    user_id = s.user_id if s else auth.network_id()
-    result = easy_setup.start_login(conn, setup, user_id=user_id, pc=auth.pc_name(),
-                                    name=str(body.get("name") or ""), password=str(body.get("password") or ""))
-    if result.ok and s is not None:
-        # 登録した本人なので、そのまま Level 5(ログインし直さなくてよい)
-        auth.start(auth.LoginResult(True, user_id=s.user_id, level=result.level, developer=s.developer))
-        log.info("ログインを使い始めました: %s を Level %s で登録", user_id, result.level)
-    return _reply(result, "easy.start", {"id": user_id, "pc": auth.pc_name()})
+    s = auth.ensure()
+    d = s.rights
+    can_change = s.can_edit or d is None or d.source in (access_rights.SOURCE_UNSET, access_rights.SOURCE_UNREACHABLE)
+    if body.get("save"):
+        if not can_change:
+            return _refuse("level", "アクセス権限マスタの場所を変えるには 編集可 の権限が要ります。", 403)
+        text = str(body.get("path") or "").strip().strip('"')
+        problem = access_rights.check_path(text)
+        if problem:
+            return _refuse("bad_path", problem)
+        user_settings.save(config.KEY_ACCESS_DB, text)
+        trace.event("settings.access_db", text or "(同じフォルダを探す)", data={"path": text, "by": s.user_id})
+        message = (f"アクセス権限マスタを {text} にしました。" if text
+                   else "アクセス権限マスタは、見ている DB と同じフォルダの 梱包資材マスタ.sqlite3 を探します。")
+        return jsonify({"ok": True, "message": message})
+    me = d.to_dict() if d else {}
+    me.setdefault("login_id", auth.network_id())
+    me.setdefault("pc", auth.pc_name())
+    me["label"], me["edit"] = s.label, s.can_edit
+    if s.developer and d and not d.edit:
+        me["reason"] = (me.get("reason") or "") + "(開発者の PC なので 編集可)"
+    return jsonify({"me": me, "master": access_rights.overview(), "can_change": can_change})
 
 
 @bp.post("/api/easy/retire")

@@ -138,6 +138,7 @@ KEY_REPORT_DIR = "report_dir"        # (使わない)以前の「帳票原紙の
 KEY_EXPORT_FORMAT = "export_format"  # 出力の既定の形式(csv / tsv / xlsx)
 KEY_EXPORT_ENCODING = "export_encoding"  # csv / tsv の文字コード(cp932 / utf-8-sig)
 KEY_EXPORT_DIR = "export_dir"        # 出力先(空ならローカル領域 work)
+KEY_ACCESS_DB = "access_db"          # アクセス権限マスタ(梱包資材マスタ.sqlite3。空なら DB と同じフォルダ)
 KEY_REF_DIR = "ref_dir"              # 参照ファイル(PDF 等)の相対パスの起点(空なら本体と同じフォルダ)
 KEY_ACCESS_LOG = "access_log"        # Access.log を書くか(既定 True)
 KEY_RELOGIN_MIN = "relogin_minutes"  # 無操作で再ログイン(0 = しない)

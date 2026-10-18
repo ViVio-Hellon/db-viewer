@@ -23,7 +23,7 @@ async function loadTables() {
     const d = await api.post("/api/master/tables", {});
     el.msTitle.textContent = d.title;
     const brought = new Set(d.brought || []);
-    if (!d.tables.length) problem(`このレベル(${d.level})で直せる表はありません。マスタ管理は Level 3 以上です。`);
+    if (!d.tables.length) problem("見られる表がありません。");
     tableNodes.clear();
     el.msTables.replaceChildren(...d.tables.map((t) => {
       const div = document.createElement("div"); div.textContent = t;

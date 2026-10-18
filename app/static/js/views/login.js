@@ -1,15 +1,12 @@
-/* ログイン画面。判定はサーバ(VBA と同じ文言)。 */
+/* この PC の権限の画面(0.16.0)。パスワードは無い: ログイン ID・PC 名で、梱包資材マスタの「アクセス権限」を引く。 */
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
 import { confirmBox } from "../askbox.js";
 
 export function start(nextUrl) {
   const form = document.getElementById("loginForm");
-  const id = document.getElementById("loginId");
-  const pass = document.getElementById("loginPass");
   const problem = document.getElementById("loginProblem");
-  document.getElementById("useMyId").addEventListener("click", () => { id.value = document.getElementById("useMyId").textContent; });
-  document.getElementById("showPass").addEventListener("click", () => { pass.type = pass.type === "password" ? "text" : "password"; });
+  const go = document.getElementById("loginExe");
   // VBA regUF: オンライン/オフラインを選んで保存 → 「設定しました。」
   const modeSet = document.getElementById("modeSet");
   if (modeSet) modeSet.addEventListener("click", async () => {
@@ -19,7 +16,7 @@ export function start(nextUrl) {
       toast("設定しました。", "ok");
       document.getElementById("modeCard").hidden = true;
       document.getElementById("loginCard").hidden = false;
-      pass.focus();
+      go.focus();
     } catch (err) { toastError(err); }
   });
   // VBA Login.LOCKBT_DblClick: 起動モード設定情報の初期化
@@ -38,8 +35,8 @@ export function start(nextUrl) {
     event.preventDefault();
     problem.hidden = true;
     try {
-      const body = await api.post("/api/login", { id: id.value, password: pass.value, next: nextUrl });
-      if (body.note) toast(body.note, "warn");
+      const body = await api.post("/api/login", { next: nextUrl });
+      toast(`${body.label}: ${body.note || ""}`, body.edit ? "ok" : "info");
       location.href = body.next || "/list";
     } catch (err) {
       problem.hidden = false;
@@ -47,5 +44,5 @@ export function start(nextUrl) {
       if (err.status !== 403) toastError(err);
     }
   });
-  pass.focus();
+  go.focus();
 }

@@ -107,7 +107,7 @@ async function openFile(f) {
 
 function render() {
   el.recTitle.textContent = `${state.mode}モード`;
-  el.recMode.textContent = `Level ${state.level}`;
+  el.recMode.textContent = state.label || "";
   el.btnExe.hidden = state.mode === "参照";
   el.recNav.hidden = state.mode === "新規";
   el.navKeys.replaceChildren(...state.keys.map((k) => {
