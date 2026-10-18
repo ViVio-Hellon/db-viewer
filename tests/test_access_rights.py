@@ -149,5 +149,141 @@ class RightsApiTest(unittest.TestCase):
         self.assertTrue(c.ok("/api/easy/state", table="部品")["can_write"])
 
 
+class AdminPasswordTest(unittest.TestCase):
+    """管理者パスワード(0.17.0。all-tools と同じ作り): 既定 nisk・変えたものは平文で持たない・続けてまちがえると待つ。"""
+
+    def setUp(self):
+        from dbviewer import admin_password
+        self.ap = admin_password
+        self.ap.session.lock()
+        self.addCleanup(self.ap.session.lock)
+        self.addCleanup(user_settings.save, config.KEY_ADMIN_PASSWORD, None)
+        user_settings.save(config.KEY_ADMIN_PASSWORD, None)
+
+    def test_default_and_change(self):
+        self.assertTrue(self.ap.verify("nisk"))
+        self.assertFalse(self.ap.verify("NISK"))
+        self.assertFalse(self.ap.change("x", "abcd", "abcd").ok)
+        self.assertEqual(self.ap.change("nisk", "ab", "ab").reason, "too_short")
+        self.assertEqual(self.ap.change("nisk", "abcd", "abce").reason, "mismatch")
+        self.assertTrue(self.ap.change("nisk", "新しい鍵", "新しい鍵").ok)
+        stored = user_settings.get(config.KEY_ADMIN_PASSWORD)
+        self.assertTrue(stored.startswith("pbkdf2$"))
+        self.assertNotIn("新しい鍵", stored)                                      # 平文で持たない
+        self.assertFalse(self.ap.verify("nisk"))
+        self.assertTrue(self.ap.verify("新しい鍵"))
+
+    def test_session_and_cool_down(self):
+        s = self.ap.Session()
+        self.assertFalse(s.peek())
+        self.assertTrue(s.unlock("nisk").ok)
+        self.assertTrue(s.is_open())
+        s.lock()
+        for _ in range(self.ap.MAX_MISSES):
+            self.assertEqual(s.unlock("違う").reason, "bad_password")
+        r = s.unlock("nisk")                                                    # 正しくても少し待たせる
+        self.assertEqual(r.reason, "cool_down")
+        self.assertFalse(s.peek())
+
+
+class AccessEditApiTest(unittest.TestCase):
+    """アクセス権限を直す(0.17.0): 管理者パスワードで鍵を開けたときだけ。控え・競合・自分の権限の読み直し。"""
+
+    def setUp(self):
+        from dbviewer import admin_password
+        from tests.test_easy_setup import _Case, plain_db
+        case = _Case("setUp")
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        self.c = case
+        case.use(plain_db(case.tmp / "部品台帳.sqlite3"))
+        env = mock.patch.dict(os.environ, {"DBVIEWER_LOCAL_DIR": str(case.tmp / "local")})
+        env.start()
+        self.addCleanup(env.stop)
+        admin_password.session.lock()
+        self.addCleanup(admin_password.session.lock)
+        self.addCleanup(access_rights.forget_backups)
+        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
+        user_settings.save(config.KEY_ADMIN_PASSWORD, None)
+        self.master = access_db(case.tmp / "梱包資材マスタ.sqlite3",
+                                [("tester", "PC-TEST", "mode:field", 1), ("other", "", "作業長", 1)])
+        user_settings.save(config.KEY_ACCESS_DB, str(self.master))
+        self.assertEqual(case.ok("/api/login")["label"], "閲覧のみ")
+
+    def rows(self):
+        with closing(sqlite3.connect(self.master)) as c:
+            return c.execute('SELECT ログインID, PC名, 権限, 有効, 備考 FROM "アクセス権限" ORDER BY 管理番号').fetchall()
+
+    def test_edit_with_password(self):
+        c = self.c
+        j = c.ok("/api/easy/access/rows")
+        self.assertEqual((len(j["rows"]), j["admin"]), (2, False))              # 見るだけなら鍵は要らない
+        self.assertEqual(j["permissions"][0], "dbviewer:edit")
+        new = {"ログインID": "tester", "PC名": "PC-TEST", "権限": "dbviewer:edit", "有効": 1, "備考": "試験"}
+        self.assertEqual(c.post("/api/easy/access/save", row=new).status_code, 403)   # 鍵が要る
+        r = c.post("/api/easy/access/unlock", password="違う")
+        self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (403, "bad_password"))
+        self.assertTrue(c.ok("/api/easy/access/unlock", password="nisk")["admin"])
+        self.assertTrue(c.ok("/api/easy/rights")["admin"])
+        # 両方空は断る
+        bad = c.post("/api/easy/access/save", row={**new, "ログインID": "", "PC名": ""})
+        self.assertEqual(bad.status_code, 422)
+        # 足す → 自分が 編集可 に
+        r = c.ok("/api/easy/access/save", row=new)
+        self.assertEqual(r["label"], "編集可")
+        self.assertTrue(Path(r["backup"]).is_file())                             # 書く前に控え
+        self.assertEqual(self.rows()[-1], ("tester", "PC-TEST", "dbviewer:edit", 1, "試験"))
+        no = r["no"]
+        seen = {"管理番号": no, **new}
+        # 直す(無効に)→ 閲覧のみ。2 回目は控えを取らない
+        r = c.ok("/api/easy/access/save", row={**seen, "有効": 0}, seen=seen)
+        self.assertEqual((r["label"], r["backup"]), ("閲覧のみ", ""))
+        # 古い見え方で直す → 断る(ほかの PC が先に変えた)
+        r = c.post("/api/easy/access/save", row={**seen, "備考": "x"}, seen=seen)
+        self.assertEqual((r.status_code, r.get_json()["reason"]), (409, "conflict"))
+        # 消す
+        now = {**seen, "有効": 0}
+        self.assertEqual(c.post("/api/easy/access/delete", no=no, seen=seen).status_code, 409)
+        c.ok("/api/easy/access/delete", no=no, seen=now)
+        self.assertEqual(len(self.rows()), 2)
+        self.assertEqual(c.post("/api/easy/access/delete", no=no, seen=now).get_json()["reason"], "gone")
+        # 鍵を掛けたら直せない
+        c.ok("/api/easy/access/unlock", lock=True)
+        self.assertEqual(c.post("/api/easy/access/save", row=new).status_code, 403)
+
+    def test_unlocked_can_change_master_path(self):
+        c = self.c
+        self.assertEqual(c.post("/api/easy/rights", path="", save=True).status_code, 403)   # 閲覧のみ
+        c.ok("/api/easy/access/unlock", password="nisk")
+        c.ok("/api/easy/rights", path=str(self.master), save=True)               # 鍵が開いていれば変えられる
+
+    def test_passwords_never_reach_the_log(self):
+        import json as _json
+        from dbviewer import logging_utils
+        logdir = self.c.tmp / "記録"
+        before, default = config.LOG_DIR, config.DEFAULT_LOG_DIR
+        self.addCleanup(setattr, config, "DEFAULT_LOG_DIR", default)
+        self.addCleanup(logging_utils.set_log_dir, before)
+        config.DEFAULT_LOG_DIR = logdir
+        logging_utils.set_log_dir(logdir)
+        self.addCleanup(user_settings.save, config.KEY_ADMIN_PASSWORD, None)
+        self.c.post("/api/easy/access/unlock", password="nisk")
+        self.c.post("/api/easy/access/unlock", password="間違いの鍵")
+        self.c.post("/api/easy/access/password", current="nisk", new="zq8k", confirm="zq8k")
+        text = "".join(p.read_text(encoding="utf-8") for p in logdir.glob("記録_*.jsonl"))
+        self.assertIn("access.unlock", text)
+        for secret in ("nisk", "間違いの鍵", "zq8k"):
+            self.assertNotIn(secret, text)
+        self.assertTrue(_json.loads(text.splitlines()[0]))
+
+    def test_password_change(self):
+        c = self.c
+        self.addCleanup(user_settings.save, config.KEY_ADMIN_PASSWORD, None)
+        self.assertEqual(c.post("/api/easy/access/password", current="x", new="abcd", confirm="abcd").status_code, 403)
+        c.ok("/api/easy/access/password", current="nisk", new="abcd", confirm="abcd")
+        self.assertEqual(c.post("/api/easy/access/unlock", password="nisk").status_code, 403)
+        self.assertTrue(c.ok("/api/easy/access/unlock", password="abcd")["admin"])
+
+
 if __name__ == "__main__":
     unittest.main()

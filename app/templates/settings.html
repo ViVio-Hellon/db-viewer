@@ -173,6 +173,60 @@
                   <tbody id="rightsRows"></tbody>
                 </table>
               </div>
+
+              {# 0.17.0: 管理者パスワードで鍵を開けたときだけ、アクセス権限の行を直せる #}
+              <div class="accedit" id="accBox">
+                <h4 class="accedit__title">アクセス権限を直す <small class="why" style="margin:0">管理者パスワードで鍵を開けると、行を足す・直す・消すができます</small></h4>
+                <div class="easyrow" id="accLocked" style="margin:0">
+                  <label for="accPass" class="why" style="margin:0">管理者パスワード</label>
+                  <input class="input" id="accPass" type="password" autocomplete="off" style="width:14em">
+                  <button class="btn btn--commit" type="button" id="accUnlock">鍵を開ける</button>
+                </div>
+                <div class="easyrow" id="accOpen" hidden style="margin:0">
+                  <span class="status status--ok" style="margin:0">鍵が開いています(30 分さわらなければ掛かります)</span>
+                  <button class="btn btn--commit" type="button" id="accNew">＋ 行を足す</button>
+                  <button class="btn btn--find" type="button" id="accLock">鍵を掛ける</button>
+                </div>
+                <label class="checkline" style="margin-top:8px"><input type="checkbox" id="accOnlyMine" checked> DBビューアの行(dbviewer:)だけ出す</label>
+                <form class="accedit__form" id="accForm" hidden autocomplete="off">
+                  <div class="optgrid">
+                    <span>管理番号</span><b id="accNo">(新しい行)</b>
+                    <label for="accLogin">ログインID</label>
+                    <span class="easyrow" style="margin:0"><input class="input" id="accLogin" spellcheck="false" style="width:16em" placeholder="空 = 問わない">
+                      <button class="btn btn--find" type="button" id="accMyId">この PC の ID</button></span>
+                    <label for="accPc">PC名</label>
+                    <span class="easyrow" style="margin:0"><input class="input" id="accPc" spellcheck="false" style="width:16em" placeholder="空 = 問わない">
+                      <button class="btn btn--find" type="button" id="accMyPc">この PC</button></span>
+                    <label for="accPerm">権限</label>
+                    <span><input class="input" id="accPerm" list="accPerms" spellcheck="false" style="width:16em" value="dbviewer:edit">
+                      <datalist id="accPerms"></datalist></span>
+                    <span>有効</span><label class="checkline" style="margin:0"><input type="checkbox" id="accOn" checked> 効かせる</label>
+                    <label for="accNote">備考</label>
+                    <input class="input" id="accNote" style="width:24em; max-width:100%">
+                  </div>
+                  <p class="why" id="accFormHint">ログインID と PC名 の両方を空にはできません(誰にも効かないため)。</p>
+                  <div class="btn-row">
+                    <button class="btn btn--commit" type="submit" id="accSave">保存</button>
+                    <button class="btn btn--find" type="button" id="accCancel">やめる</button>
+                  </div>
+                </form>
+                <div class="tablewrap" style="margin-top:8px">
+                  <table class="table">
+                    <thead><tr><th>管理番号</th><th>ログインID</th><th>PC名</th><th>権限</th><th>有効</th><th>備考</th><th></th></tr></thead>
+                    <tbody id="accRows"></tbody>
+                  </table>
+                </div>
+                <p class="why" id="accNote2"></p>
+                <details class="accedit__pw">
+                  <summary>管理者パスワードを変える(この PC だけ)</summary>
+                  <div class="optgrid" style="margin-top:6px">
+                    <label for="accPwCur">いまのパスワード</label><input class="input" id="accPwCur" type="password" autocomplete="off" style="width:14em">
+                    <label for="accPwNew">新しいパスワード</label><input class="input" id="accPwNew" type="password" autocomplete="new-password" style="width:14em">
+                    <label for="accPwNew2">もう一度</label><input class="input" id="accPwNew2" type="password" autocomplete="new-password" style="width:14em">
+                  </div>
+                  <div class="btn-row" style="margin-top:6px"><button class="btn btn--find" type="button" id="accPwChange">変える</button></div>
+                </details>
+              </div>
             </div>
           </section>
         </div>
@@ -636,6 +690,13 @@
   .easytable .pick .input { min-width:0; }
   .easytable tr.is-changed td { background:var(--accent-soft); }
   .easytable tr.is-off td.name b { color:var(--faint); }
+  .accedit { margin-top:14px; padding-top:12px; border-top:1px solid var(--hairline); display:grid; gap:8px; }
+  .accedit__title { margin:0; font-size:var(--fs-sm); display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+  .accedit__form { padding:10px 12px; border:1px solid var(--hairline); border-radius:8px; background:var(--sunken); }
+  .accedit tr.is-mine td { font-weight:700; }
+  .accedit tr.is-off td { color:var(--faint); text-decoration:line-through; }
+  .accedit td.ops { white-space:nowrap; text-align:right; }
+  .accedit td.ops .btn { min-height:24px; padding:0 8px; font-size:var(--fs-xs); }
   .easydb { font-family:var(--mono); font-size:var(--fs-sm); overflow-wrap:anywhere; color:var(--ink); margin:0 0 6px; }
   /* 表を持ってくる: 落とす場所。重ねている間は色を変える */
   .dropzone { border:2px dashed var(--rule); border-radius:var(--radius-xs);

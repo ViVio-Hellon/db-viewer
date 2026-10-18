@@ -54,6 +54,11 @@ EV_LABEL = {
     "file.preview": "ファイルをプレビュー",
     "file.open": "ファイルを現物で開いた",
     "file.preview_failed": "プレビューできなかった(Excel・Word で変換)",
+    "access.unlock": "アクセス権限の鍵(管理者パスワード)",
+    "access.save": "アクセス権限の行を足した・直した",
+    "access.delete": "アクセス権限の行を消した",
+    "access.password": "管理者パスワードを変えた",
+    "settings.access_db": "アクセス権限マスタの場所",
     "app.start": "起動",
     "app.stop": "終了",
 }

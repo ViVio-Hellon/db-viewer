@@ -10,6 +10,8 @@ import { confirmBox } from "../askbox.js";
 const el = {};
 let st = null;                    // /api/easy/state
 let rights = null;                // /api/easy/rights(0.16.0: 編集可 / 閲覧のみ)
+let access = null;                // /api/easy/access/rows(0.17.0: アクセス権限を直す)
+let editing = null;               // 直している行(新しい行は {})
 
 function show(id, on) { el[id].hidden = !on; }
 
@@ -85,6 +87,7 @@ async function saveRightsPath() {
     toast(res.message || "保存しました。", "ok");
     rights = null;
     await recheckRights();
+    await loadAccess();
   } catch (err) { toastError(err, "warn"); }
 }
 
@@ -184,11 +187,145 @@ async function retireVba() {
   } catch (err) { toastError(err, "warn"); }
 }
 
+/* ---------------- アクセス権限を直す(管理者パスワードで鍵を開けたとき。0.17.0) ---------------- */
+const COLS = ["管理番号", "ログインID", "PC名", "権限", "有効", "備考"];
+const isOn = (v) => !["0", "false", "×", "無効", "no", "off"].includes(String(v ?? "").trim().toLowerCase());
+
+async function loadAccess() {
+  try { access = await api.post("/api/easy/access/rows", {}); } catch (err) {
+    access = null;
+    el.accRows.replaceChildren();
+    el.accNote2.textContent = err.message;
+    showLock(false);
+    return;
+  }
+  el.accNote2.textContent = `${access.path} の「アクセス権限」(${access.rows.length} 行)`;
+  el.accPerms.replaceChildren(...access.permissions.map((p) => { const o = document.createElement("option"); o.value = p; return o; }));
+  showLock(access.admin);
+  renderAccess();
+}
+
+function showLock(open) {
+  el.accLocked.hidden = open;
+  el.accOpen.hidden = !open;
+  if (!open) { el.accForm.hidden = true; editing = null; }
+}
+
+function renderAccess() {
+  if (!access) return;
+  const me = access.me || {};
+  const only = el.accOnlyMine.checked;
+  const rows = access.rows.filter((r) => !only || String(r["権限"] || "").toLowerCase().startsWith("dbviewer:"));
+  el.accRows.replaceChildren(...rows.map((r) => {
+    const tr = document.createElement("tr");
+    const mine = (!r["ログインID"] || String(r["ログインID"]).toLowerCase() === String(me.login_id).toLowerCase())
+      && (!r["PC名"] || String(r["PC名"]).toLowerCase() === String(me.pc).toLowerCase())
+      && (r["ログインID"] || r["PC名"]);
+    tr.classList.toggle("is-mine", Boolean(mine));
+    tr.classList.toggle("is-off", !isOn(r["有効"]));
+    if (mine) tr.title = "この PC に当てはまる行";
+    for (const k of COLS) {
+      const td = document.createElement("td");
+      td.textContent = k === "有効" ? (isOn(r[k]) ? "1" : "0") : (r[k] ?? "");
+      tr.appendChild(td);
+    }
+    const ops = document.createElement("td"); ops.className = "ops";
+    if (access.admin) {
+      const ed = document.createElement("button"); ed.type = "button"; ed.className = "btn btn--find"; ed.textContent = "直す";
+      ed.addEventListener("click", () => editRow(r));
+      const del = document.createElement("button"); del.type = "button"; del.className = "btn btn--danger"; del.textContent = "消す";
+      del.addEventListener("click", () => deleteRow(r));
+      ops.append(ed, " ", del);
+    }
+    tr.appendChild(ops);
+    return tr;
+  }));
+}
+
+function editRow(r) {
+  editing = r ? { ...r } : {};
+  el.accNo.textContent = r ? String(r["管理番号"]) : "(新しい行)";
+  el.accLogin.value = r ? (r["ログインID"] ?? "") : "";
+  el.accPc.value = r ? (r["PC名"] ?? "") : "";
+  el.accPerm.value = r ? (r["権限"] ?? "") : "dbviewer:edit";
+  el.accOn.checked = r ? isOn(r["有効"]) : true;
+  el.accNote.value = r ? (r["備考"] ?? "") : "";
+  el.accForm.hidden = false;
+  el.accLogin.focus();
+}
+
+async function saveRow(event) {
+  event.preventDefault();
+  if (!editing) return;
+  const row = { "管理番号": editing["管理番号"] ?? "", "ログインID": el.accLogin.value.trim(), "PC名": el.accPc.value.trim(),
+                "権限": el.accPerm.value.trim(), "有効": el.accOn.checked ? 1 : 0, "備考": el.accNote.value.trim() };
+  try {
+    const res = await api.post("/api/easy/access/save", { row, seen: editing["管理番号"] ? editing : null });
+    toast(res.message + (res.backup ? "(先に控えを取りました)" : ""), "ok");
+    afterWrite(res);
+  } catch (err) {
+    toastError(err, "warn");
+    if (err.status === 409 || err.status === 403) await loadAccess();
+  }
+}
+
+async function deleteRow(r) {
+  if (!(await confirmBox(`${r["管理番号"]} 番の行(${r["ログインID"] || "誰でも"} / ${r["PC名"] || "どの PC でも"} / ${r["権限"]})を消しますか？`,
+                         { ok: "消す", danger: true }))) return;
+  try {
+    const res = await api.post("/api/easy/access/delete", { no: r["管理番号"], seen: r });
+    toast(res.message, "warn");
+    afterWrite(res);
+  } catch (err) {
+    toastError(err, "warn");
+    if (err.status === 409 || err.status === 403) await loadAccess();
+  }
+}
+
+async function afterWrite(res) {
+  el.accForm.hidden = true;
+  editing = null;
+  const lv = document.getElementById("rb-level");             // 自分の権限が変わったかもしれない
+  if (lv && res.label) lv.textContent = res.label;
+  await loadAccess();
+  await loadRights();
+  await load(st ? st.table : "");
+}
+
+async function unlock() {
+  try {
+    const res = await api.post("/api/easy/access/unlock", { password: el.accPass.value });
+    el.accPass.value = "";
+    toast(res.message, "ok");
+    await loadAccess();
+    await loadRights();
+  } catch (err) { toastError(err, "warn"); el.accPass.select(); }
+}
+
+async function lockAgain() {
+  try { await api.post("/api/easy/access/unlock", { lock: true }); } catch (err) { toastError(err); }
+  toast("鍵を掛けました。", "info");
+  await loadAccess();
+  await loadRights();
+}
+
+async function changePassword() {
+  try {
+    const res = await api.post("/api/easy/access/password", {
+      current: el.accPwCur.value, new: el.accPwNew.value, confirm: el.accPwNew2.value });
+    toast(res.message, "ok");
+    el.accPwCur.value = el.accPwNew.value = el.accPwNew2.value = "";
+  } catch (err) { toastError(err, "warn"); }
+}
+
 export function start() {
   for (const id of ["easyLogin", "easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
                     "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyVbaCard", "easyVbaList",
                     "rightsWho", "rightsNow", "rightsWhy", "rightsPath", "rightsSave", "rightsRecheck", "rightsUsing",
                     "rightsHint", "rightsRowsWrap", "rightsRows",
+                    "accLocked", "accPass", "accUnlock", "accOpen", "accNew", "accLock", "accOnlyMine", "accForm", "accNo",
+                    "accLogin", "accMyId", "accPc", "accMyPc", "accPerm", "accPerms", "accOn", "accNote", "accCancel",
+                    "accRows", "accNote2", "accPwCur", "accPwNew", "accPwNew2", "accPwChange",
                     "easyRetire"]) {
     el[id] = document.getElementById(id);
   }
@@ -203,10 +340,21 @@ export function start() {
   el.easyColsSave.addEventListener("click", saveColumns);
   el.rightsSave.addEventListener("click", saveRightsPath);
   el.rightsRecheck.addEventListener("click", recheckRights);
+  el.accUnlock.addEventListener("click", unlock);
+  el.accPass.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); unlock(); } });
+  el.accLock.addEventListener("click", lockAgain);
+  el.accNew.addEventListener("click", () => editRow(null));
+  el.accCancel.addEventListener("click", () => { el.accForm.hidden = true; editing = null; });
+  el.accForm.addEventListener("submit", saveRow);
+  el.accOnlyMine.addEventListener("change", renderAccess);
+  el.accMyId.addEventListener("click", () => { el.accLogin.value = (access && access.me.login_id) || ""; });
+  el.accMyPc.addEventListener("click", () => { el.accPc.value = (access && access.me.pc) || ""; });
+  el.accPwChange.addEventListener("click", changePassword);
   el.easyRetire.addEventListener("click", retireVba);
   el.easyGoSource.addEventListener("click", () => document.getElementById("tab-source")?.click());
   // タブを開くたびに読み直す(接続先で DB を替えたかもしれない)
-  document.getElementById("tab-easy")?.addEventListener("click", () => { load(); loadRights(); });
+  document.getElementById("tab-easy")?.addEventListener("click", () => { load(); loadRights(); loadAccess(); });
   load();
   loadRights();
+  loadAccess();
 }

@@ -4,7 +4,7 @@
 # 詳しくは docs/08_デスクトップ版.md
 [package]
 name = "dbviewer-desktop"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2021"
 publish = false
 

@@ -5,15 +5,20 @@
 - `POST /api/easy/retire`   … VBA 版の <表>_設定 を取り込んで消す(編集可。控えを取る)
 - `POST /api/easy/rights`   … 権限: アクセス権限マスタ・この PC の 編集可 / 閲覧のみ・誰が編集可か(0.16.0)
                               `{"path", "save": true}` でアクセス権限マスタの場所を保存
+- `POST /api/easy/access/unlock`   … 管理者パスワードで鍵を開ける `{"password"}` / 掛ける `{"lock": true}`(0.17.0)
+- `POST /api/easy/access/rows`     … アクセス権限の全部の行(見るだけなら鍵は要らない)
+- `POST /api/easy/access/save`     … 行を足す・直す `{"row", "seen"}`(鍵が要る)
+- `POST /api/easy/access/delete`   … 行を消す `{"no", "seen"}`(鍵が要る)
+- `POST /api/easy/access/password` … 管理者パスワードを変える `{"current", "new", "confirm"}`
 
 保存は 編集可 の権限で(梱包資材マスタの「アクセス権限」に dbviewer:edit の行)。
 """
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
-from dbviewer import access_rights, auth, config, easy_setup, session_setup, settings_tables, shared_db, trace, \
-    user_settings
+from dbviewer import access_rights, admin_password, auth, config, easy_setup, session_setup, settings_tables, \
+    shared_db, trace, user_settings
 from dbviewer.logging_utils import get_logger
 
 from .. import get_db
@@ -77,10 +82,11 @@ def rights():
     body = request.get_json(silent=True) or {}
     s = auth.ensure()
     d = s.rights
-    can_change = s.can_edit or d is None or d.source in (access_rights.SOURCE_UNSET, access_rights.SOURCE_UNREACHABLE)
+    can_change = (s.can_edit or admin_password.session.peek() or d is None
+                  or d.source in (access_rights.SOURCE_UNSET, access_rights.SOURCE_UNREACHABLE))
     if body.get("save"):
         if not can_change:
-            return _refuse("level", "アクセス権限マスタの場所を変えるには 編集可 の権限が要ります。", 403)
+            return _refuse("level", "アクセス権限マスタの場所を変えるには 編集可 の権限か、管理者パスワードが要ります。", 403)
         text = str(body.get("path") or "").strip().strip('"')
         problem = access_rights.check_path(text)
         if problem:
@@ -96,7 +102,111 @@ def rights():
     me["label"], me["edit"] = s.label, s.can_edit
     if s.developer and d and not d.edit:
         me["reason"] = (me.get("reason") or "") + "(開発者の PC なので 編集可)"
-    return jsonify({"me": me, "master": access_rights.overview(), "can_change": can_change})
+    return jsonify({"me": me, "master": access_rights.overview(), "can_change": can_change,
+                    "admin": admin_password.session.peek(), "custom_password": admin_password.is_custom()})
+
+
+# ------------------------------------------------------------------
+# アクセス権限を直す(管理者パスワードで鍵を開けたときだけ。0.17.0)
+# ------------------------------------------------------------------
+def _master():
+    path = access_rights.master_path()
+    if path is None:
+        return None, _refuse("no_master", "アクセス権限マスタを先に決めてください(上の「アクセス権限マスタ」)。", 409)
+    return path, None
+
+
+def _need_admin():
+    if not admin_password.session.is_open():
+        return _refuse("locked", "管理者パスワードで鍵を開けてください。", 403)
+    return None
+
+
+@bp.post("/api/easy/access/unlock")
+def access_unlock():
+    body = request.get_json(silent=True) or {}
+    g.trace_sent = {"lock": bool(body.get("lock")), "password": "***"}      # 記録にパスワードを残さない
+    s = auth.ensure()
+    if body.get("lock"):
+        admin_password.session.lock()
+        access_rights.forget_backups()
+        return jsonify({"ok": True, "admin": False, "message": "鍵を掛けました。"})
+    result = admin_password.session.unlock(str(body.get("password") or ""))
+    trace.event("access.unlock", "鍵を開けました" if result.ok else result.message,
+                level="INFO" if result.ok else "WARN", data={"by": s.user_id, "pc": auth.pc_name()})
+    if not result.ok:
+        return _refuse(result.reason, result.message, 403)
+    return jsonify({"ok": True, "admin": True, "message": result.message})
+
+
+@bp.post("/api/easy/access/rows")
+def access_rows():
+    path, err = _master()
+    if err:
+        return err
+    try:
+        rows = access_rights.all_rows(path)
+    except Exception as exc:                             # noqa: BLE001 - 届かない・表が無い
+        return _refuse("unreadable", f"アクセス権限マスタを読めません: {exc}", 409)
+    return jsonify({"path": str(path), "rows": rows, "columns": list(access_rights.COLUMNS),
+                    "permissions": access_rights.permissions_in_use(path), "admin": admin_password.session.peek(),
+                    "me": {"login_id": auth.network_id(), "pc": auth.pc_name()}})
+
+
+def _after_write(result, event: str, data: dict):
+    trace.event(event, result.message, level="INFO" if result.ok else "WARN",
+                data={**data, "reason": result.reason, "backup": result.backup, "by": auth.ensure().user_id})
+    if result.ok:
+        auth.sign_in()                                  # 自分の権限も読み直す(自分の行を直したかもしれない)
+    status = 200 if result.ok else 409 if result.reason in ("conflict", "gone", "busy") else 422
+    s = auth.current()
+    return jsonify({"ok": result.ok, "message": result.message, "reason": result.reason, "no": result.no,
+                    "backup": result.backup, "label": s.label if s else ""}), status
+
+
+@bp.post("/api/easy/access/save")
+def access_save():
+    err = _need_admin()
+    if err:
+        return err
+    path, err = _master()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    row = body.get("row") if isinstance(body.get("row"), dict) else {}
+    seen = body.get("seen") if isinstance(body.get("seen"), dict) else None
+    result = access_rights.save_row(path, row, seen)
+    return _after_write(result, "access.save", {k: row.get(k) for k in access_rights.COLUMNS})
+
+
+@bp.post("/api/easy/access/delete")
+def access_delete():
+    err = _need_admin()
+    if err:
+        return err
+    path, err = _master()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    no = str(body.get("no") or "")
+    if not no.isdigit():
+        return _refuse("bad_input", "消す行が分かりません。")
+    seen = body.get("seen") if isinstance(body.get("seen"), dict) else None
+    result = access_rights.delete_row(path, int(no), seen)
+    return _after_write(result, "access.delete", {"no": int(no), "row": seen})
+
+
+@bp.post("/api/easy/access/password")
+def access_password():
+    body = request.get_json(silent=True) or {}
+    g.trace_sent = {"current": "***", "new": "***", "confirm": "***"}     # 記録にパスワードを残さない
+    result = admin_password.change(str(body.get("current") or ""), str(body.get("new") or ""),
+                                   str(body.get("confirm") or ""))
+    trace.event("access.password", result.message, level="INFO" if result.ok else "WARN",
+                data={"by": auth.ensure().user_id})
+    if not result.ok:
+        return _refuse(result.reason, result.message, 403 if result.reason == "wrong_password" else 422)
+    return jsonify({"ok": True, "message": result.message})
 
 
 @bp.post("/api/easy/retire")

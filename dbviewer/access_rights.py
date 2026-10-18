@@ -25,6 +25,10 @@ VBA 版から続いていた「ID の表 + パスワード + Level 1〜5」は�
 `梱包資材マスタ.sqlite3`。どちらも無ければ「決めていない」=誰でも 編集可(0.8.0 からの「ID の表が無い DB は
 誰でも直せる」と同じ。決めれば効き始める)。
 
+【直すとき(0.17.0)】設定 → かんたん設定 → 権限 で、**管理者パスワード**(既定 nisk。`admin_password`)で
+鍵を開けたときだけ、この表の行を足す・直す・消す。書く前に梱包資材マスタの控えを取り、ほかの PC が先に変えて
+いたら書かない。見るときはいつも読み取り専用で開く。
+
 【届かないとき】梱包資材マスタは共有フォルダにある。届かないたびに 閲覧のみ に落とすと仕事が止まるので、
 **前回読めた結果をこの PC に覚えておき**、届かないときはそれで決める(all-tools と同じ)。
 一度も読めていなければ 閲覧のみ(決めてあるのに読めないのに、直す力は渡さない)。
@@ -234,3 +238,161 @@ def check_path(text: str) -> str:
     except Exception as exc:                             # noqa: BLE001
         return f"読めません: {exc}"
     return ""
+
+
+# ------------------------------------------------------------------
+# アクセス権限を直す(0.17.0。管理者パスワードで鍵を開けたときだけ。鍵は呼ぶ側が確かめる)
+# ------------------------------------------------------------------
+COLUMNS = (COL_NO, COL_LOGIN, COL_PC, COL_PERMISSION, COL_ENABLED, COL_NOTE)
+MSG_CHANGED = "ほかの PC が先にこの行を変えていました。いまの中身を出したので、もう一度直してください。"
+
+
+@dataclass
+class WriteResult:
+    ok: bool
+    message: str
+    reason: str = ""
+    no: int = 0
+    backup: str = ""
+
+
+def all_rows(path: Path) -> list[dict[str, Any]]:
+    """直す画面に出す行(管理番号の順)。"""
+    rows = read_rows(path)
+    out = [{k: r.get(k) for k in COLUMNS} for r in rows]
+    return sorted(out, key=lambda r: int(r.get(COL_NO) or 0))
+
+
+def _clean(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    login = str(row.get(COL_LOGIN) or "").strip()
+    pc = str(row.get(COL_PC) or "").strip()
+    perm = str(row.get(COL_PERMISSION) or "").strip()
+    note = str(row.get(COL_NOTE) or "").strip()
+    on = row.get(COL_ENABLED)
+    enabled_value = 0 if on in (False, 0, "0") or (isinstance(on, str) and not enabled(on)) else 1
+    if not perm:
+        return {}, "権限を入れてください(DBビューアで編集可にするなら dbviewer:edit)。"
+    if not login and not pc:
+        return {}, "ログインID か PC名 のどちらかは入れてください(両方空の行は誰にも効きません)。"
+    for name, v in ((COL_LOGIN, login), (COL_PC, pc), (COL_PERMISSION, perm), (COL_NOTE, note)):
+        if len(v) > 200 or any(ord(ch) < 32 for ch in v):
+            return {}, f"「{name}」が長すぎるか、使えない文字があります。"
+    return {COL_LOGIN: login, COL_PC: pc, COL_PERMISSION: perm, COL_ENABLED: enabled_value, COL_NOTE: note}, ""
+
+
+def _same_as_seen(now: dict[str, Any], seen: Optional[dict[str, Any]]) -> bool:
+    if seen is None:
+        return True
+    norm = lambda v: "" if v is None else str(v)
+    return all(norm(now.get(k)) == norm(seen.get(k)) for k in COLUMNS if k in seen)
+
+
+_backed_up: set[str] = set()
+
+
+def _backup(path: Path) -> str:
+    """書く前に控え(鍵を開けてから最初の 1 回。sqlite の backup で、書きかけを写さない)。"""
+    key = str(path)
+    if key in _backed_up:
+        return ""
+    folder = app_config.local_dir("backup")
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"{path.stem}_アクセス権限の前_{time.strftime('%Y%m%d_%H%M%S')}{path.suffix}"
+    src = sqlite3.connect("file:" + str(path).replace("?", "%3F").replace("#", "%23") + "?mode=ro", uri=True, timeout=5)
+    try:
+        dst = sqlite3.connect(dest)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    _backed_up.add(key)
+    return str(dest)
+
+
+def forget_backups() -> None:
+    """鍵を掛けたら、次に開けたときにまた控えを取る。"""
+    _backed_up.clear()
+
+
+def _write(path: Path, work) -> WriteResult:
+    try:
+        backup = _backup(path)
+    except (OSError, sqlite3.Error) as exc:
+        return WriteResult(False, f"控えを取れなかったので書きません: {exc}", "backup_failed")
+    try:
+        conn = sqlite3.connect(path, timeout=5)
+    except sqlite3.Error as exc:
+        return WriteResult(False, f"アクセス権限マスタを開けません: {exc}", "failed")
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = work(conn)
+            if result.ok:
+                conn.execute("COMMIT")
+            else:
+                conn.execute("ROLLBACK")
+        except sqlite3.Error as exc:
+            conn.execute("ROLLBACK")
+            return WriteResult(False, f"書けませんでした: {exc}", "failed")
+    except sqlite3.Error as exc:
+        return WriteResult(False, f"書けませんでした(ほかの PC が使っているかもしれません): {exc}", "busy")
+    finally:
+        conn.close()
+    result.backup = backup
+    return result
+
+
+def _current(conn: sqlite3.Connection, no: int) -> Optional[dict[str, Any]]:
+    r = conn.execute(f'SELECT * FROM "{TABLE}" WHERE "{COL_NO}" = ?', (no,)).fetchone()
+    return {k: r[k] for k in r.keys()} if r else None
+
+
+def save_row(path: Path, row: dict[str, Any], seen: Optional[dict[str, Any]] = None) -> WriteResult:
+    """管理番号が無ければ足す、あれば直す(見ていた値と違えば書かない)。"""
+    values, problem = _clean(row)
+    if problem:
+        return WriteResult(False, problem, "bad_input")
+    raw_no = row.get(COL_NO)
+    no = int(raw_no) if str(raw_no or "").strip().isdigit() else 0
+
+    def work(conn: sqlite3.Connection) -> WriteResult:
+        if no:
+            now = _current(conn, no)
+            if now is None:
+                return WriteResult(False, "その行はもうありません(ほかの PC が消しました)。", "gone", no)
+            if not _same_as_seen(now, seen):
+                return WriteResult(False, MSG_CHANGED, "conflict", no)
+            conn.execute(f'UPDATE "{TABLE}" SET ' + ", ".join(f'"{k}" = ?' for k in values) + f' WHERE "{COL_NO}" = ?',
+                         [*values.values(), no])
+            return WriteResult(True, f"{no} 番の行を直しました。", "", no)
+        cur = conn.execute(f'INSERT INTO "{TABLE}" (' + ", ".join(f'"{k}"' for k in values) + ") VALUES ("
+                           + ", ".join("?" for _ in values) + ")", list(values.values()))
+        return WriteResult(True, f"{cur.lastrowid} 番の行を足しました。", "", int(cur.lastrowid or 0))
+
+    return _write(path, work)
+
+
+def delete_row(path: Path, no: int, seen: Optional[dict[str, Any]] = None) -> WriteResult:
+    def work(conn: sqlite3.Connection) -> WriteResult:
+        now = _current(conn, no)
+        if now is None:
+            return WriteResult(False, "その行はもうありません(ほかの PC が消しました)。", "gone", no)
+        if not _same_as_seen(now, seen):
+            return WriteResult(False, MSG_CHANGED, "conflict", no)
+        conn.execute(f'DELETE FROM "{TABLE}" WHERE "{COL_NO}" = ?', (no,))
+        return WriteResult(True, f"{no} 番の行を消しました。", "", no)
+
+    return _write(path, work)
+
+
+def permissions_in_use(path: Path) -> list[str]:
+    """権限の欄の候補(この表で使われている値。dbviewer:edit を先に)。"""
+    try:
+        rows = read_rows(path)
+    except Exception:                                    # noqa: BLE001
+        return [EDIT]
+    seen = {str(r.get(COL_PERMISSION) or "").strip() for r in rows} - {"", EDIT}
+    return [EDIT, *sorted(seen)]
