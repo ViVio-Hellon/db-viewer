@@ -92,9 +92,7 @@ class WriteReadTest(unittest.TestCase):
             # Ⅱ を「金額」の表示にして、小数の金額を入れておく
             c.execute("UPDATE [作業標準管理_設定] SET 表示='金額' WHERE 項目名='Ⅱ'")
             c.execute("UPDATE [作業標準管理] SET Ⅱ='1234.5' WHERE 管理番号=2")
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(self.path.parent))
-        user_settings.save(config.KEY_DB_FILE, self.path.name)
+        user_settings.save(config.KEY_DB_PATH, str(self.path))
         auth.end()
         self.addCleanup(auth.end)
         auth.start(auth.LoginResult(True, user_id="Xfa-Ngyinazawa", level=5))

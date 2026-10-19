@@ -88,14 +88,6 @@ def open_db():
     return jsonify(out)
 
 
-@bp.post("/api/settings/reset-mode")
-def reset_mode():
-    """VBA Login の LOCKBT ダブルクリック(起動モード設定情報の初期化)。"""
-    result = settings_presenter.reset_mode()
-    trace.event("settings.reset_mode", result.message)
-    return jsonify({"ok": True, "message": result.message, "mode_set": settings_presenter.mode_is_set()})
-
-
 # ------------------------------------------------------------------
 # 表を持ってくる(python-web-tools の table_bring を移植)
 # ------------------------------------------------------------------

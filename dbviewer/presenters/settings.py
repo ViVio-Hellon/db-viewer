@@ -5,7 +5,7 @@ python-web-tools の `presenters/settings.py` の形(Check / Section /
 
 面(タブ):
     status   … いまの状態(接続先の DB が読めるか・設定テーブルの整合)
-    source   … 接続先(プロファイル・オンライン/オフライン・フォルダ・本体ファイル)
+    source   … 接続先(見る DB ファイル 1 つ。0.19.0)
     paths    … 参照・出力・帳票(参照ファイルの起点・出力先・帳票原紙の置き場所)
     behavior … 動作(Access.log・無操作の再ログイン)
     access   … Access 取り込み(.accdb → .sqlite3。Phase 1)
@@ -88,17 +88,8 @@ class Section:
 @dataclass
 class SettingsViewModel:
     sections: list[Section]
-    prog_no: int
-    profiles: list[dict[str, Any]]
-    online: bool
-    server_dir: str
-    server_dir_default: str
-    server_dir_real: str
-    local_dir: str
-    local_dir_real: str
-    db_file: str
-    db_file_default: str
-    db_path: str
+    db_path_text: str            # 設定に入れた文字(相対も可)
+    db_path: str                 # 実際に開く場所(決めていなければ "")
     export_dir: str
     export_dir_real: str
     export_dir_state: dict[str, str]
@@ -128,36 +119,16 @@ class SettingsViewModel:
 
 # ------------------------------------------------------------------
 def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
-    prog_no = int(user_settings.get(config.KEY_PROG_NO, config.DEFAULT_PROG_NO))
-    try:
-        prof = config.profile(prog_no)
-    except ValueError:
-        prof = config.profile(config.DEFAULT_PROG_NO)
-        prog_no = prof.prog_no
-    online = bool(user_settings.get(config.KEY_ONLINE, True))
-    server_dir = str(user_settings.get(config.KEY_SERVER_DIR, "") or "")
-    local_dir = str(user_settings.get(config.KEY_LOCAL_DIR, "") or "")
-    db_file = str(user_settings.get(config.KEY_DB_FILE, "") or "")
+    db_text = shared_db.configured()
     export_dir = str(user_settings.get(config.KEY_EXPORT_DIR, "") or "")
     ref_dir = str(user_settings.get(config.KEY_REF_DIR, "") or "")
 
     db_path = shared_db.db_path()
-    sections = [_db_section(db_path, prof, online), _setup_section(db_path), _terminal_section()]
+    sections = [_db_section(db_path if db_text else None), _setup_section(db_path), _terminal_section()]
     return SettingsViewModel(
         sections=sections,
-        prog_no=prog_no,
-        profiles=[{"prog_no": p.prog_no, "sys_name": p.sys_name,
-                   "db_file": p.db_file, "server_dir": p.server_dir}
-                  for p in config.PROFILES],
-        online=online,
-        server_dir=server_dir,
-        server_dir_default=prof.server_dir,
-        server_dir_real=_real(server_dir or prof.server_dir),
-        local_dir=local_dir,
-        local_dir_real=_real(local_dir),
-        db_file=db_file,
-        db_file_default=prof.db_file,
-        db_path=str(db_path),
+        db_path_text=db_text,
+        db_path=str(db_path) if db_text else "",
         export_dir=export_dir,
         export_dir_real=str(table_browse.export_dir()),
         export_dir_state=_folder_state(table_browse.export_dir(), create_later=True),
@@ -184,7 +155,7 @@ def _choice(key: str, allowed, default: str) -> str:
 
 
 def _ref_base(ref_dir: str) -> Path:
-    """参照形式の相対パスの起点(空なら VBA と同じ共有フォルダ = 本体のある場所)。"""
+    """参照形式の相対パスの起点(空なら DB ファイルのあるフォルダ)。"""
     server = shared_db.server_dir()
     return config.resolve_dir(ref_dir, server) if ref_dir.strip() else server
 
@@ -256,28 +227,19 @@ def _report_info(db_path: Path) -> dict[str, Any]:
                     + (f"原紙({template})は使いません。" if template else "")}
 
 
-def _real(text: str, base: Optional[Path] = None) -> str:
-    """相対や空のときだけ、実際に見に行く先を出す。同じなら空。"""
-    t = (text or "").strip()
-    if not t:
-        return str(base) if base is not None else ""
-    if config.is_relative_setting(t):
-        return str(config.resolve_dir(t, base))
-    return ""
-
-
 FIX_SOURCE = ("接続先を直す", "source")
 
 
-def _db_section(db_path: Path, prof: config.Profile, online: bool) -> Section:
+def _db_section(db_path: Optional[Path]) -> Section:
     section = Section(title="業務DB(接続先)", mark="Ｄ", action=FIX_SOURCE)
-    section.checks.append(Check("システム", f"{prof.prog_no}: {prof.sys_name}", INFO))
-    section.checks.append(Check("接続モード", "オンライン(共有フォルダ)" if online else "オフライン(手元のフォルダ)", INFO))
+    if db_path is None:
+        section.checks.append(Check("DB ファイル", "(決めていません)", NG, shared_db.MSG_NOT_SET))
+        return section
     if not db_path.is_file():
         section.checks.append(Check(
-            "本体ファイル", str(db_path), NG,
+            "DB ファイル", str(db_path), NG,
             "アクセス許可がないか、ファイルが存在しないため参照できません。"
-            "接続先のフォルダと本体ファイル名を確かめてください。"
+            "接続先の DB ファイルのパスを確かめてください。"
             "Access(.accdb)からまだ変換していないなら「Access 取り込み」で変換します。"))
         return section
     try:
@@ -285,11 +247,11 @@ def _db_section(db_path: Path, prof: config.Profile, online: bool) -> Section:
         with closing(shared_db.connect(db_path, read_only=True)) as conn:
             names = [r[0] for r in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-        section.checks.append(Check("本体ファイル", str(db_path), OK,
+        section.checks.append(Check("DB ファイル", str(db_path), OK,
                                     f"{st.st_size:,} バイト / 表 {len(names)}"))
         _required_tables_check(section, names)
     except Exception as exc:                          # noqa: BLE001 - 理由を画面に出す
-        section.checks.append(Check("本体ファイル", str(db_path), NG, f"開けません: {exc}"))
+        section.checks.append(Check("DB ファイル", str(db_path), NG, f"開けません: {exc}"))
     return section
 
 
@@ -313,7 +275,7 @@ def _setup_section(db_path: Path) -> Section:
 
     section = Section(title="一覧の表と列の設定", mark="設", action=FIX_EASY)
     if not db_path.is_file():
-        section.checks.append(Check("検査", "本体ファイルが無いので確かめられません", INFO))
+        section.checks.append(Check("検査", "DB ファイルが無いので確かめられません", INFO))
         return section
     try:
         with closing(shared_db.connect(db_path, read_only=True)) as conn:
@@ -447,16 +409,7 @@ def to_dict(view: SettingsViewModel) -> dict[str, Any]:
             "checks": [{"label": c.label, "value": c.value, "level": c.level,
                         "detail": c.detail} for c in s.checks],
         } for s in view.sections],
-        "prog_no": view.prog_no,
-        "profiles": view.profiles,
-        "online": view.online,
-        "server_dir": view.server_dir,
-        "server_dir_default": view.server_dir_default,
-        "server_dir_real": view.server_dir_real,
-        "local_dir": view.local_dir,
-        "local_dir_real": view.local_dir_real,
-        "db_file": view.db_file,
-        "db_file_default": view.db_file_default,
+        "db_path_text": view.db_path_text,
         "db_path": view.db_path,
         "export_dir": view.export_dir,
         "export_dir_real": view.export_dir_real,
@@ -493,18 +446,12 @@ REFUSE_BAD_INPUT = "bad_input"
 
 # 本文の鍵 → 利用者設定の鍵。**ここに無いものは保存しない**
 _TEXT_KEYS = {
-    "server_dir": config.KEY_SERVER_DIR,
-    "local_dir": config.KEY_LOCAL_DIR,
-    "db_file": config.KEY_DB_FILE,
     "export_dir": config.KEY_EXPORT_DIR,
     "ref_dir": config.KEY_REF_DIR,
     "accdb_source": config.KEY_ACCDB_SOURCE,
 }
 
 
-MSG_RESET_ASK = "起動モード設定情報を初期化しますか？"
-MSG_RESET_DONE = "起動モード設定情報を初期化しました!"
-MSG_MODE_SET = "設定しました。"
 
 
 def _rights_check() -> "Check":
@@ -522,39 +469,17 @@ def _rights_check() -> "Check":
                  f"{o['path']} {me}")
 
 
-def mode_is_set() -> bool:
-    """VBA `GetSetting(SysName, "起動設定", "モード", "存在なし") <> "存在なし"`。"""
-    return user_settings.get(config.KEY_ONLINE, None) is not None
-
-
-def reset_mode() -> SaveResult:
-    """VBA Login.LOCKBT_DblClick → `レジストリ削除`(起動モードだけを消す)。
-
-    消したあとは VBA と同じく、次のログイン画面で オンライン/オフライン を
-    選ばせる(`regUF`)。フォルダやパスの設定は残す(VBA も消していない)。
-    """
-    user_settings.delete(config.KEY_ONLINE)
-    return SaveResult(True, MSG_RESET_DONE)
-
-
 def save(body: dict[str, Any]) -> SaveResult:
     """本文に入っている項目だけを保存する。"""
-    if "prog_no" in body:
-        try:
-            prof = config.profile(int(body["prog_no"]))
-        except (TypeError, ValueError):
-            return SaveResult(False, "プログラム番号設定ミスです。再度番号を設定し直してください。",
-                              REFUSE_BAD_INPUT, "prog_no")
-        user_settings.save(config.KEY_PROG_NO, prof.prog_no)
-    if "online" in body:
-        user_settings.save(config.KEY_ONLINE, bool(body["online"]))
+    message = "設定を保存しました。"
+    if "db_path" in body:
+        result = _save_db_path(str(body["db_path"] or ""))
+        if not result.ok:
+            return result
+        message = result.message
     for key, setting in _TEXT_KEYS.items():
         if key in body:
-            text = str(body[key] or "").strip()
-            if key == "db_file" and text and ("\\" in text or "/" in text):
-                return SaveResult(False, "本体ファイルはファイル名だけを入れてください(フォルダは接続先で)。",
-                                  REFUSE_BAD_INPUT, key)
-            user_settings.save(setting, text)
+            user_settings.save(setting, str(body[key] or "").strip())
     if "export_format" in body:
         fmt = str(body["export_format"] or "")
         if fmt not in table_browse.FORMATS:
@@ -587,10 +512,36 @@ def save(body: dict[str, Any]) -> SaveResult:
             return SaveResult(False, "無操作の分数は整数で入れてください。", REFUSE_BAD_INPUT,
                               "relogin_minutes")
         user_settings.save(config.KEY_RELOGIN_MIN, minutes)
-    return SaveResult(True, "設定を保存しました。")
+    return SaveResult(True, message)
 
 
 MAX_LOG_KEEP_DAYS = 3650
+
+
+def _save_db_path(text: str) -> SaveResult:
+    """見る DB ファイル(フルパス)を決める。**開ける .sqlite3 のときだけ**保存する。空にすると「決めていない」。"""
+    from .. import db_files
+    text = text.strip().strip('"')
+    if not text:
+        user_settings.save(config.KEY_DB_PATH, "")
+        return SaveResult(True, "DB ファイルを空にしました(一覧には何も出ません)。")
+    path = config.resolve_dir(text)
+    if path.is_dir():
+        return SaveResult(False, f"フォルダではなく、DB ファイルを選んでください: {path}", REFUSE_BAD_INPUT, "db_path")
+    if path.suffix.lower() in (".accdb", ".mdb"):
+        return SaveResult(False, "Access のファイルは直接は開けません。「Access 取り込み」で .sqlite3 にしてから選んでください。",
+                          REFUSE_BAD_INPUT, "db_path")
+    if path.suffix.lower() not in source_db.SUFFIXES:
+        return SaveResult(False, f"開けるのは {' / '.join(source_db.SUFFIXES)} のファイルです: {path.name}",
+                          REFUSE_BAD_INPUT, "db_path")
+    if not path.is_file():
+        return SaveResult(False, f"アクセス許可がないか、ファイルが存在しないため参照できません。\n{path}",
+                          REFUSE_BAD_INPUT, "db_path")
+    info = db_files.inspect_sqlite(path)
+    if info["kind"] != db_files.KIND_OPEN:
+        return SaveResult(False, f"{path.name} は開けません: {info['note']}", REFUSE_BAD_INPUT, "db_path")
+    user_settings.save(config.KEY_DB_PATH, text)
+    return SaveResult(True, f"{path.name} を開きます({info['note']})。")
 
 
 def _save_log_dir(text: str) -> SaveResult:
@@ -741,16 +692,6 @@ def start_accdb_import(source: str = "", target: str = "") -> tuple[Optional[job
 
 
 def open_db(path_text: str) -> SaveResult:
-    """その .sqlite3 を接続先にする。フォルダはいまのモード(オンライン/オフライン)の側に入れる。"""
-    from .. import db_files
-    path = config.resolve_dir((path_text or "").strip())
-    if path.suffix.lower() not in source_db.SUFFIXES or not path.is_file():
-        return SaveResult(False, f"開ける .sqlite3 ではありません: {path}", REFUSE_BAD_INPUT, "db_file")
-    info = db_files.inspect_sqlite(path)
-    if info["kind"] != db_files.KIND_OPEN:
-        return SaveResult(False, f"{path.name} は開けません: {info['note']}", REFUSE_BAD_INPUT, "db_file")
-    online = bool(user_settings.get(config.KEY_ONLINE, True))
-    user_settings.save(config.KEY_SERVER_DIR if online else config.KEY_LOCAL_DIR, str(path.parent))
-    user_settings.save(config.KEY_DB_FILE, path.name)
-    return SaveResult(True, f"{path.name} を開きます({info['note']})。")
+    """その .sqlite3 を接続先(DB ファイル)にする。"""
+    return _save_db_path(path_text)
 

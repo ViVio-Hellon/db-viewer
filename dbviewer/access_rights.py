@@ -123,6 +123,8 @@ def master_path() -> Optional[Path]:
         return Path(text)
     try:
         from . import shared_db
+        if not shared_db.is_set():
+            return None
         cand = shared_db.db_path().parent / MASTER_NAME
     except Exception:                                    # noqa: BLE001 - DB を決めていない
         return None

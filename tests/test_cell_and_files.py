@@ -21,9 +21,7 @@ class CellEditTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(self.path.parent))
-        user_settings.save(config.KEY_DB_FILE, self.path.name)
+        user_settings.save(config.KEY_DB_PATH, str(self.path))
         auth.end()
         self.addCleanup(auth.end)
         self.c = make_client()
@@ -91,9 +89,7 @@ class DbFilesTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
         self.path = fresh_db_path(self.dir)
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(self.dir))
-        user_settings.save(config.KEY_DB_FILE, self.path.name)
+        user_settings.save(config.KEY_DB_PATH, str(self.path))
 
     def test_scan_classifies(self):
         shutil.copyfile(self.path, self.dir / "写し.sqlite3")

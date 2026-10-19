@@ -3,23 +3,11 @@
 {% block content %}
 <div class="pane">
   <div class="pane__head">
-    <div><span class="eyebrow">この PC の権限</span><h2>{{ ribbon.system }}</h2></div>
+    <div><span class="eyebrow">この PC の権限</span><h2>{{ ribbon.db }}</h2></div>
   </div>
   <span class="dimline" aria-hidden="true"></span>
-  {# VBA regUF: 起動モードが未設定のときだけ、ログインより先に選ばせる #}
-  <section class="card" style="max-width:32em; margin-top:12px" id="modeCard" {% if mode_set %}hidden{% endif %}>
-    <header><i class="ib ib--sm" aria-hidden="true">起</i><h3>起動モードの設定</h3></header>
-    <div class="pad">
-      <p class="why">設定モードに移行します。この端末で使う本体の場所を選んでください(VBA 版の初回起動と同じ)。</p>
-      <div class="field"><label class="checkline"><input type="radio" name="bootMode" value="online" checked> オンライン(共有フォルダの本体を使う)</label></div>
-      <div class="field"><label class="checkline"><input type="radio" name="bootMode" value="offline"> オフライン(手元のフォルダの本体を使う)</label></div>
-      <div class="btn-row" style="margin-top:8px">
-        <button class="btn btn--commit" type="button" id="modeSet">設定</button>
-      </div>
-    </div>
-  </section>
   {# 0.16.0: パスワードは無い。この PC のログイン ID・PC 名で、梱包資材マスタの「アクセス権限」を引く #}
-  <section class="card" style="max-width:36em; margin-top:12px" id="loginCard" {% if not mode_set %}hidden{% endif %}>
+  <section class="card" style="max-width:36em; margin-top:12px" id="loginCard">
     <header><i class="ib ib--sm" aria-hidden="true">権</i><h3>この PC の権限</h3></header>
     <div class="pad">
       <form id="loginForm" autocomplete="off">
@@ -35,7 +23,7 @@
         <div class="btn-row" style="margin-top:8px">
           <button class="btn btn--commit" type="submit" id="loginExe">使い始める</button>
           <a class="btn btn--find" href="/settings?tab=easy">設定へ</a>
-          <button class="btn btn--find" type="button" id="resetMode" title="VBA 版の鍵ボタンのダブルクリックと同じ(オンライン/オフラインの設定を消して選び直す)" data-ask="{{ reset_ask }}">起動モードを初期化</button>
+          <a class="btn btn--find" href="/settings?tab=source">接続先(DB ファイル)</a>
         </div>
       </form>
     </div>

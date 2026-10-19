@@ -36,6 +36,8 @@ def write(message: str, *, target_dir: Path | None = None) -> bool:
         return False
     if target_dir is None:
         from . import shared_db
+        if not shared_db.is_set():                 # DB を決めていなければ書く場所が無い
+            return False
         target_dir = shared_db.server_dir()
     path = Path(target_dir) / config.ACCESS_LOG_NAME
     line = "\t".join([

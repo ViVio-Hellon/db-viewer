@@ -96,7 +96,7 @@ def _env(root: Path, **extra) -> dict:
     from tests._fixture_db import fresh_db_path
     db = fresh_db_path(root)
     config = root / "user_config.json"
-    config.write_text(json.dumps({"online": False, "local_dir": str(db.parent), "db_file": db.name,
+    config.write_text(json.dumps({"db_path": str(db),
                                   "access_log": False}), encoding="utf-8")
     env = dict(os.environ,
                DBVIEWER_CONFIG_PATH=str(config),

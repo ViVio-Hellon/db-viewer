@@ -46,9 +46,7 @@ class TableBringTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dest = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(self.dest.parent))
-        user_settings.save(config.KEY_DB_FILE, self.dest.name)
+        user_settings.save(config.KEY_DB_PATH, str(self.dest))
         self.src = _source_from(self.dest, Path(self.tmp.name))
 
     def _tables(self, path=None):
@@ -168,9 +166,7 @@ class TableBringWebTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dest = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(self.dest.parent))
-        user_settings.save(config.KEY_DB_FILE, self.dest.name)
+        user_settings.save(config.KEY_DB_PATH, str(self.dest))
         self.src = _source_from(self.dest, Path(self.tmp.name))
         auth.end()
         self.addCleanup(auth.end)

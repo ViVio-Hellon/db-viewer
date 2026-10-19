@@ -166,9 +166,7 @@ class ReportWebTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         path = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
-        user_settings.save(config.KEY_DB_FILE, path.name)
+        user_settings.save(config.KEY_DB_PATH, str(path))
         auth.end()
         self.addCleanup(auth.end)
         self.env = {k: os.environ.get(k) for k in ("USERNAME", "COMPUTERNAME")}

@@ -53,7 +53,7 @@
       <button class="btn btn--find" type="button" id="refresh">
         <span class="gl">⟳</span>状態を再確認
       </button>
-      <p class="why">この端末の設定はすべてこの画面にあります。VBA 版のレジストリ(オンライン/オフライン)もここです。</p>
+      <p class="why">この端末の設定はすべてこの画面にあります。見る DB は「接続先」でファイル 1 つを指定します。</p>
     </div>
   </div>
 
@@ -82,10 +82,6 @@
 
       {# かんたん設定(0.8.0): 決めるのは 見る DB と 列ごとの 表示・入力・印刷 だけ。中身は views/easy.js が描く #}
       <section class="tabpanel tabpanel--scroll" id="panel-easy" role="tabpanel" aria-labelledby="tab-easy" hidden>
-        <p class="status status--warn" id="easyLogin" hidden>
-          起動モードを決めると、ここで決められます。
-          <a class="btn btn--find" href="/login?next=%2Fsettings%3Ftab%3Deasy" style="margin-left:8px">起動モードへ</a>
-        </p>
         <p class="status status--ng" id="easyProblem" hidden></p>
         <div class="pathcards" id="easyBody" hidden>
           <section class="card">
@@ -237,33 +233,19 @@
           <header>
             <i class="ib ib--sm" aria-hidden="true">接</i>
             <h3>接続先</h3>
-            <span class="eyebrow">VBA 版の progNo・オンライン/オフライン・SrvPath</span>
+            <span class="eyebrow">見る DB ファイル 1 つ</span>
           </header>
           <div class="pad">
-            <div class="field">
-              <label for="progNo">システム</label>
-              <select class="input" id="progNo" style="width:22em">
-                {% for p in view.profiles %}
-                <option value="{{ p.prog_no }}" {% if p.prog_no == view.prog_no %}selected{% endif %}>{{ p.prog_no }}: {{ p.sys_name }}</option>
-                {% endfor %}
-              </select>
-              <span class="why" style="margin:0">VBA の <code>progNo</code>。本体ファイル名と共有フォルダの既定が決まります。</span>
-            </div>
-            <div class="field" style="margin-top:8px">
-              <label class="checkline">
-                <input type="checkbox" id="online" {% if view.online %}checked{% endif %}>
-                オンライン(共有フォルダの本体を使う)。外すとオフライン(手元のフォルダ)
-              </label>
-            </div>
-            <div class="paths" style="margin-top:8px">
-              {{ pathrow("serverDir", "共有フォルダ(オンライン)", view.server_dir, view.server_dir_real) }}
-              <small class="why real" id="serverDirDefault">空なら既定: {{ view.server_dir_default }}</small>
-              {{ pathrow("localDir", "手元のフォルダ(オフライン)", view.local_dir, view.local_dir_real) }}
-              <label for="dbFile">本体ファイル</label>
+            <p class="why" style="margin-top:0">見たい .sqlite3 のファイルを<b>フルパスで 1 つ</b>指定します(共有フォルダでも手元でも同じ)。
+              「参照…」で選ぶか、下の「このフォルダのファイル」の「これを開く」でも入ります。</p>
+            <div class="paths">
+              <label for="dbPathText">DB ファイル</label>
               <span class="pathrow">
-                <input class="input" id="dbFile" value="{{ view.db_file }}" spellcheck="false" autocomplete="off" placeholder="{{ view.db_file_default }}">
+                <input class="input" id="dbPathText" value="{{ view.db_path_text }}" spellcheck="false" autocomplete="off"
+                       placeholder="例: \\server\共有\作業標準DB\作業標準管理システム.sqlite3">
+                <button class="btn btn--find" type="button" data-browse="dbPathText" data-browse-file="1"><span class="gl">▸</span>参照…</button>
               </span>
-              <small class="why real" id="dbPath">→ {{ view.db_path }}</small>
+              <small class="why real" id="dbPath" {% if not view.db_path or view.db_path == view.db_path_text %}hidden{% endif %}>→ {{ view.db_path }}</small>
             </div>
             <div class="btn-row" style="margin-top:8px">
               <button class="btn btn--commit" type="button" id="saveSource">接続先を保存</button>
@@ -333,7 +315,7 @@
           </header>
           <div class="pad">
             <p class="why">レコード画面で開く PDF・画像の置き場所。<code>_設定</code> の「参照形式」に相対パスで書いた列は、このフォルダから探します。
-              空なら VBA と同じく本体のある共有フォルダから探します。</p>
+              空なら DB ファイルのあるフォルダから探します。</p>
             <div class="paths">
               {{ pathrow("refDir", "相対パスの起点", view.ref_dir, view.ref_dir_real) }}
             </div>

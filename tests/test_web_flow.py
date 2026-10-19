@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dbviewer import auth, config, user_settings
+from dbviewer import auth, config, shared_db, user_settings
 from tests._fixture_db import fresh_db_path
 from tests._web import TOKEN, make_client
 
@@ -15,10 +15,8 @@ class WebFlowTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        path = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
-        user_settings.save(config.KEY_DB_FILE, path.name)
+        self.path = path = fresh_db_path(Path(self.tmp.name))
+        user_settings.save(config.KEY_DB_PATH, str(path))
         auth.end()
         self.addCleanup(auth.end)
         self.env = {k: os.environ.get(k) for k in ("USERNAME", "COMPUTERNAME")}
@@ -49,11 +47,15 @@ class WebFlowTest(unittest.TestCase):
         self.assertEqual((r.status_code, r.get_json()["user_id"]), (200, "Xfa-Ngyinazawa"))
         self.assertEqual(self.c.post("/api/logout", json={}, headers=self.h).status_code, 200)
         self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 200)  # 読み直して入る
-        # 起動モードが未設定なら、先にそれ
-        user_settings.save(config.KEY_ONLINE, None)
+        # 0.19.0: 起動モードは無い。DB を決めていなくても画面は開き、一覧は「DB を決めて」と断る
+        user_settings.save(config.KEY_DB_PATH, "")
+        self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
         auth.end()
-        self.assertEqual(self.c.get("/list").status_code, 302)
-        self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 401)
+        self.assertEqual(self.c.get("/list").status_code, 200)
+        r = self.c.post("/api/list/data", json={}, headers=self.h)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(r.get_json()["error"]["message"], shared_db.MSG_NOT_SET)
+        self.assertIn("(DB を決めていません)", self.c.get("/settings").get_data(as_text=True))
 
     def test_list_and_edit_cycle(self):
         self.login()
@@ -107,15 +109,13 @@ if __name__ == "__main__":
 
 
 class OperationTest(unittest.TestCase):
-    """運用機能: 更新あり通知(db_mtime)、起動モードの初期化と選び直し(VBA regUF / LOCKBT)"""
+    """運用機能: 更新あり通知(db_mtime)、接続先は DB ファイル 1 つ(0.19.0)"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.path = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(self.path.parent))
-        user_settings.save(config.KEY_DB_FILE, self.path.name)
+        user_settings.save(config.KEY_DB_PATH, str(self.path))
         auth.end()
         self.addCleanup(auth.end)
         self.env = {k: os.environ.get(k) for k in ("USERNAME", "COMPUTERNAME")}
@@ -142,23 +142,62 @@ class OperationTest(unittest.TestCase):
         os.utime(self.path, (self.path.stat().st_atime, self.path.stat().st_mtime + 10))
         self.assertGreater(self.c.get("/api/health").get_json()["db_mtime"], d["db_mtime"])
 
-    def test_boot_mode_reset_and_choose(self):
-        # 設定済み → ログイン欄が出て、モード選択は隠れている
+    def test_db_path_is_one_file(self):
+        """0.19.0: 接続先は DB ファイル 1 つ(フルパス)。システム・オンライン/オフライン・フォルダ 2 つは無い。"""
         page = self.c.get("/login").get_data(as_text=True)
-        self.assertIn('id="modeCard" hidden', page)
-        self.assertIn('id="loginCard" >', page)
-        # VBA LOCKBT ダブルクリック: 起動モード設定情報を初期化
-        r = self.c.post("/api/settings/reset-mode", json={}, headers=self.h).get_json()
-        self.assertEqual((r["message"], r["mode_set"]), ("起動モード設定情報を初期化しました!", False))
-        self.assertIsNone(user_settings.get(config.KEY_ONLINE))
-        page = self.c.get("/login").get_data(as_text=True)
-        self.assertIn('id="modeCard" >', page)
-        self.assertIn('id="loginCard" hidden', page)
-        # regUF: オフラインを選んで「設定」
-        r = self.c.post("/api/settings/save", json={"online": False}, headers=self.h)
+        self.assertNotIn("modeCard", page)
+        self.assertNotIn("起動モード", page)
+        settings_page = self.c.get("/settings?tab=source").get_data(as_text=True)
+        for gone in ('id="progNo"', 'id="online"', 'id="serverDir"', 'id="localDir"', 'id="dbFile"'):
+            self.assertNotIn(gone, settings_page)
+        self.assertIn('id="dbPathText"', settings_page)
+        self.assertEqual(self.c.post("/api/settings/reset-mode", json={}, headers=self.h).status_code, 404)
+
+        def save(text):
+            return self.c.post("/api/settings/save", json={"db_path": text}, headers=self.h)
+        for bad, why in ((str(self.path.parent), "フォルダではなく"),
+                         (str(self.path.with_suffix(".accdb")), "Access 取り込み"),
+                         (str(self.path.with_name("無い.sqlite3")), "存在しない"),
+                         (str(self.path.with_suffix(".txt")), "開けるのは")):
+            r = save(bad)
+            self.assertEqual(r.status_code, 400, bad)
+            self.assertIn(why, r.get_json()["error"]["message"])
+            self.assertEqual(r.get_json()["error"]["field"], "db_path")
+        self.assertEqual(user_settings.get(config.KEY_DB_PATH), str(self.path))     # 断ったら変えない
+        # 別のフォルダの DB でも、パス 1 つで開く
+        other = Path(self.tmp.name) / "別の場所" / "ほかの.sqlite3"
+        other.parent.mkdir()
+        import shutil
+        shutil.copy(self.path, other)
+        r = save(f'"{other}"')                                                     # エクスプローラの「パスのコピー」の引用符も外す
         self.assertEqual(r.status_code, 200)
-        self.assertIs(user_settings.get(config.KEY_ONLINE), False)
-        self.assertIn('id="modeCard" hidden', self.c.get("/login").get_data(as_text=True))
+        self.assertEqual(r.get_json()["db_path"], str(other))
+        self.assertEqual(shared_db.db_path(), other)
+        self.assertIn("ほかの.sqlite3", self.c.get("/list").get_data(as_text=True))  # 上の帯
+        self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 200)
+        save(str(self.path))
+
+    def test_old_settings_move_to_one_path(self):
+        """0.18.0 までの 5 つの設定しか無い PC は、指していたファイルを 1 回だけ DB ファイルに移す。"""
+        user_settings.delete(config.KEY_DB_PATH)
+        self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
+        user_settings.save(config.KEY_PROG_NO, 4)
+        user_settings.save(config.KEY_ONLINE, False)
+        user_settings.save(config.KEY_LOCAL_DIR, str(self.path.parent))
+        user_settings.save(config.KEY_SERVER_DIR, r"\\どこか\共有")
+        user_settings.save(config.KEY_DB_FILE, self.path.name)
+        self.assertEqual(shared_db.db_path(), self.path)
+        self.assertEqual(user_settings.get(config.KEY_DB_PATH), str(self.path))
+        for k in (config.KEY_PROG_NO, config.KEY_ONLINE, config.KEY_LOCAL_DIR, config.KEY_SERVER_DIR, config.KEY_DB_FILE):
+            self.assertIsNone(user_settings.get(k), k)
+        # オンライン(既定)でフォルダが空なら、前と同じく作業標準管理の共有フォルダ
+        user_settings.delete(config.KEY_DB_PATH)
+        user_settings.save(config.KEY_ONLINE, True)
+        self.assertEqual(str(shared_db.db_path()),
+                         str(Path(config.profile(4).server_dir) / "作業標準管理システム.sqlite3"))
+        # 何も無い PC は「決めていない」(勝手な場所を見に行かない)
+        user_settings.delete(config.KEY_DB_PATH)
+        self.assertFalse(shared_db.is_set())
 
     def test_access_log_written_like_vba(self):
         from dbviewer import access_log
@@ -181,9 +220,7 @@ class ListGridTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         path = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
-        user_settings.save(config.KEY_DB_FILE, path.name)
+        user_settings.save(config.KEY_DB_PATH, str(path))
         auth.end()
         self.addCleanup(auth.end)
         auth.start(auth.LoginResult(True, user_id="t", level=5))

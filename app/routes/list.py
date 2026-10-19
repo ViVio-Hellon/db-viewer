@@ -67,7 +67,8 @@ def old_screens():
 
 
 def _view_key(setup) -> str:
-    return grid_data.view_key("list", shared_db.current_profile().prog_no, setup.general.main_table)
+    # 「4」は 0.18.0 までのシステム番号(既定の作業標準管理)。保存済みの列の並び・幅をそのまま使うため残す
+    return grid_data.view_key("list", 4, setup.general.main_table)
 
 
 def _pick_from_body(conn) -> None:

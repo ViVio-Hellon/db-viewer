@@ -40,9 +40,7 @@ class _Case(unittest.TestCase):
 
     def use(self, path: Path) -> None:
         self.path = path
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
-        user_settings.save(config.KEY_DB_FILE, path.name)
+        user_settings.save(config.KEY_DB_PATH, str(path))
         user_settings.save(config.KEY_MAIN_PICK, {})
         auth.end()
         self.addCleanup(auth.end)

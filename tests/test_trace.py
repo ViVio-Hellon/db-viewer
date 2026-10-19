@@ -194,14 +194,14 @@ class WebTraceTest(_LogDirCase):
         self.assertEqual([x["ev"] for x in self.lines() if x.get("rid") == rid], ["error.server"])
 
     def test_refusal_recorded_with_reason(self):
-        r = self.c.post("/api/settings/save", json={"prog_no": "x"}, headers=self.h)
+        r = self.c.post("/api/settings/save", json={"db_path": "無い.sqlite3"}, headers=self.h)
         self.assertEqual(r.status_code, 400)
         rid = r.headers["X-Request-Id"]
         mine = [x for x in self.lines() if x.get("rid") == rid]
         self.assertEqual([x["ev"] for x in mine], ["settings.save", "request"])
         req = mine[-1]
         self.assertEqual((req["lv"], req["st"], req["data"]["reason"]), ("WARN", 400, "bad_input"))
-        self.assertIn("プログラム番号", req["msg"])
+        self.assertIn("存在しない", req["msg"])
 
     def test_client_error_endpoint(self):
         r = self.c.post("/api/log/client", headers=self.h,
@@ -252,9 +252,7 @@ class SecretsTest(_LogDirCase):
         import os
         from tests._fixture_db import fresh_db_path
         path = fresh_db_path(Path(self.tmp.name))
-        user_settings.save(config.KEY_ONLINE, False)
-        user_settings.save(config.KEY_LOCAL_DIR, str(path.parent))
-        user_settings.save(config.KEY_DB_FILE, path.name)
+        user_settings.save(config.KEY_DB_PATH, str(path))
         auth.end()
         self.addCleanup(auth.end)
         for k, v in (("USERNAME", "Xfa-Ngyinazawa"), ("COMPUTERNAME", "NLM-NGY-240638")):

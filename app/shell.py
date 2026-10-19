@@ -84,27 +84,18 @@ def ribbon_values() -> dict[str, str]:
     """帯に常時出す値。利用者(この PC のログイン ID)と 権限(編集可 / 閲覧のみ。0.16.0)。"""
     from dbviewer import shared_db
 
-    try:
-        prof = shared_db.current_profile()
-        sys_name = prof.sys_name
-    except ValueError:
-        sys_name = "(プロファイル未設定)"
     from dbviewer import auth
 
-    online = user_settings.get(user_settings_key_online(), True)
+    # 0.19.0: 接続先は DB ファイル 1 つ。帯にはそのファイル名(全体は title で)
+    path = shared_db.db_path() if shared_db.is_set() else None
     s = auth.current()
     return {
-        "system": sys_name,
+        "db": path.name if path else "(DB を決めていません)",
+        "db_path": str(path) if path else "",
         "user": s.user_id if s else "",
         "level": s.label if s else "",
         "developer": bool(s and s.developer),
-        "mode": "オンライン" if online else "オフライン",
     }
-
-
-def user_settings_key_online() -> str:
-    from dbviewer import config
-    return config.KEY_ONLINE
 
 
 def shell_context(active: str, *,

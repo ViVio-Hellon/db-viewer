@@ -128,7 +128,7 @@ def _start_records(app: Flask) -> None:
     except (TypeError, ValueError):
         gone = 0
     try:
-        db = str(shared_db.db_path())
+        db = str(shared_db.db_path()) if shared_db.is_set() else ""
     except Exception:                                  # noqa: BLE001
         db = ""
     trace.event("app.start", f"起動しました(版 {app.config['VERSION']})",
@@ -260,11 +260,8 @@ LOGIN_EXEMPT_PATHS = frozenset({"/", "/login", "/api/login", "/api/logout", "/ap
 
 def _login_required():
     """画面を開けば、この PC のログイン ID・PC 名で自動で入る(0.16.0。パスワードは無い)。
-    編集可 / 閲覧のみ は 梱包資材マスタの「アクセス権限」が決める(`access_rights`)。
-    起動モード(オンライン / オフライン)が未設定のときだけ、先にそれを決める画面へ。"""
+    編集可 / 閲覧のみ は 梱包資材マスタの「アクセス権限」が決める(`access_rights`)。"""
     from dbviewer import auth
-    from dbviewer.presenters import settings as settings_presenter
-    from flask import redirect
 
     path = request.path
     if path in LOGIN_EXEMPT_PATHS or any(path.startswith(p) for p in LOGIN_EXEMPT_PREFIXES):
@@ -272,11 +269,7 @@ def _login_required():
         if s:
             s.touch()
         return None
-    if auth.current() is None and not settings_presenter.mode_is_set():
-        if path.startswith("/api/"):
-            return jsonify(_error("login", auth.MSG_NEED_LOGIN)), 401
-        return redirect("/login?next=" + path)
-    auth.ensure().touch()
+    auth.ensure().touch()                       # 0.19.0: 起動モード(オンライン/オフライン)は無い
     return None
 
 

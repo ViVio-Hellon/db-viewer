@@ -20,11 +20,10 @@ async function load(table = "") {
     st = await api.post("/api/easy/state", table ? { table } : (st ? { table: st.table } : {}));
   } catch (err) {
     show("easyBody", false);
-    if (err.status === 401) { show("easyLogin", true); return; }
     show("easyProblem", true); el.easyProblem.textContent = err.message;
     return;
   }
-  show("easyLogin", false); show("easyProblem", false); show("easyBody", true);
+  show("easyProblem", false); show("easyBody", true);
   render();
 }
 
@@ -319,7 +318,7 @@ async function changePassword() {
 }
 
 export function start() {
-  for (const id of ["easyLogin", "easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
+  for (const id of ["easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
                     "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyVbaCard", "easyVbaList",
                     "rightsWho", "rightsNow", "rightsWhy", "rightsPath", "rightsSave", "rightsRecheck", "rightsUsing",
                     "rightsHint", "rightsRowsWrap", "rightsRows",

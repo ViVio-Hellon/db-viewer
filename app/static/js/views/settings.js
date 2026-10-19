@@ -79,17 +79,9 @@ function showReal(node, text, prefix = "→ ") {
 function render(state) {
   LEVEL_LABEL = state.level_label || LEVEL_LABEL;
   el.statusGrid.replaceChildren(...state.sections.map(sectionCard));
-  el.progNo.value = String(state.prog_no);
-  el.online.checked = !!state.online;
-  defaultServerDir = state.server_dir_default || "";
-  el.serverDir.value = state.server_dir;
-  el.localDir.value = state.local_dir;
-  el.dbFile.value = state.db_file;
-  el.dbFile.placeholder = state.db_file_default;
-  showReal(el.serverDirReal, state.server_dir_real);
-  showReal(el.serverDirDefault, state.server_dir_default, "空なら既定: ");
-  showReal(el.localDirReal, state.local_dir_real);
-  showReal(el.dbPath, state.db_path);
+  el.dbPathText.value = state.db_path_text || "";
+  // 相対で入れたときだけ、実際に開く場所を出す
+  showReal(el.dbPath, state.db_path && state.db_path !== state.db_path_text ? state.db_path : "");
   el.refDir.value = state.ref_dir;
   el.exportDir.value = state.export_dir;
   showReal(el.refDirReal, state.ref_dir_real);
@@ -185,6 +177,8 @@ function startBrowser() {
       browser.dialog.close();
       // 「表を持ってくる」の欄なら、選んだらすぐ中を読む
       if (browseTarget.id === "bringPath") lookBring();
+      // DB ファイルの欄なら、そのフォルダのファイルを見直す(保存はまだ)
+      if (browseTarget.id === "dbPathText") { loadDbFiles(); toast("DB ファイルを入れました。「接続先を保存」を押すと開きます。", "info"); }
       return;
     }
     if (file) browseTo(file.dataset.file);
@@ -232,12 +226,13 @@ function onJobs(state) {
 }
 let lastBusy = false;
 
-/* ---------------- 接続先フォルダのファイル ---------------- */
-// 画面で入れているフォルダ(保存前でも)。オンラインなら共有フォルダ、オフラインなら手元
+/* ---------------- DB ファイルのあるフォルダのファイル ---------------- */
+// 画面で入れている DB ファイルのフォルダ(保存前でも)。空ならサーバが決める(いまの DB のフォルダ)
 function activeFolder() {
-  return el.online.checked ? (el.serverDir.value.trim() || defaultServerDir) : el.localDir.value.trim();
+  const text = el.dbPathText.value.trim().replace(/^"|"$/g, "");
+  const cut = Math.max(text.lastIndexOf("\\"), text.lastIndexOf("/"));
+  return cut > 0 ? text.slice(0, cut) : "";
 }
-let defaultServerDir = "";
 
 async function loadDbFiles() {
   if (!el.dbFiles) return;
@@ -532,8 +527,7 @@ function startBring() {
 }
 
 export function start(state) {
-  for (const id of ["statusGrid", "progNo", "online", "serverDir", "serverDirReal", "serverDirDefault",
-                    "localDir", "localDirReal", "dbFile", "dbPath",
+  for (const id of ["statusGrid", "dbPathText", "dbPath",
                     "refDir", "refDirReal", "exportDir", "exportDirReal", "exportDirState", "refDirState", "exportEncoding",
                     "saveExport", "openExport", "saveRef",
                     "accessLog", "reloginMinutes", "accdbSource", "accdbTarget", "accdbTargetDefault", "openConverted",
@@ -550,10 +544,7 @@ export function start(state) {
   logTab.start(state, save);
 
   el.refresh.addEventListener("click", refresh);
-  el.saveSource.addEventListener("click", () => save({
-    prog_no: Number(el.progNo.value), online: el.online.checked,
-    server_dir: el.serverDir.value, local_dir: el.localDir.value, db_file: el.dbFile.value,
-  }));
+  el.saveSource.addEventListener("click", () => save({ db_path: el.dbPathText.value }));
   el.saveExport.addEventListener("click", () => save({
     export_dir: el.exportDir.value,
     export_format: document.querySelector("input[name=exportFormat]:checked")?.value || "csv",
@@ -574,7 +565,7 @@ export function start(state) {
     if (el.settingsTabs) tabs.select(el.settingsTabs, "source");
   });
   el.dbFilesReload.addEventListener("click", loadDbFiles);
-  for (const node of [el.online, el.serverDir, el.localDir]) node.addEventListener("change", () => { loadDbFiles(); showTargetDefault(); });
+  el.dbPathText.addEventListener("change", () => { loadDbFiles(); showTargetDefault(); });
   el.accdbSource.addEventListener("change", showTargetDefault);
   if (unwatch) unwatch();
   unwatch = jobs.subscribe(onJobs);

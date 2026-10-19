@@ -1,6 +1,6 @@
 """この PC の権限(0.16.0。VBA `Login` フォームの代わり)
 
-- `GET  /login`        … 画面。起動モードが未設定なら先にそれ。あとは この PC の ID・PC 名・編集可 / 閲覧のみ
+- `GET  /login`        … 画面。 この PC の ID・PC 名・編集可 / 閲覧のみ
 - `POST /api/login`    … 権限を読み直して使い始める(パスワードは無い。梱包資材マスタの「アクセス権限」)
 - `POST /api/logout`   … いまの権限を捨てる(次の操作で読み直す)
 - `GET  /api/session`  … いまの権限
@@ -12,7 +12,6 @@ from flask import Blueprint, jsonify, render_template, request
 from dbviewer import access_rights, auth, config, user_settings
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
-from dbviewer.presenters import settings as settings_presenter
 
 from ..shell import shell_context
 
@@ -23,23 +22,18 @@ bp = Blueprint("auth", __name__)
 
 @bp.get("/login")
 def page():
-    mode_set = settings_presenter.mode_is_set()
     s = auth.current()
-    rights = (s.rights if s and s.rights else
-              access_rights.evaluate(auth.network_id(), auth.pc_name()) if mode_set else None)
+    rights = s.rights if s and s.rights else access_rights.evaluate(auth.network_id(), auth.pc_name())
     return render_template("login.html", rights=rights,
                            use_id=auth.network_id(), use_pc=auth.pc_name(),
                            last_user=user_settings.get(config.KEY_LAST_USER, "") or auth.network_id(),
                            next_url=request.args.get("next", "/list"),
-                           # VBA `初期設定値確認`: 起動モードが未設定なら先に regUF(オンライン/オフライン)
-                           mode_set=mode_set,
-                           reset_ask=settings_presenter.MSG_RESET_ASK,
                            **shell_context("list"))
 
 
 @bp.get("/api/session")
 def session():
-    s = auth.current() or (auth.ensure() if settings_presenter.mode_is_set() else None)
+    s = auth.current() or auth.ensure()
     return jsonify(_session_dict(s))
 
 
