@@ -130,6 +130,7 @@ def profile(prog_no: Optional[int] = None) -> Profile:
 # 利用者設定の鍵(`user_settings`)
 # ------------------------------------------------------------------
 KEY_DB_PATH = "db_path"              # 見る DB ファイル(フルパス)。0.19.0 から接続先はこれだけ
+KEY_DB_RECENT = "db_recent"          # 最近開いた DB ファイル(新しい順。0.20.0。上の帯の DB から選び直す)
 # 0.18.0 までの接続先(システム・オンライン/オフライン・フォルダ 2 つ・ファイル名)。
 # 残っていれば shared_db が 1 回だけ KEY_DB_PATH に移して消す
 KEY_PROG_NO = "prog_no"              # 使うプロファイル

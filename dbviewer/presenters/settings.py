@@ -541,6 +541,7 @@ def _save_db_path(text: str) -> SaveResult:
     if info["kind"] != db_files.KIND_OPEN:
         return SaveResult(False, f"{path.name} は開けません: {info['note']}", REFUSE_BAD_INPUT, "db_path")
     user_settings.save(config.KEY_DB_PATH, text)
+    shared_db.remember(text)
     return SaveResult(True, f"{path.name} を開きます({info['note']})。")
 
 

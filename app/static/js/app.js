@@ -14,6 +14,7 @@ import * as busy from "./busy.js";
 import * as nav from "./nav.js";
 import * as running from "./running.js";
 import * as unsaved from "./unsaved.js";
+import * as dbswitch from "./dbswitch.js";
 
 // **押されたボタンを覚えておく。** `api.js` が送信を始めるときに、
 // そのボタンを待機の姿にする(無言で待たせない)
@@ -28,6 +29,8 @@ errlog.install((rid) => {
 });
 
 startHeartbeat();
+// DB を切り替えて読み直したなら、その知らせ
+dbswitch.showPendingNote();
 // 長い処理は帯に出す。**画面を離れても見える**ようにするため
 running.start();
 
@@ -42,6 +45,7 @@ export function wireShell() {
   errlog.resetCount();
   wireQuit(document.getElementById("quit"));
   wireLogout(document.getElementById("logout"));
+  dbswitch.wire();                         // 上の帯の DB から選び直す(0.20.0)
   // 新しい帯は空で来る。**移った先で「何も動いていない」に見せない**
   running.paint();
 }

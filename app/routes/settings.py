@@ -75,6 +75,24 @@ def db_files_list():
     return jsonify(db_files.scan(folder, current=shared_db.db_path()))
 
 
+@bp.get("/api/settings/db-choices")
+def db_choices():
+    """選び直せる DB(最近開いたもの・同じフォルダの .sqlite3)。上の帯の「DB」のメニュー。"""
+    from dbviewer import db_files
+    return jsonify(db_files.choices())
+
+
+@bp.post("/api/settings/db-forget")
+def db_forget():
+    """「最近開いた DB」から外す(ファイルは消さない)。"""
+    from dbviewer import db_files, shared_db
+    path = str((request.get_json(silent=True) or {}).get("path", ""))
+    if not shared_db.forget(path):
+        return jsonify({"error": {"code": "current", "message": "いま開いている DB は外せません。"}}), 400
+    trace.event("db.forget", "最近開いた DB から外した", data={"path": path})
+    return jsonify(db_files.choices())
+
+
 @bp.post("/api/settings/open-db")
 def open_db():
     """その .sqlite3 を接続先にする。"""

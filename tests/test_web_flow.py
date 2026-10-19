@@ -177,6 +177,55 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 200)
         save(str(self.path))
 
+    def test_recent_dbs_to_switch_quickly(self):
+        """0.20.0: 開いた DB を覚え、上の帯の DB から 1 回で選び直せる。同じフォルダの .sqlite3 も並ぶ。"""
+        import shutil
+        user_settings.save(config.KEY_DB_RECENT, [])
+        self.addCleanup(user_settings.save, config.KEY_DB_RECENT, [])
+        self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
+        root = Path(self.tmp.name)
+        a = root / "A" / "部品.sqlite3"
+        b = root / "B" / "設備.sqlite3"
+        for p in (a, b):
+            p.parent.mkdir()
+            shutil.copy(self.path, p)
+        shutil.copy(self.path, a.with_name("仕入先.sqlite3"))                    # A に もう 1 つ
+        a.with_name("メモ.txt").write_text("x", encoding="utf-8")               # .sqlite3 でないものは出ない
+
+        def choices():
+            return self.c.get("/api/settings/db-choices", headers=self.h).get_json()
+        d = choices()                                  # まだ「最近」が無くても、いまの DB は出る
+        self.assertEqual([(r["name"], r["current"]) for r in d["recent"]], [(self.path.name, True)])
+        for p in (a, b, a):                            # 開いた順。同じものは 1 つにまとめて上へ
+            r = self.c.post("/api/settings/open-db", json={"path": str(p)}, headers=self.h)
+            self.assertEqual(r.status_code, 200, r.get_json())
+        d = choices()
+        self.assertEqual([r["name"] for r in d["recent"]], ["部品.sqlite3", "設備.sqlite3"])
+        self.assertTrue(d["recent"][0]["current"])
+        self.assertEqual(d["folder"], str(a.parent))
+        self.assertEqual([r["name"] for r in d["same_folder"]], ["仕入先.sqlite3"])  # 最近に無いものだけ
+        # 帯のボタン
+        page = self.c.get("/list").get_data(as_text=True)
+        self.assertIn('id="rb-db"', page)
+        self.assertIn('id="dbMenu"', page)
+        # 外す(ファイルは消さない)。いま開いているものは外せない
+        r = self.c.post("/api/settings/db-forget", json={"path": str(b)}, headers=self.h)
+        self.assertEqual([x["name"] for x in r.get_json()["recent"]], ["部品.sqlite3"])
+        self.assertTrue(b.is_file())
+        r = self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h)
+        self.assertEqual(r.status_code, 400)
+        # 見つからなくなったものは「見つかりません」で並ぶ(外せる)
+        self.c.post("/api/settings/open-db", json={"path": str(b)}, headers=self.h)
+        self.c.post("/api/settings/open-db", json={"path": str(a)}, headers=self.h)
+        b.unlink()
+        gone = [r for r in choices()["recent"] if r["name"] == "設備.sqlite3"][0]
+        self.assertFalse(gone["exists"])
+        # 10 個まで
+        for i in range(12):
+            shared_db.remember(str(root / f"x{i}.sqlite3"))
+        self.assertEqual(len(shared_db.recent()), shared_db.MAX_RECENT)
+        self.assertEqual(shared_db.recent()[0], str(root / "x11.sqlite3"))
+
     def test_old_settings_move_to_one_path(self):
         """0.18.0 までの 5 つの設定しか無い PC は、指していたファイルを 1 回だけ DB ファイルに移す。"""
         user_settings.delete(config.KEY_DB_PATH)

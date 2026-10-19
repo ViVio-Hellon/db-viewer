@@ -43,7 +43,14 @@
   </div>
   <div class="ribbon__slots">
     {# 値はサーバが持つ(`shell.ribbon_values`)。画面を移っても消えない #}
-    <div class="slot"><span class="k">DB</span><span class="v" id="rb-db" title="{{ ribbon.db_path }}" {% if not ribbon.db_path %}data-state="unset"{% endif %}>{{ ribbon.db }}</span></div>
+    {# 0.20.0: DB の名前を押すと、最近開いた DB・同じフォルダの .sqlite3 から 1 回で選び直せる(dbswitch.js) #}
+    <div class="slot slot--db">
+      <span class="k">DB</span>
+      <button class="v dbpick" id="rb-db" type="button" aria-haspopup="true" aria-expanded="false"
+              title="{{ ribbon.db_path }}{{ '\n' if ribbon.db_path }}押すと、ほかの DB に切り替えられます"
+              {% if not ribbon.db_path %}data-state="unset"{% endif %}>{{ ribbon.db }}<span class="dbpick__caret" aria-hidden="true">▾</span></button>
+      <div class="menu__list dbmenu" id="dbMenu" role="menu" hidden></div>
+    </div>
     <div class="slot"><span class="k">利用者</span><span class="v" id="rb-user" {% if not ribbon.user %}data-state="unset"{% endif %}>{{ ribbon.user or "未ログイン" }}</span></div>
     <div class="slot"><span class="k">権限</span><span class="v" id="rb-level">{{ ribbon.level or "-" }}</span></div>
   </div>

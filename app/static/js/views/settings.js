@@ -2,6 +2,7 @@
   設定画面。判断はサーバが済ませてある。ここは受け取ったものを並べるだけ。
 */
 
+import * as dbswitch from "../dbswitch.js";
 import { api } from "../api.js";
 import { toast, toastError } from "../toast.js";
 import { confirmBox } from "../askbox.js";
@@ -97,6 +98,7 @@ function render(state) {
   el.accdbTarget.value = state.accdb_target || "";
   showTargetDefault();
   loadDbFiles();
+  dbswitch.renderRecent(el.dbRecent);
   logTab.render(state.log);
   if (el.settingsTabs) tabs.setBadges(el.settingsTabs, state.tab_badges);
 }
@@ -178,7 +180,8 @@ function startBrowser() {
       // 「表を持ってくる」の欄なら、選んだらすぐ中を読む
       if (browseTarget.id === "bringPath") lookBring();
       // DB ファイルの欄なら、そのフォルダのファイルを見直す(保存はまだ)
-      if (browseTarget.id === "dbPathText") { loadDbFiles(); toast("DB ファイルを入れました。「接続先を保存」を押すと開きます。", "info"); }
+      // DB ファイルの欄なら、選んだらすぐその DB に切り替える(保存を押す手間を省く)
+      if (browseTarget.id === "dbPathText") openDb(file.dataset.file);
       return;
     }
     if (file) browseTo(file.dataset.file);
@@ -277,12 +280,9 @@ function fileRow(f) {
   return li;
 }
 
+// 切り替えたら画面ごと読み直す(上の帯の DB 名も変わる)。だめなら理由を出して今のまま
 async function openDb(path) {
-  try {
-    const state = await api.post("/api/settings/open-db", { path });
-    render(state);
-    toast(state.message, "ok");
-  } catch (err) { toastError(err); }
+  try { await dbswitch.openDb(path); } catch (err) { toastError(err); }
 }
 
 function showTargetDefault() {
@@ -527,7 +527,7 @@ function startBring() {
 }
 
 export function start(state) {
-  for (const id of ["statusGrid", "dbPathText", "dbPath",
+  for (const id of ["statusGrid", "dbPathText", "dbPath", "dbRecent",
                     "refDir", "refDirReal", "exportDir", "exportDirReal", "exportDirState", "refDirState", "exportEncoding",
                     "saveExport", "openExport", "saveRef",
                     "accessLog", "reloginMinutes", "accdbSource", "accdbTarget", "accdbTargetDefault", "openConverted",
@@ -544,7 +544,7 @@ export function start(state) {
   logTab.start(state, save);
 
   el.refresh.addEventListener("click", refresh);
-  el.saveSource.addEventListener("click", () => save({ db_path: el.dbPathText.value }));
+  el.saveSource.addEventListener("click", () => openDb(el.dbPathText.value));
   el.saveExport.addEventListener("click", () => save({
     export_dir: el.exportDir.value,
     export_format: document.querySelector("input[name=exportFormat]:checked")?.value || "csv",

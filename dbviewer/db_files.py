@@ -105,3 +105,45 @@ def _same(a: Path, b: Path) -> bool:
         return a.resolve() == b.resolve()
     except OSError:
         return str(a) == str(b)
+
+
+# ------------------------------------------------------------------
+# DB を選び直す(0.20.0。上の帯の「DB」と 設定 → 接続先 の「最近開いた DB」)
+# ------------------------------------------------------------------
+MAX_SAME_FOLDER = 40
+
+
+def _entry(path: Path, *, text: str = "", current: bool = False) -> dict[str, Any]:
+    """1 つの候補。中は読まない(帯のメニューは速く出したい。開けるかは開くときに確かめる)。"""
+    try:
+        st = path.stat()
+        exists, mtime = path.is_file(), datetime.fromtimestamp(st.st_mtime).strftime("%Y/%m/%d %H:%M")
+    except OSError:
+        exists, mtime = False, ""
+    return {"name": path.name, "path": text or str(path), "folder": str(path.parent),
+            "exists": exists, "mtime": mtime, "current": current}
+
+
+def choices() -> dict[str, Any]:
+    """選び直せる DB: 最近開いたもの(新しい順)と、いまの DB と同じフォルダの .sqlite3。"""
+    from . import shared_db
+    now = shared_db.configured()
+    texts = shared_db.recent()
+    if now and not any(shared_db.same_file(t, now) for t in texts):
+        texts = [now] + texts                          # 0.19.0 からの人は「最近」がまだ空
+    recent = [_entry(config.resolve_dir(t), text=t, current=bool(now) and shared_db.same_file(t, now))
+              for t in texts]
+    out: dict[str, Any] = {"current": now, "recent": recent, "folder": "", "same_folder": [], "message": ""}
+    if not now:
+        return out
+    folder = config.resolve_dir(now).parent
+    out["folder"] = str(folder)
+    try:
+        found = sorted((p for p in folder.iterdir()
+                        if p.suffix.lower() in SQLITE_SUFFIXES and p.is_file()), key=lambda p: p.name.lower())
+    except OSError as exc:
+        out["message"] = f"フォルダを読めません({exc})。"
+        return out
+    out["same_folder"] = [_entry(p) for p in found
+                          if not any(shared_db.same_file(str(p), t) for t in texts)][:MAX_SAME_FOLDER]
+    return out

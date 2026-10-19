@@ -362,3 +362,30 @@ a.role-chip .gl { font-size: var(--fs-sm); opacity: 0.8; }
   .split { grid-template-columns: 1fr; }
   .split__results { border-right: 0; border-bottom: 1px solid var(--rule); }
 }
+
+/* 上の帯の DB(0.20.0)。押すと 最近開いた DB・同じフォルダの .sqlite3 のメニュー */
+.slot--db { position: relative; }
+.dbpick { all: unset; cursor: pointer; display: inline-flex; align-items: baseline; gap: 6px;
+          max-width: 28em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          border-radius: var(--radius-xs); }
+.dbpick:hover { text-decoration: underline; text-underline-offset: 3px; }
+.dbpick:focus-visible { outline: 2px solid var(--bar-ink); outline-offset: 2px; }
+.dbpick__caret { font-size: var(--fs-sm); color: var(--bar-muted); }
+.dbmenu { left: 0; right: auto; min-width: min(30em, 92vw); max-width: min(46em, 96vw);
+          max-height: min(70vh, 34em); overflow: auto; }
+.dbmenu__h { padding: 8px 10px 3px; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: .04em;
+             color: var(--muted); }
+.dbmenu__row { display: flex; align-items: stretch; gap: 2px; }
+.dbmenu__row > button:first-child { flex: 1; min-width: 0; }
+.dbmenu__row b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbmenu__row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbmenu__row.is-current > button:first-child { background: var(--accent-soft); cursor: default; }
+.dbmenu__row.is-missing b { color: var(--muted); text-decoration: line-through; }
+.dbmenu .dbmenu__x { flex: none; padding: 7px 9px; color: var(--muted); }
+.dbmenu__note { padding: 8px 10px; color: var(--muted); font-size: var(--fs-sm); }
+.dbmenu__foot { border-top: 1px solid var(--rule); margin-top: 4px; padding-top: 4px; }
+.dbmenu--inline { display: flex; flex-direction: column; max-height: none; min-width: 0; max-width: none; }
+.dbmenu--inline button { all: unset; padding: 7px 10px; border-radius: var(--radius-xs); cursor: pointer;
+                         font-size: var(--fs-sm); color: var(--ink); }
+.dbmenu--inline button:hover, .dbmenu--inline button:focus-visible { background: var(--accent-soft); }
+.dbmenu--inline small { display: block; color: var(--muted); font-size: var(--fs-xs); }
