@@ -63,7 +63,9 @@ function renderTables() {
   el.listTitle.hidden = !el.listTable.hidden;              // 表を選べるときは選ぶ欄が見出しを兼ねる
   el.listTable.replaceChildren(...tables.map((t) => {
     const o = document.createElement("option");
-    o.value = t.name; o.textContent = `${t.name}(${t.rows >= 0 ? t.rows.toLocaleString() : "?"} 件)`;
+    o.value = t.name;
+    o.textContent = `${t.name}(${t.rows >= 0 ? t.rows.toLocaleString() : "?"} 件)${t.brought ? " 足" : ""}`;
+    if (t.brought) o.title = "「表を持ってくる」で足した表";
     o.selected = t.name === data.table;
     return o;
   }));
@@ -214,9 +216,11 @@ async function simpleCommand(mode, row) {
 }
 
 /* ---------------- 見えているとおりに取り出す ---------------- */
+/** 印刷・出力・コピーする表: 見えている列のうち、かんたん設定で「印刷」の列(並びは見えているとおり)。 */
 function visibleTable() {
   const names = data.columns.map((c) => c.name);
-  const cols = grid.visibleColumns();
+  const printSet = data.print_columns ? new Set(data.print_columns) : null;
+  const cols = grid.visibleColumns().filter((n) => !printSet || printSet.has(n));
   const idx = cols.map((n) => names.indexOf(n));
   const rows = grid.shownRows().map((r) => idx.map((i) => r[i] ?? ""));
   const numeric = cols.map((n) => data.columns[names.indexOf(n)].kind === "num");

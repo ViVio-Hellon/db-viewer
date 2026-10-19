@@ -5,7 +5,7 @@
   サーバ(`master_admin.add_column`)が見る。断り(名前が重なる等)は窓の中に出して、直してもう一度押せる。
 
     openAddColumn({ table, url, kinds, settingTable, onDone })
-      url          … POST 先(/api/browse/add-column など)。送るのは {table, name, kind, fill}
+      url          … POST 先(/api/list/add-column)。送るのは {table, name, kind, fill}
       kinds        … [[値, 呼び名], …](並びのまま出す。既定は "text")
       settingTable … 一緒に行を足す設定の表(前もって知らせる)。無ければ ""
       onDone(res)  … 足せたとき(res.message, res.column, res.setting_table …)

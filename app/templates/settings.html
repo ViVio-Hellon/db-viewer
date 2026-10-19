@@ -97,7 +97,7 @@
             <div class="pad">
               <p class="easydb" id="easyDb"></p>
               <p class="why">DB を替えるときは「接続先」で選びます。全般設定・<b>_設定</b> の表は要りません。
-                どの表も 一覧・マスタ管理・閲覧 で見て直せます(一覧の上で表を選ぶ)。</p>
+                どの表も 一覧 で見て直せます(一覧の上で表を選ぶ)。</p>
               <div class="btn-row"><button class="btn btn--find" type="button" id="easyGoSource"><span class="gl">▸</span>接続先で DB を選ぶ</button></div>
             </div>
           </section>
@@ -113,7 +113,7 @@
                 <label for="easyTable" class="why" style="margin:0">表</label>
                 <select class="input" id="easyTable" style="width:22em"></select>
               </div>
-              <p class="why">列ごとに、<b>表示</b>(一覧・閲覧に出す)・<b>入力</b>(直すときの欄)・<b>印刷</b>(閲覧・出力で印刷・保存に入れる)・<b>クリック</b>(マスの値を押したときに コピー / 現物を開く / プレビュー。開くもの = Excel・Word・PDF・URL)を選びます。
+              <p class="why">列ごとに、<b>表示</b>(一覧に出す)・<b>入力</b>(直すときの欄)・<b>印刷</b>(一覧の 印刷・出力 に入れる)・<b>クリック</b>(マスの値を押したときに コピー / 現物を開く / プレビュー。開くもの = Excel・Word・PDF・URL)を選びます。
                 列名で覚えるので、列の並びが変わっても・列が増えても(増えた列は 表示・文字・印刷)ずれません。DB を替えれば、その DB の設定になります。</p>
               <p class="status status--warn" id="easyLegacy" hidden></p>
               <div class="tablewrap easytable">
@@ -564,7 +564,7 @@
     (cscript → ADODB → ACE)で作業フォルダに .sqlite3 を作ってから読みます。
   </p>
   <p class="why">
-    <b>本体に無い表</b>は、表ごと足します(「持ってくる」)。足した表はマスタ管理に
+    <b>本体に無い表</b>は、表ごと足します(「持ってくる」)。足した表は一覧の表の選び欄に
     「足」の印で出て、そのまま直せます。
   </p>
   <p class="why">

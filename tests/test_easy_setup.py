@@ -147,24 +147,11 @@ class PlainDbTest(_Case):
         r = self.post("/api/list/row-save", table="部品", rowid=rid, values={"入荷日": "2026-02-30"},
                       seen={"入荷日": "2026/10/15"})
         self.assertEqual(r.status_code, 422)
-        # 表示しない列は一覧・閲覧に出ない。印刷しない列は閲覧の印刷・保存に入らない
+        # 表示しない列は一覧に出ない。印刷しない列は一覧の印刷・保存・コピーに入らない
         self.save_cols("部品", 入荷日={"show": False}, 品番={"print": False})
         d = self.ok("/api/list/data")
         self.assertEqual([c["name"] for c in d["columns"]], ["品番", "名前", "単価"])
-        b = self.ok("/api/browse/data", table="部品")
-        self.assertEqual([c["name"] for c in b["columns"]], ["品番", "名前", "単価"])
-        self.assertEqual(b["print_columns"], ["名前", "単価"])
-        self.assertEqual(self.ok("/api/browse/tables")["tables"], ["部品", "仕入先"])
-        # マスタ管理: 全部の列(表示しない列も)と、入力の種類どおりの欄
-        f = self.ok("/api/master/form", table="部品", mode="UPDATE", row=["A-1", "箱", "121.5", "2026/10/15"])
-        simple = {x["name"]: (x["simple"] or {}).get("input") for x in f["fields"]}
-        self.assertEqual(simple, {"品番": None, "名前": "combo", "単価": "spin", "入荷日": "calendar"})
-        r = self.post("/api/master/execute", table="部品", mode="UPDATE", values=["A-1", "箱", "x", "2026/10/15"],
-                      key="A-1", seen=["A-1", "箱", "121.5", "2026/10/15"], confirmed=True, answer=True)
-        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "bad_value"))
-        self.ok("/api/master/execute", table="部品", mode="UPDATE", values=["A-1", "箱", "122", "2026-11-01"],
-                key="A-1", seen=["A-1", "箱", "121.5", "2026/10/15"], confirmed=True, answer=True)
-        self.assertEqual(self.q("SELECT 入荷日 FROM 部品 WHERE 品番='A-1'"), [("2026/11/01",)])
+        self.assertEqual(d["print_columns"], ["名前", "単価"])                    # 一覧の 印刷・出力 に入る列(0.18.0)
 
     def test_settings_follow_column_names(self):
         """列名で覚える: 列が増えても・並びが違う DB でも、ずれない。"""
@@ -192,24 +179,19 @@ class PlainDbTest(_Case):
         self.assertEqual(self.save_cols("部品", 単価={"input": "なにか"}).status_code, 422)
         self.assertEqual(self.post("/api/easy/columns", table=config.ID_TABLE, rows=[]).status_code, 422)
 
-    def test_master_rows_in_any_table(self):
-        """マスタ管理にどの表も並び、1 列目が番号でない表も行を足す・直せる。"""
+    def test_any_table_rows_in_list(self):
+        """1 列目が番号でない表も、一覧で行を足す・直せる(行は rowid)。同じ名前でも足す。"""
         self.login()
-        tables = self.ok("/api/master/tables")["tables"]
-        self.assertTrue({"部品", "仕入先"} <= set(tables))
-        f = self.ok("/api/master/form", table="仕入先", mode="ADDNEW")
-        self.assertEqual([(x["value"], x["is_key"]) for x in f["fields"]], [("", False), ("", False)])
-        exe = lambda mode, values, seen=None: self.post(
-            "/api/master/execute", table="仕入先", mode=mode, values=values, key=values[0], seen=seen,
-            confirmed=True, answer=True)
-        self.assertEqual(exe("ADDNEW", ["東海紙工", "052-222-2222"]).status_code, 200)     # 同じ名前でも足す
+        self.assertEqual([t["name"] for t in self.ok("/api/list/data", table="仕入先")["tables"]], ["部品", "仕入先"])
+        r = self.ok("/api/list/row-add", table="仕入先", values={"名前": "東海紙工", "電話": "052-222-2222"})
         self.assertEqual(self.q("SELECT * FROM 仕入先 ORDER BY rowid"),
                          [("東海紙工", "052-000-0000"), ("東海紙工", "052-222-2222")])
-        self.assertEqual(exe("UPDATE", ["東海紙工 名古屋", "052-222-2222"], ["東海紙工", "052-222-2222"]).status_code, 200)
+        self.ok("/api/list/row-save", table="仕入先", rowid=r["rowid"], values={"名前": "東海紙工 名古屋"},
+                seen={"名前": "東海紙工", "電話": "052-222-2222"})
         self.assertEqual(self.q("SELECT * FROM 仕入先 ORDER BY rowid")[1], ("東海紙工 名古屋", "052-222-2222"))
-        self.assertEqual(exe("UPDATE", ["x", "y"], ["無い", "行"]).get_json()["reason"], "conflict")
-        # 本体(一覧の表)も VBA 版でなければ、マスタ管理で行を直せる
-        self.assertTrue(self.ok("/api/master/rows", table="部品")["caps"]["rows"])
+        bad = self.post("/api/list/row-save", table="仕入先", rowid=r["rowid"], values={"名前": "x"},
+                        seen={"名前": "東海紙工"})
+        self.assertEqual(bad.get_json()["reason"], "conflict")
 
 
 class AutoAndFileTest(_Case):
@@ -255,13 +237,9 @@ class AutoAndFileTest(_Case):
             c.commit()
         self.ok("/api/list/row-save", table="部品", rowid=r["rowid"], values={"名前": "x"}, seen={"名前": "x"})
         self.assertEqual(self.who(r["rowid"]), ("前の人", "前の人"))            # 変わっていなければ入れない
-        # マスタ管理でも同じ
-        f = self.ok("/api/master/form", table="部品", mode="ADDNEW")
-        kinds = {x["name"]: (x["simple"] or {}).get("input") for x in f["fields"]}
-        self.assertEqual((kinds["登録者"], kinds["更新者"], kinds["図面"]), ("auto_new_user", "auto_upd_user", "file"))
-        vals = ["D-1", "", "", "", "", "", "", ""]
-        self.ok("/api/master/execute", table="部品", mode="ADDNEW", values=vals, key="D-1", confirmed=True, answer=True)
-        self.assertEqual(self.q("SELECT 登録者, 更新者 FROM 部品 WHERE 品番='D-1'"), [("tester", "tester")])
+        # 行の窓で足しても同じ
+        r = self.ok("/api/list/row-add", table="部品", values={"品番": "D-1"})
+        self.assertEqual(self.who(r["rowid"]), ("tester", "tester"))
 
     def preview(self, value, column="図面"):
         return self.c.get("/api/file/preview", query_string={"table": "部品", "column": column, "value": value},
@@ -352,7 +330,7 @@ class ClickActionTest(_Case):
         rows = [dict(c, **changes.get(c["name"], {})) for c in st["columns"]]
         return self.post("/api/easy/columns", table="部品", rows=rows)
 
-    def test_saved_and_handed_to_every_screen(self):
+    def test_saved_and_handed_to_the_list(self):
         r = self.save(品番={"click": "copy"}, 名前={"click": "open", "place": "https://intra.example/search?q={値}"},
                       資料={"click": "preview"}, 単価={"click": "copy", "place": "無視される"})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
@@ -360,8 +338,6 @@ class ClickActionTest(_Case):
         want = {"品番": a("copy", col="品番"), "名前": a("open", "https://intra.example/search?q={値}", "名前"),
                 "資料": a("preview", col="資料"), "単価": a("copy", col="単価")}     # コピーに場所は要らない
         self.assertEqual(self.ok("/api/list/data", table="部品")["actions"], want)
-        self.assertEqual(self.ok("/api/browse/data", table="部品")["actions"], want)
-        self.assertEqual(self.ok("/api/master/rows", table="部品")["actions"], want)
         self.assertEqual(self.ok("/api/list/data", table="仕入先")["actions"], {})   # 決めていない表は空
 
     def test_old_url_setting_reads_as_open(self):
@@ -512,14 +488,13 @@ class VbaDbTest(_Case):
         inputs = {c["name"]: c["input"] for c in st["columns"]}                 # 入力の種類は取り込んだ
         self.assertEqual((inputs["Ⅳ"], inputs["完了日"], inputs["作業名"]), ("spin", "calendar", "text"))
         self.assertEqual(self.post("/api/easy/retire").status_code, 422)          # もう無い
-        # 一覧・帳票・マスタ管理はそのまま動く
+        # 一覧・帳票はそのまま動く
         d = self.ok("/api/list/data")
         self.assertEqual(d["count"], 327)
         self.assertEqual(d["edit"]["columns"]["Ⅰ"]["input"], "spin")
         rowids = [r[d["key_index"]] for r in d["rows"]][:319]
         rep = self.ok("/api/report/run", keys=rowids, by="rowid")
         self.assertEqual(rep["source_rows"], 319)
-        self.assertIn(MAIN, self.ok("/api/master/tables")["tables"])
 
     def test_retire_needs_level5(self):
         auth.start(auth.LoginResult(True, user_id="Xfa-Ngyinazawa", level=4))

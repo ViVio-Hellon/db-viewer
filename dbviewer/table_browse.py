@@ -40,13 +40,6 @@ DEFAULT_FORMAT = "csv"
 DEFAULT_ENCODING = "cp932"
 
 
-def browse_tables(browse_str: str) -> list[str]:
-    """VBA `MF3.リスト更新`: `/` 区切り。空なら無し。"""
-    if browse_str == "":
-        return []
-    return browse_str.split("/") if "/" in browse_str else [browse_str]
-
-
 @dataclass
 class TableView:
     table: str

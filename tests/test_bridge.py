@@ -216,7 +216,7 @@ class BridgeProcessTests(unittest.TestCase):
         self.assertEqual(self.app.request("GET", "/login")[0]["status"], 200)
         head, body = self.app.json("/api/login", {"id": "Xfa-Ngyinazawa", "password": ""})
         self.assertEqual(head["status"], 200, body)
-        for path in ("/list", "/master", "/browse", "/settings", "/static/js/app.js",
+        for path in ("/list", "/settings", "/static/js/app.js",
                      "/static/js/desktop.js", "/static/js/askbox.js"):
             with self.subTest(path=path):
                 self.assertEqual(self.app.request("GET", path)[0]["status"], 200)

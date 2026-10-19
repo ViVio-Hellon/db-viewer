@@ -1,4 +1,4 @@
-"""マスタ管理: 列を追加(0.9.0: <メイン>_設定 は使わない。どの表も同じ)"""
+"""列を追加(一覧の「＋ 列を追加」。0.18.0 でマスタ管理の画面はなくした)"""
 from __future__ import annotations
 
 import sqlite3
@@ -42,14 +42,15 @@ class _DbCase(unittest.TestCase):
         with sqlite3.connect(self.path) as c:
             return master_file_check(c, MAIN)
 
-    def add(self, **body):
-        return self.c.post("/api/master/add-column", json=body, headers=self.h)
+    def add(self, table=MAIN, **body):
+        self.c.post("/api/list/data", json={"table": table}, headers=self.h)   # 一覧で表を選ぶ
+        return self.c.post("/api/list/add-column", json=body, headers=self.h)
 
 
 class AddColumnTest(_DbCase):
     def test_main_add_column_without_setting_table(self):
         n_conv = len(self.q(f"SELECT * FROM [{CONV}]"))
-        r = self.add(table=MAIN, name="部署", kind="text", fill="梱包")
+        r = self.add(name="部署", kind="text", fill="梱包")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         j = r.get_json()
         self.assertEqual((j["column"], j["setting_table"]), ("部署", ""))
@@ -69,28 +70,29 @@ class AddColumnTest(_DbCase):
         # 書く前の控え
         self.assertTrue(Path(j["backup"]).is_file())
 
-    def test_other_master_and_kinds(self):
-        r = self.add(table="ID", name="内線", kind="integer", fill="12")
+    def test_kinds(self):
+        r = self.add(name="内線", kind="integer", fill="12")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertEqual(r.get_json()["setting_table"], "")
-        self.assertEqual({v for (v,) in self.q("SELECT 内線 FROM ID")}, {12})
-        self.assertEqual(self.q("SELECT typeof(内線) FROM ID LIMIT 1"), [("integer",)])
-        r = self.add(table="ID", name="係数", kind="number", fill="abc")
+        self.assertEqual({v for (v,) in self.q(f"SELECT 内線 FROM [{MAIN}]")}, {12})
+        self.assertEqual(self.q(f"SELECT typeof(内線) FROM [{MAIN}] LIMIT 1"), [("integer",)])
+        r = self.add(name="係数", kind="number", fill="abc")
         self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "bad_fill"))
-        self.assertNotIn("係数", self.cols("ID"))
+        self.assertNotIn("係数", self.cols(MAIN))
 
     def test_names_refused(self):
         for name, reason in (("作業名", "duplicate"), ("ra", "duplicate"), ("", "bad_name"),
                              (" 部署", "bad_name"), ("a[b", "bad_name"), ("改\n行", "bad_name"), ("x" * 65, "bad_name")):
-            r = self.add(table=MAIN, name=name)
+            r = self.add(name=name)
             self.assertEqual((r.status_code, r.get_json()["reason"]), (422, reason), repr(name))
         self.assertEqual(len(self.cols(MAIN)), 25)
 
     def test_fixed_tables_refused(self):
-        r = self.add(table="全般設定", name="追加")
-        self.assertEqual((r.status_code, r.get_json()["reason"]), (422, "fixed_columns"))
-        # _設定 はもうマスタ管理に出さない(使わない表)
-        self.assertEqual(self.add(table=CONV, name="追加").status_code, 403)
+        """列が決まっている表(全般設定・_設定)には足さない(一覧では選べない表だが、決まりとして)。"""
+        conn = shared_db.connect(self.path)
+        self.addCleanup(conn.close)
+        for table in ("全般設定", CONV):
+            r = master_admin.add_column(conn, load_setup(conn), table, "追加", level=5)
+            self.assertEqual(r.reason, "fixed_columns", table)
 
     def test_works_with_any_setting_table_state(self):
         """_設定 が本体と合っていなくても・無くても、列は足せる。"""
@@ -107,36 +109,13 @@ class AddColumnTest(_DbCase):
         self.assertEqual(column_names(conn, MAIN)[-2:], ["部署", "係"])
 
 
-class DeleteNullTest(_DbCase):
-    def test_row_with_null_cells_can_be_deleted(self):
-        """Access から写した行(空の欄が NULL)も、マスタ管理で消せる。"""
-        rows = self.c.post("/api/master/rows", json={"table": "ID"}, headers=self.h).get_json()["rows"]
-        target = rows[-1]
-        self.assertIn("", target)                                     # 画面では空(本体は NULL)
-        before = len(self.q("SELECT * FROM ID"))
-        r = self.c.post("/api/master/delete", json={"table": "ID", "row": target, "confirmed": True,
-                                                    "answer": True}, headers=self.h)
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertEqual(len(self.q("SELECT * FROM ID")), before - 1)
-
-
 class LowerLevelTest(_DbCase):
-    level = 4
+    level = 1                                                          # 閲覧のみ
 
-    def test_columns_need_level5(self):
-        t = self.c.post("/api/master/tables", json={}, headers=self.h).get_json()
-        self.assertIn(MAIN, t["tables"])                               # 0.9.0: 本体も行を直せる(Level 3 から)
-        self.assertTrue(t["caps"][MAIN]["rows"])
-        self.assertFalse(t["caps"]["ID"]["columns"])
-        self.assertTrue(t["caps"]["ID"]["rows"])
-        r = self.add(table="ID", name="内線")
+    def test_columns_need_edit(self):
+        r = self.add(name="内線")
         self.assertEqual((r.status_code, r.get_json()["reason"]), (403, "level"))
-        # ふつうの行の追加(ID)は今までどおり
-        f = self.c.post("/api/master/form", json={"table": "ID", "mode": "ADDNEW"}, headers=self.h).get_json()
-        row = [f["fields"][0]["value"], "試験", "Xfa-Shiken", "PC", "", "1", ""]
-        r = self.c.post("/api/master/execute", headers=self.h, json={
-            "table": "ID", "mode": "ADDNEW", "values": row, "key": row[0], "confirmed": True, "answer": True})
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertNotIn("内線", self.cols(MAIN))
 
 
 if __name__ == "__main__":

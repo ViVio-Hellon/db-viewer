@@ -9,7 +9,7 @@
     場所が空 → 値そのもの。{値} があればそこへ、無ければ末尾に値を付ける(URL の決まりなら値は符号化)
     http(s):// で始まれば URL、それ以外はファイルの場所(相対パスは 参照ファイルの起点 から)
 
-  一覧・閲覧・マスタ管理で同じ。決まりはサーバの `simple_table.click_target` と同じ。
+  一覧で使う。決まりはサーバの `simple_table.click_target` と同じ。
 */
 import { api, tokenUrl } from "./api.js";
 import { toast, toastError } from "./toast.js";

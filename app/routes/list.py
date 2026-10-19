@@ -6,7 +6,7 @@ VBA MF1 の一覧ページ(フィルタ列・ListView・ページ)は捨て、We
 - `GET  /list`             … 画面
 - `POST /api/list/data`    … 全行・列の種類・この PC で保存した列の見せ方
 - `POST /api/list/view`    … 列の見せ方を保存する(`{"reset": true}` で初期に戻す)
-- `POST /api/list/add-column` … 本体に列を足す(Level 5。マスタ管理の「列を追加」と同じ決まり)
+- `POST /api/list/add-column` … 選んでいる表に列を足す(編集可)
 
 0.8.0 から一覧で表を選べる(`{"table"}` を付けると、その表をこの PC で覚える)。0.9.0 からどの表も
 simple_table の道(rowid で直す。列の設定は かんたん設定)。`/api/list/cell`・`/api/list/value` は VBA 版の
@@ -58,6 +58,14 @@ def page():
     return render_template("list.html", **shell_context("list"))
 
 
+@bp.get("/master")
+@bp.get("/browse")
+def old_screens():
+    """0.18.0 でなくした画面(マスタ管理・閲覧・出力)。古いショートカット・ブックマークは一覧へ。"""
+    from flask import redirect
+    return redirect("/list")
+
+
 def _view_key(setup) -> str:
     return grid_data.view_key("list", shared_db.current_profile().prog_no, setup.general.main_table)
 
@@ -70,13 +78,15 @@ def _pick_from_body(conn) -> None:
 
 
 def _tables(conn) -> list[dict]:
+    from dbviewer import table_bring
+    brought = set(table_bring.brought_tables(conn))
     out = []
     for name in settings_tables.user_tables(conn):
         try:
             n = conn.execute(f"SELECT COUNT(*) FROM {settings_tables.q(name)}").fetchone()[0]
         except Exception:                               # noqa: BLE001 - 数えられなければ ?
             n = -1
-        out.append({"name": name, "rows": n})
+        out.append({"name": name, "rows": n, "brought": name in brought})
     return out
 
 
@@ -94,6 +104,8 @@ def _simple_data(conn, setup):
         "edit": {"allowed": lv >= auth.required_level("修正"),
                  "columns": {c: simple_table.edit_spec(conn, table, settings[c]) for c in v["columns"]}},
         "can": {"add": lv >= auth.required_level("新規"), "delete": lv >= auth.required_level("削除")},
+        # 印刷・出力(保存・コピー)に入れる列(かんたん設定の「印刷」。0.18.0: 閲覧・出力の画面から一覧へ)
+        "print_columns": v["print_columns"],
         # マスを押したときにすること(かんたん設定の「クリック」)
         "actions": simple_table.actions(settings.values(), table),
         "db_mtime": shared_db.probe().get("mtime"),
@@ -159,7 +171,7 @@ def api_value():
 
 @bp.post("/api/list/add-column")
 def api_add_column():
-    """一覧の表(本体)の末尾に列を足す。<メイン>_設定 があれば行も足す(マスタ管理と同じ決まり・Level 5)。"""
+    """一覧の表の末尾に列を足す(編集可。決まりは master_admin.add_column)。"""
     conn, setup, err = _open()
     if err:
         return err

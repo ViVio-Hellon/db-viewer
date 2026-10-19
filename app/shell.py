@@ -1,8 +1,8 @@
 """画面の外枠に渡す値
 
 左のレールの並びと、テンプレートが必要とする共通の値をここで作る。
-並びは VBA 版の操作の順(MF1 一覧 → 登録/修正 → MF2 マスタ管理 →
-MF3 テーブル閲覧/出力 → 設定)。番号は装飾ではなく順序が実在するから振る。
+0.18.0 から **一覧 と 設定 だけ**。マスタ管理・閲覧・出力 は同じ DB を別の画面で見せていただけなので、
+一覧に一本化した(表を選ぶ・直す・足す・列を足す・印刷・出力・プレビューは 一覧 で全部できる)。
 """
 from __future__ import annotations
 
@@ -27,14 +27,12 @@ class NavItem:
 
 # 画面の並び。左から作業する順
 NAV: tuple[tuple[str, str, str, str], ...] = (
-    ("list", "一覧", "/list", "絞り込んで探す・登録する"),
-    ("master", "マスタ管理", "/master", "設定表とマスタ表を直す"),
-    ("browse", "閲覧・出力", "/browse", "表を見る・コピー・保存・印刷"),
+    ("list", "一覧", "/list", "表を選んで見る・直す・印刷・出力"),
     ("settings", "設定", "/settings", "接続先・パス・この端末"),
 )
 
 # もう作った画面。ここに挙がっていないものは「準備中」ページを出す
-READY_SCREENS = frozenset({"list", "master", "browse", "settings"})
+READY_SCREENS = frozenset({"list", "settings"})
 
 # 準備中の画面の説明。key: (作る予定, 何ができるようになるか, いま使う画面)
 PENDING_SCREENS: dict[str, tuple[str, str, str]] = {

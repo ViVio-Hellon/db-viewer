@@ -451,7 +451,7 @@ def bring(source_path: str, tables: list[str]) -> BringResult:
                            + "。本体は変えていません。",
                            REFUSE_WRITE_FAILED, backup=str(backup))
     message = (f"本体に {done} を足しました。今ある表には触っていません。"
-               "マスタ管理の一覧に「足」の印で出ていて、そのまま直せます。"
+               "一覧の表の選び欄に「足」の印で出ていて、そのまま直せます。"
                f"(書いたファイル: {dest})")
     if failed:
         message += " ただし次は持ってこられませんでした: " + "、".join(failed)
@@ -460,7 +460,7 @@ def bring(source_path: str, tables: list[str]) -> BringResult:
 
 
 def brought_tables(conn: sqlite3.Connection) -> set[str]:
-    """「表を持ってくる」で足した表の名前(マスタ管理の「足」の印)。"""
+    """「表を持ってくる」で足した表の名前(一覧の表の選び欄の「足」の印)。"""
     try:
         rows = conn.execute(f"SELECT 表 FROM {source_db.quote_identifier(REGISTRY)}").fetchall()
     except sqlite3.Error:

@@ -1,11 +1,11 @@
 """どの表でも見て直す(0.8.0)。設定は「列ごとに 表示・入力・印刷」だけ
 
 VBA 版の決まり(全般設定・<表>_設定・管理番号・入力形式の書き方)は設定が難しすぎて、誰も設定できなかった。
-ここでは表を選ぶだけで、どの表も一覧・マスタ管理・閲覧で見て直せる。決めるのは列ごとに 3 つだけ:
+ここでは表を選ぶだけで、どの表も一覧で見て直せる(0.18.0 からは一覧だけ)。決めるのは列ごとに 3 つだけ:
 
     表示   … 一覧・閲覧に出すか
     入力   … 文字 / コンボボックス(その列に入っている値から選ぶ・打つ) / スピンボタン(数。刻み) / カレンダー(日付)
-    印刷   … 閲覧・出力で印刷・保存するときに入れるか
+    印刷   … 一覧の 印刷・出力(保存・コピー)に入れるか
     クリック … マスの値を押したときに すること(なし / 値をコピー / 現物を開く / プレビュー)(0.12.0・0.13.0)
                開くもの(Excel・Word・PDF・URL)は値(または「場所」の決まり)から決まる
 
@@ -54,7 +54,7 @@ PREVIEW_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/
                  ".txt": "text/plain", ".csv": "text/plain", ".log": "text/plain"}
 INPUT_KEYS = tuple(k for k, _ in INPUTS)
 
-# マスを押したときにすること(0.12.0・0.13.0)。一覧・閲覧・マスタ管理で同じ
+# マスを押したときにすること(0.12.0・0.13.0)。一覧で
 CLICK_COPY, CLICK_OPEN, CLICK_PREVIEW = "copy", "open", "preview"
 CLICKS: tuple[tuple[str, str], ...] = (
     ("", "なし"),
@@ -496,33 +496,6 @@ def delete(conn: sqlite3.Connection, table: str, rowid: int, seen: dict[str, Any
     return WriteResult(True, "削除しました。", "", rowid)
 
 
-def convert_list(conn: sqlite3.Connection, table: str, values: list[Any]) -> tuple[list[str], str]:
-    """マスタ管理の値(表の列順)を、入力の種類どおりにそろえる(スピン = 数・カレンダー = 日付の形)。
-    文字・コンボの列は触らない(今までどおり文字のまま書く)。"""
-    settings = load(conn, table)
-    out = ["" if v is None else str(v) for v in values]
-    for i, s in enumerate(settings):
-        if i >= len(out) or s.input not in ("spin", "calendar"):
-            continue
-        sep = date_format(conn, table, s.name) if s.input == "calendar" else "/"
-        v, problem = convert(out[i], s, "", sep)
-        if problem:
-            return [], problem
-        out[i] = text_of(v)
-    return out, ""
-
-
-def apply_auto_list(conn: sqlite3.Connection, table: str, values: list[str], mode: str, user: str) -> list[str]:
-    """マスタ管理の値(表の列順)に自動の列を入れる。新規は両方、修正は「直した人」だけ。"""
-    if not user:
-        return values
-    out = list(values)
-    for i, c in enumerate(load(conn, table)):
-        if i < len(out) and (c.input == AUTO_UPD or (c.input == AUTO_NEW and mode == "ADDNEW")):
-            out[i] = user
-    return out
-
-
 # ------------------------------------------------------------------
 # ファイルの列のプレビュー
 # ------------------------------------------------------------------
@@ -536,11 +509,6 @@ def file_target(value: str, base) -> Optional["Path"]:
     if not p.is_absolute() and not re.match(r"^[A-Za-z]:[\\/]|^\\\\", text):
         p = Path(base) / p
     return p
-
-
-def preview_check(conn: sqlite3.Connection, table: str, column: str, value: str) -> str:
-    """プレビューしてよいか。だめなら理由(`resolve` の理由だけ)。"""
-    return resolve(conn, table, column, value, ".", need=CLICK_PREVIEW)[2]
 
 
 def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base, *,

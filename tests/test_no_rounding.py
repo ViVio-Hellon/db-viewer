@@ -139,21 +139,18 @@ class WriteReadTest(unittest.TestCase):
         row = next(r for r in d["rows"] if r[d["key_index"]] == "2")
         self.assertEqual(row[names.index("Ⅲ")], "2502.5")
 
-    def test_real_column_round_trip_via_master(self):
-        """数の型の列(REAL・INTEGER)に小数を書いても、そのまま読める。"""
-        r = self.c.post("/api/master/add-column", json={"table": "ID", "name": "係数", "kind": "number"},
-                        headers=self.h)
+    def test_real_column_round_trip(self):
+        """数の型の列(REAL)を一覧で足して小数を書いても、そのまま読める。"""
+        r = self.c.post("/api/list/add-column", json={"name": "係数", "kind": "number"}, headers=self.h)
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        rows = self.c.post("/api/master/rows", json={"table": "ID"}, headers=self.h).get_json()
-        row = list(rows["rows"][0])
-        new = row[:-1] + ["2502.5"]
-        r = self.c.post("/api/master/execute", headers=self.h, json={
-            "table": "ID", "mode": "UPDATE", "values": new, "key": row[0], "seen": row,
-            "confirmed": True, "answer": True})
+        d = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
+        names = [c["name"] for c in d["columns"]]
+        row = d["rows"][0]
+        r = self.c.post("/api/list/row-save", headers=self.h, json={
+            "table": "作業標準管理", "rowid": row[d["key_index"]], "values": {"係数": "2502.5"}, "seen": {"係数": ""}})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        again = self.c.post("/api/master/rows", json={"table": "ID"}, headers=self.h).get_json()
-        self.assertEqual(again["rows"][0][-1], "2502.5")
-
+        again = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
+        self.assertEqual(again["rows"][0][names.index("係数")], "2502.5")
 
 if __name__ == "__main__":
     unittest.main()

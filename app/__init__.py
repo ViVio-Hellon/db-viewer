@@ -539,7 +539,7 @@ def get_db():
 # ------------------------------------------------------------------
 def _register_routes(app: Flask) -> None:
     from .routes import auth as auth_routes
-    from .routes import browse, easy, files, health, master, pending, record, report, settings
+    from .routes import easy, export, files, health, pending, record, report, settings
     from .routes import list as list_routes
     from .routes import log as log_routes
 
@@ -548,8 +548,7 @@ def _register_routes(app: Flask) -> None:
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(list_routes.bp)
     app.register_blueprint(record.bp)
-    app.register_blueprint(master.bp)
-    app.register_blueprint(browse.bp)
+    app.register_blueprint(export.bp)
     app.register_blueprint(report.bp)
     app.register_blueprint(log_routes.bp)
     app.register_blueprint(easy.bp)

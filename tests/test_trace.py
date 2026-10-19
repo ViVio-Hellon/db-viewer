@@ -128,7 +128,7 @@ class LogViewTest(_LogDirCase):
     def test_screen_names(self):
         self.assertEqual(log_view.screen_of("/api/list/cell"), "一覧(その場で直す)")
         self.assertEqual(log_view.screen_of("/api/list/data?x=1"), "一覧")
-        self.assertEqual(log_view.screen_of("/master"), "マスタ管理")
+        self.assertEqual(log_view.screen_of("/master"), "マスタ管理")      # 0.18.0 より前の記録も読める
         self.assertEqual(log_view.screen_of("/settings"), "設定")
 
     def test_row_labels(self):
@@ -265,23 +265,22 @@ class SecretsTest(_LogDirCase):
         self.h = {"X-Tool-Token": TOKEN}
         self.c.post("/api/login", json={"id": "Xfa-Ngyinazawa", "password": ""}, headers=self.h)
 
-    def test_id_pass_not_recorded(self):
-        f = self.c.post("/api/master/form", json={"table": "ID", "mode": "ADDNEW"}, headers=self.h).get_json()
-        row = [f["fields"][0]["value"], "試験", "Xfa-Shiken", "NLM-NGY-000001", "himitsu-PW", "1", ""]
-        r = self.c.post("/api/master/execute", headers=self.h,
-                        json={"table": "ID", "mode": "ADDNEW", "values": row, "key": row[0],
-                              "confirmed": True, "answer": True}).get_json()
-        self.assertTrue(r["ok"], r)
-        self.c.post("/api/master/form", json={"table": "ID", "mode": "UPDATE", "row": row}, headers=self.h)
-        r = self.c.post("/api/master/delete", json={"table": "ID", "row": row, "confirmed": True, "answer": True},
-                        headers=self.h).get_json()
-        self.assertTrue(r["ok"], r)
+    def test_pass_columns_not_recorded(self):
+        """PASS のような列(名前に pass)の値は、一覧で足しても記録に残さない(伏せ字)。"""
+        import sqlite3
+        from contextlib import closing
+        from dbviewer import shared_db
+        with closing(sqlite3.connect(shared_db.db_path())) as c:
+            c.execute("CREATE TABLE 社員 (名前 TEXT, PASS TEXT)")
+            c.commit()
+        self.c.post("/api/list/data", json={"table": "社員"}, headers=self.h)    # 一覧で表を選ぶ
+        r = self.c.post("/api/list/row-add", headers=self.h,
+                        json={"table": "社員", "values": {"名前": "試験", "PASS": "himitsu-PW"}})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         text = "".join(p.read_text(encoding="utf-8") for p in self.dir.glob("記録_*.jsonl"))
         self.assertNotIn("himitsu-PW", text)
-        saved = [x for x in self.lines() if x["ev"] == "master.save"][0]
-        self.assertEqual(saved["data"]["after"][4], "***")
-        self.assertEqual(saved["data"]["after"][2], "Xfa-Shiken")          # ほかの列は残す
-        self.assertIn("master.delete", [x["ev"] for x in self.lines()])
+        self.assertIn("試験", text)                                           # ほかの列は残す
+
 
 
 class LogDirSettingTest(_LogDirCase):

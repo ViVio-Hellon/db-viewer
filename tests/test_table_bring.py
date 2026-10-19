@@ -196,11 +196,11 @@ class TableBringWebTest(unittest.TestCase):
         self.assertEqual(d["brought"], [{"name": "工程マスタ", "rows": 3}])
         self.assertTrue(any(t["name"] == "工程マスタ" and t["exists"] for t in d["plan"]["tables"]))
         self.assertEqual(self.c.post("/api/settings/table-bring", json=body, headers=self.h).status_code, 409)
-        # マスタ管理の一覧に「足」の印
-        m = self.c.post("/api/master/tables", json={}, headers=self.h).get_json()
-        self.assertIn("工程マスタ", m["tables"])
-        self.assertEqual(m["brought"], ["工程マスタ"])
-        self.assertNotIn(config.BROUGHT_REGISTRY, m["tables"])
+        # 一覧の表の選び欄に「足」の印
+        m = self.c.post("/api/list/data", json={}, headers=self.h).get_json()
+        tables = {t["name"]: t for t in m["tables"]}
+        self.assertTrue(tables["工程マスタ"]["brought"])
+        self.assertNotIn(config.BROUGHT_REGISTRY, tables)
         # 入れ替える
         r = self.c.post("/api/settings/table-refresh", json={"path": str(self.src), "tables": ["タイプ"]},
                         headers=self.h)
