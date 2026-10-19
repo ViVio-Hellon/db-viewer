@@ -82,6 +82,54 @@ class PlainDbTest(_Case):
             rows.append(c)
         return self.post("/api/easy/columns", table=table, rows=rows)
 
+    def test_settings_outside_the_db(self):
+        """0.21.0: かんたん設定の保存先をフォルダにすると、DB ファイルには書かず <DB 名>_かんたん設定.sqlite3 に書く。"""
+        self.addCleanup(user_settings.save, config.KEY_EASY_DIR, "")
+        self.login()
+        self.assertEqual(self.save_cols("部品", 単価={"show": False}).status_code, 200)    # まず DB の中
+        self.assertIn(config.TOOL_SETTINGS_TABLE, self.tables())
+        st = self.ok("/api/easy/state", table="部品")
+        self.assertEqual(st["store"]["where"], "db")
+        # 決められないフォルダ
+        for bad, why in ((str(self.tmp / "無い"), "見つかりません"), (str(self.path), "フォルダを指定")):
+            r = self.post("/api/settings/save", easy_dir=bad)
+            self.assertEqual(r.status_code, 400)
+            self.assertIn(why, r.get_json()["error"]["message"])
+        self.assertEqual(simple_table.store_folder(), "")
+        # 共有フォルダのつもり
+        shared = self.tmp / "共有設定"
+        shared.mkdir()
+        self.ok("/api/settings/save", easy_dir=f'"{shared}"')
+        st = self.ok("/api/easy/state", table="部品")
+        store = shared / "部品台帳_かんたん設定.sqlite3"
+        self.assertEqual((st["store"]["where"], st["store"]["path"], st["store"]["exists"]), ("folder", str(store), False))
+        shown = {c["name"]: c["show"] for c in st["columns"]}
+        self.assertFalse(shown["単価"])                                    # まだ外に無い → DB の中の設定を読む
+        before = self.q(f"SELECT 設定 FROM [{config.TOOL_SETTINGS_TABLE}]")
+        self.assertEqual(self.save_cols("部品", 単価={"show": True}, 名前={"show": False}).status_code, 200)
+        self.assertTrue(store.is_file())
+        self.assertEqual(self.q(f"SELECT 設定 FROM [{config.TOOL_SETTINGS_TABLE}]"), before)   # DB には書いていない
+        cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
+        self.assertEqual(cols, ["品番", "単価", "入荷日"])                         # 外の設定で一覧に出る
+        # 別の DB は別のファイル
+        (self.tmp / "ほか").mkdir()
+        other = plain_db(self.tmp / "ほか" / "設備台帳.sqlite3")
+        self.ok("/api/settings/open-db", path=str(other))
+        self.assertEqual(self.ok("/api/easy/state", table="部品")["store"]["path"],
+                         str(shared / "設備台帳_かんたん設定.sqlite3"))
+        # 読み取り専用の DB でも、外に保存できる
+        os.chmod(other, 0o444)
+        self.addCleanup(os.chmod, other, 0o644)
+        self.assertEqual(self.save_cols("仕入先", 電話={"print": False}).status_code, 200)
+        with closing(sqlite3.connect(other)) as c:
+            self.assertEqual(c.execute("SELECT name FROM sqlite_master WHERE name=?",
+                                       (config.TOOL_SETTINGS_TABLE,)).fetchall(), [])
+        # DB の中に戻すと、DB の中の設定(単価を隠した時のもの)
+        self.ok("/api/settings/open-db", path=str(self.path))
+        self.ok("/api/settings/save", easy_dir="")
+        cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
+        self.assertEqual(cols, ["品番", "名前", "入荷日"])
+
     def test_open_and_edit_any_table_without_settings(self):
         j = self.login()
         self.assertEqual(j["level"], auth.EDIT_LEVEL)                     # アクセス権限マスタ未設定 = 誰でも直せる

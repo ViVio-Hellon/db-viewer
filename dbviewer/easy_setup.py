@@ -66,7 +66,8 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     except Exception:                                   # noqa: BLE001 - 出せないだけ
         db = ""
     return {
-        "db": db, "tables": tables, "table": table, "columns": columns,
+        "db": db, "store": simple_table.store_info(conn), "easy_dir": simple_table.store_folder(),
+        "tables": tables, "table": table, "columns": columns,
         "inputs": [[k, label] for k, label in simple_table.INPUTS],
         "clicks": [[k, label] for k, label in simple_table.CLICKS],
         "level": level, "can_write": level >= WRITE_LEVEL, "has_id": setup.has_id,

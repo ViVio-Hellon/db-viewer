@@ -477,6 +477,11 @@ def save(body: dict[str, Any]) -> SaveResult:
         if not result.ok:
             return result
         message = result.message
+    if "easy_dir" in body:
+        result = _save_easy_dir(str(body["easy_dir"] or ""))
+        if not result.ok:
+            return result
+        message = result.message
     for key, setting in _TEXT_KEYS.items():
         if key in body:
             user_settings.save(setting, str(body[key] or "").strip())
@@ -516,6 +521,26 @@ def save(body: dict[str, Any]) -> SaveResult:
 
 
 MAX_LOG_KEEP_DAYS = 3650
+
+
+def _save_easy_dir(text: str) -> SaveResult:
+    """かんたん設定の保存先フォルダ(0.21.0)。**書けるのを確かめてから**保存する。空なら DB の中。"""
+    text = text.strip().strip('"')
+    if not text:
+        user_settings.save(config.KEY_EASY_DIR, "")
+        return SaveResult(True, "かんたん設定は DB の中に保存します(今までどおり)。")
+    folder = config.resolve_dir(text)
+    if folder.suffix.lower() in source_db.SUFFIXES or folder.is_file():
+        return SaveResult(False, f"ファイルではなく、フォルダを指定してください: {folder}", REFUSE_BAD_INPUT, "easy_dir")
+    if not folder.is_dir():
+        return SaveResult(False, f"フォルダが見つかりません: {folder}(共有フォルダならつながっているか確かめてください)",
+                          REFUSE_BAD_INPUT, "easy_dir")
+    why = logging_utils.probe_writable(folder)
+    if why:
+        return SaveResult(False, f"このフォルダに書き込めません: {folder}({why})", REFUSE_BAD_INPUT, "easy_dir")
+    user_settings.save(config.KEY_EASY_DIR, text)
+    return SaveResult(True, f"かんたん設定を {folder} に保存します(DB ファイルには書きません)。"
+                            "まだそこに無い表は、DB の中の設定を読みます。")
 
 
 def _save_db_path(text: str) -> SaveResult:

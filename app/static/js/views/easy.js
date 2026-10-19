@@ -35,6 +35,13 @@ function option(value, label, selected) {
 
 function render() {
   el.easyDb.textContent = st.db || "(接続先が決まっていません)";
+  // かんたん設定の保存先(0.21.0)
+  if (st.store) {
+    el.easyStore.textContent = st.store.where === "db"
+      ? `いまの保存先: DB の中(${st.store.path})`
+      : `いまの保存先: ${st.store.path}${st.store.exists ? "" : "(まだ無い。最初に保存したときに作ります)"}`;
+  }
+  if (document.activeElement !== el.easyDir) el.easyDir.value = st.easy_dir || "";
   el.easyTable.replaceChildren(...st.tables.map((t) =>
     option(t.name, `${t.name}(${t.rows >= 0 ? t.rows.toLocaleString() : "?"} 件)`, t.name === st.table)));
   el.easyColsWhere.textContent = `[${st.table}] の ${st.columns.length} 列`;
@@ -318,7 +325,7 @@ async function changePassword() {
 }
 
 export function start() {
-  for (const id of ["easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
+  for (const id of ["easyProblem", "easyBody", "easyDb", "easyStore", "easyDir", "easyDirSave", "easyDirClear", "easyGoSource", "easyTable", "easyColsWhere",
                     "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyVbaCard", "easyVbaList",
                     "rightsWho", "rightsNow", "rightsWhy", "rightsPath", "rightsSave", "rightsRecheck", "rightsUsing",
                     "rightsHint", "rightsRowsWrap", "rightsRows",
@@ -351,6 +358,15 @@ export function start() {
   el.accPwChange.addEventListener("click", changePassword);
   el.easyRetire.addEventListener("click", retireVba);
   el.easyGoSource.addEventListener("click", () => document.getElementById("tab-source")?.click());
+  const saveStore = async (dir) => {
+    try {
+      const res = await api.post("/api/settings/save", { easy_dir: dir });
+      toast(res.message, "ok");
+      await load();
+    } catch (err) { toastError(err); }
+  };
+  el.easyDirSave.addEventListener("click", () => saveStore(el.easyDir.value));
+  el.easyDirClear.addEventListener("click", () => { el.easyDir.value = ""; saveStore(""); });
   // タブを開くたびに読み直す(接続先で DB を替えたかもしれない)
   document.getElementById("tab-easy")?.addEventListener("click", () => { load(); loadRights(); loadAccess(); });
   load();

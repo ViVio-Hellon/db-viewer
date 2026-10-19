@@ -100,6 +100,27 @@
 
           <section class="card">
             <header>
+              <i class="ib ib--sm" aria-hidden="true">保</i>
+              <h3>かんたん設定の保存先</h3>
+              <span class="eyebrow">この PC の設定</span>
+            </header>
+            <div class="pad">
+              <p class="easydb" id="easyStore"></p>
+              <p class="why">空なら <b>DB ファイルの中</b>(見えない表「ツールの設定」)に保存します。フォルダを決めると、
+                <b>DB ファイルには何も書かず</b>、そのフォルダに <code>&lt;DB の名前&gt;_かんたん設定.sqlite3</code> を作って保存します。
+                共有フォルダにすれば、同じフォルダを決めた PC どうしで同じ設定になります。まだそこに無い表は、DB の中の設定を読みます。</p>
+              <div class="paths">
+                {{ pathrow("easyDir", "保存先フォルダ", "", "") }}
+              </div>
+              <div class="btn-row" style="margin-top:8px">
+                <button class="btn btn--commit" type="button" id="easyDirSave">保存先を保存</button>
+                <button class="btn btn--find" type="button" id="easyDirClear">DB の中に戻す</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <header>
               <i class="ib ib--sm" aria-hidden="true">列</i>
               <h3>列の設定</h3>
               <span class="eyebrow" id="easyColsWhere"></span>
