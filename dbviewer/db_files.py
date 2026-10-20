@@ -148,6 +148,7 @@ def choices(*, can_add: bool = True) -> dict[str, Any]:
     except OSError as exc:
         out["message"] = f"フォルダを読めません({exc})。"
         return out
+    own = str(settings_file.path())                    # 設定ファイルそのものは DB として出さない
     out["same_folder"] = [_entry(p) for p in found
-                          if not any(settings_file.same_file(str(p), t) for t in texts)][:MAX_SAME_FOLDER]
+                          if not any(settings_file.same_file(str(p), t) for t in [*texts, own])][:MAX_SAME_FOLDER]
     return out

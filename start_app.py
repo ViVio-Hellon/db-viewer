@@ -338,6 +338,7 @@ def start(mode: str, *, open_browser: bool = True) -> int:
         _hold_until_stopped(srv, thread)
         return 0
     finally:
+        tidy_children()
         launch_guard.remove_lock(mode)
         launch_guard.release_app_lock()
         log().info("終了しました: mode=%s", mode)
@@ -403,8 +404,42 @@ def _hard_exit() -> None:
     """
     import logging
 
+    tidy_children()
     logging.shutdown()
     os._exit(0)
+
+
+def leave_app_folder() -> None:
+    """プロセスの「いまいるフォルダ」を、アプリのフォルダの外(ローカル領域の work)へ移す(0.25.0)。
+
+    Windows は、**どれかのプロセスがいまいるフォルダを消せない。** プレビューで起こす cscript・Excel、
+    「現物を開く」で開いた Excel・Word、「フォルダを開く」のエクスプローラは、このプロセスのいまいるフォルダを
+    引き継ぐ。アプリのフォルダのままだと、それらが残っているあいだ **新しい版にするためにフォルダごと消せない**
+    (stop.bat を使うまで消えない、と言われた正体)。読み込む場所はどれも `__file__` から決めているので、
+    移っても困らない(sys.path にはアプリのフォルダを絶対パスで入れておく。後から読み込む部品のため)。"""
+    root = str(APP_ROOT)
+    sys.path[:] = [root if p in ("", ".") else p for p in sys.path]
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        from dbviewer import app_config
+        target = app_config.local_dir("work")
+        target.mkdir(parents=True, exist_ok=True)
+        os.chdir(target)
+    except OSError as exc:
+        log().warning("いまいるフォルダをアプリの外へ移せませんでした(続けます): %s", exc)
+
+
+def tidy_children() -> None:
+    """終わるときの片付け: プレビューで起こして残った隠れた Excel・Word を止める(0.25.0)。
+
+    今までは次の起動と stop.bat でしか片付けておらず、「終了」のあとも残ってフォルダを消せないことがあった。
+    止めるのは、このアプリが起こして記録した PID だけ(利用者が開いた Excel・Word には触らない)。"""
+    try:
+        from dbviewer.office_bridge import procs as office_procs
+        office_procs.cleanup_leftovers(log())
+    except Exception:                             # noqa: BLE001 - 片付けられなくても終わる
+        log().warning("残った Excel・Word を確かめられませんでした", exc_info=True)
 
 
 def start_bridge(mode: str, *, token: str = "", server_factory) -> int:
@@ -420,6 +455,7 @@ def start_bridge(mode: str, *, token: str = "", server_factory) -> int:
     import server as server_module
 
     mode = resolve_mode(mode)
+    leave_app_folder()
     log_environment(mode)
     if launch_guard.hold_app_lock(launch_guard.KIND_DESKTOP) is None:
         message, hint = launch_guard.other_running_message(launch_guard.KIND_DESKTOP)
@@ -443,6 +479,7 @@ def start_bridge(mode: str, *, token: str = "", server_factory) -> int:
         log().info("終了しました: mode=%s(デスクトップ版)", mode)
         return 0
     finally:
+        tidy_children()
         launch_guard.remove_desktop_marker()
         launch_guard.release_app_lock()
 
@@ -607,6 +644,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(describe_loopback())
         return 0
 
+    leave_app_folder()
     try:
         return start(args.mode, open_browser=open_browser)
     except StartupError as exc:

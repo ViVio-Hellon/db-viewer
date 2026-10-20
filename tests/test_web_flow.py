@@ -221,6 +221,10 @@ class OperationTest(unittest.TestCase):
         self.assertTrue(d["dbs"][1]["current"])
         self.assertEqual(d["settings_file"], str(sf))
         self.assertEqual([r["file"] for r in d["same_folder"]], ["仕入先.sqlite3"])  # 一覧に無いものだけ
+        user_settings.save(config.KEY_SETTINGS_FILE, str(a.with_name("DBビューア設定.sqlite3")))
+        settings_file.add_db(str(self.path)); settings_file.add_db(str(a))
+        self.assertNotIn("DBビューア設定.sqlite3", [r["file"] for r in choices()["same_folder"]])  # 設定ファイルは出さない
+        user_settings.save(config.KEY_SETTINGS_FILE, str(sf))
         # 画面: 帯のボタン・接続先のコンボボックス
         self.assertIn('id="dbMenu"', self.c.get("/list").get_data(as_text=True))
         self.assertIn('id="dbSelect"', self.c.get("/settings?tab=source").get_data(as_text=True))
