@@ -9,7 +9,8 @@
     場所が空 → 値そのもの。{値} があればそこへ、{列名} があれば同じ行のその列の値を(0.23.0)、
     どちらも無ければ末尾に値を付ける(URL の決まりなら値は符号化)
     http(s):// で始まれば URL、それ以外はファイルの場所(相対パスは 参照ファイルの起点 から)
-    拡張子を書かなければ、サーバがフォルダの中から 全角・半角・大文字小文字を問わず 探す(Excel → Word → PDF の順)
+    そのままの名前が無ければ、サーバがそのフォルダと**サブフォルダ**から 全角・半角・大文字小文字を問わず 探す
+    (拡張子を書かなければ Excel → Word → PDF の順)。いくつものフォルダにあれば選ばせる(0.24.0)
 
   row = { values: {列名: 値}, rowid } を渡すと {列名} を埋める(サーバへは rowid を送り、サーバが DB の行で埋め直す)。
 
@@ -18,6 +19,7 @@
 import { api, tokenUrl } from "./api.js";
 import { toast, toastError } from "./toast.js";
 import { openExternal, openWindow } from "./desktop.js";
+import { chooseBox } from "./askbox.js";
 
 const MARK = "{値}";
 const URL_OK = /^https?:\/\/\S+$/i;
@@ -126,7 +128,14 @@ export async function runAction(spec, value, row = null) {
     return;
   }
   try {
-    const res = await api.post("/api/file/open", { table: spec.table || "", column: spec.column || "", value: text.trim(), rowid });
+    const body = { table: spec.table || "", column: spec.column || "", value: text.trim(), rowid };
+    let res = await api.post("/api/file/open", body);
+    if (res.kind === "choose") {                  // 同じ名前がいくつものフォルダに(0.24.0)
+      const i = await chooseBox(res.message, res.choices.map((c) => ({
+        label: `${c.folder} / ${c.name}`, sub: [c.mtime, c.what].filter(Boolean).join(" ・ ") })));
+      if (i === null) return;
+      res = await api.post("/api/file/open", { ...body, pick: res.choices[i].pick });
+    }
     if (res.kind === "url") {                     // {列名} を使う URL はサーバが埋めた行き先を開く
       openExternal(res.url);
       toast(`開きました: ${readable(res.url)}`, "info");

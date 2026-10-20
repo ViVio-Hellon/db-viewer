@@ -105,3 +105,57 @@ export async function promptBox(message, { value = "", ...options } = {}) {
   const ok = await open(message, { ...options, input: String(value) });
   return ok ? b.input.value : null;
 }
+
+/**
+ * いくつかの中から 1 つ選んでもらう(0.24.0。同じ名前のファイルがいくつものフォルダにあるとき)。
+ * items = [{ label, sub }]。選んだ番号、やめたら null。
+ */
+export function chooseBox(message, items) {
+  ensure();                                            // 見た目(askbox の style)をそろえる
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "askbox";
+    const body = document.createElement("div");
+    body.className = "askbox__body";
+    const text = document.createElement("p");
+    text.className = "askbox__text";
+    text.textContent = message;
+    const list = document.createElement("div");
+    list.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-top:12px;max-height:50vh;overflow:auto";
+    items.forEach((item, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn btn--find";
+      b.style.cssText = "justify-content:flex-start;text-align:left;flex-direction:column;align-items:flex-start;height:auto;padding:6px 10px";
+      const strong = document.createElement("b");
+      strong.textContent = item.label;
+      const small = document.createElement("small");
+      small.textContent = item.sub || "";
+      small.style.color = "var(--muted)";
+      b.append(strong, small);
+      b.addEventListener("click", () => finish(i));
+      list.appendChild(b);
+    });
+    body.append(text, list);
+    const foot = document.createElement("div");
+    foot.className = "askbox__foot";
+    const no = document.createElement("button");
+    no.type = "button"; no.className = "btn"; no.textContent = "やめる";
+    no.addEventListener("click", () => finish(null));
+    foot.appendChild(no);
+    dialog.append(body, foot);
+    let done = false;
+    function finish(answer) {
+      if (done) return;
+      done = true;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      resolve(answer);
+    }
+    dialog.addEventListener("close", () => finish(null));
+    dialog.addEventListener("click", (e) => { if (e.target === dialog) finish(null); });
+    document.body.appendChild(dialog);
+    dialog.showModal();
+    list.querySelector("button")?.focus();
+  });
+}

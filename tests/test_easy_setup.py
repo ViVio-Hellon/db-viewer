@@ -432,7 +432,7 @@ class WorkFileTest(_Case):
         # 見つからない: 理由に探し方
         r = self.preview("無いもの", self.rowid["0-1-3"])
         self.assertEqual(r.status_code, 404)
-        self.assertIn("全角・半角", r.get_data(as_text=True))
+        self.assertIn("サブフォルダ", r.get_data(as_text=True))
         # 行が分からない・行と値が合わない(ほかの行の rowid)は断る
         self.assertEqual(self.preview("ﾊﾝﾏｰの取り扱い", None).status_code, 403)
         r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-2"])
@@ -440,6 +440,58 @@ class WorkFileTest(_Case):
         self.assertIn("値が変わっています", r.get_data(as_text=True))
         # 同じ作業名でも 作業NO が違えば別のファイル(0-1-4 は無い)
         self.assertEqual(self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-4"]).status_code, 404)
+
+    def add_rows(self, *rows):
+        with closing(sqlite3.connect(self.path)) as c:
+            c.executemany("INSERT INTO 作業 VALUES (?, ?, '')", rows)
+            c.commit()
+        d = self.ok("/api/list/data", table="作業")
+        self.rowid = {r[0]: r[d["key_index"]] for r in d["rows"]}
+
+    def test_subfolders_and_choice(self):
+        """0.24.0: サブフォルダも探す。同じ名前がいくつものフォルダにあれば選ばせる(新しい順)。"""
+        import os as _os
+        for sub in ("L-1作業場", "HVC", "旧HVC", "中・小板/奥"):
+            (self.dir / sub).mkdir(parents=True)
+        (self.dir / "L-1作業場" / "0-2-6_返り材切断作業.pdf").write_bytes(b"%PDF-1.4 cut")
+        new = self.dir / "HVC" / "0-3-1_コイル巻き.pdf"
+        old = self.dir / "旧HVC" / "０－３－１_ｺｲﾙ巻き.pdf"
+        new.write_bytes(b"%PDF-1.4 new")
+        old.write_bytes(b"%PDF-1.4 old")
+        _os.utime(old, (1_600_000_000, 1_600_000_000))                         # 旧 のほうが古い
+        (self.dir / "中・小板" / "奥" / "0-4-1_深い所.pdf").write_bytes(b"%PDF-1.4 deep")
+        (self.dir / "HVC" / "~$0-4-1_深い所.pdf").write_bytes(b"lock")          # Excel の印は見ない
+        self.add_rows(("0-2-6", "返り材切断作業"), ("0-3-1", "ｺｲﾙ巻き"), ("0-4-1", "深い所"))
+        simple_table.forget_index()
+        # 1 か所だけ → そのまま
+        r = self.preview("返り材切断作業", self.rowid["0-2-6"])
+        self.assertEqual((r.status_code, r.data), (200, b"%PDF-1.4 cut"))
+        self.assertEqual(self.preview("深い所", self.rowid["0-4-1"]).data, b"%PDF-1.4 deep")   # 何段でも
+        # 2 か所 → プレビューは選ぶ画面(新しい順)
+        r = self.preview("ｺｲﾙ巻き", self.rowid["0-3-1"])
+        html = r.get_data(as_text=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("2 か所", html)
+        self.assertLess(html.index("HVC</b> / 0-3-1_コイル巻き.pdf"), html.index("旧HVC</b>"))
+        q = {"table": "作業", "column": "作業名", "value": "ｺｲﾙ巻き", "rowid": self.rowid["0-3-1"],
+             "pick": "旧HVC/０－３－１_ｺｲﾙ巻き.pdf"}
+        self.assertEqual(self.c.get("/api/file/preview", query_string=q, headers=self.h).data, b"%PDF-1.4 old")
+        q["pick"] = "../よそ.pdf"                                               # 候補に無いものは断る
+        self.assertEqual(self.c.get("/api/file/preview", query_string=q, headers=self.h).status_code, 404)
+        # 現物を開く: 候補を返す → 選んだものを開く
+        from app.routes import files
+        opened = []
+        with mock.patch.object(files, "launch", side_effect=opened.append):
+            j = self.ok("/api/file/open", table="作業", column="作業NO", value="0-3-1", rowid=self.rowid["0-3-1"])
+            self.assertEqual((j["kind"], [c["folder"] for c in j["choices"]]), ("choose", ["HVC", "旧HVC"]))
+            self.assertEqual(opened, [])
+            j = self.ok("/api/file/open", table="作業", column="作業NO", value="0-3-1", rowid=self.rowid["0-3-1"],
+                        pick=j["choices"][0]["pick"])
+        self.assertEqual([p.name for p in opened], ["0-3-1_コイル巻き.pdf"])
+        # あとから置いたファイルも見つかる(目録を作り直す)
+        (self.dir / "HVC" / "0-1-3_無いもの.pdf").write_bytes(b"%PDF-1.4 late")
+        with mock.patch.object(simple_table, "INDEX_RETRY_SEC", -1):
+            self.assertEqual(self.preview("無いもの", self.rowid["0-1-3"]).data, b"%PDF-1.4 late")
 
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")

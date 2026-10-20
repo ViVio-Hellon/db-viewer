@@ -26,8 +26,11 @@ s/m マスタ → コンボボックス、ほかは文字)。かんたん設定�
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
+import threading
+import time
 import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -427,40 +430,102 @@ def name_key(name: str) -> str:
     return re.sub(r"\s+", "", text).casefold()
 
 
-def find_file(path: "Path") -> Optional["Path"]:
-    """そのファイル。無ければ同じフォルダから、名前が同じとみなせるものを探す(0.23.0)。
+# サブフォルダも探す(0.24.0)。共有フォルダを押すたびに全部たどらないよう、フォルダごとの目録を少しのあいだ覚える
+INDEX_TTL_SEC = 300.0         # 目録を使い回す時間
+INDEX_RETRY_SEC = 10.0        # 見つからなかったとき、この時間より古い目録なら作り直してもう一度
+MAX_WALK_FILES = 50_000       # たどるファイルの上限(大きすぎる場所でいつまでも待たせない)
+MAX_WALK_DEPTH = 8
+_index_lock = threading.Lock()
+_index: dict[str, tuple[float, list[tuple["Path", str, str]]]] = {}
 
-    - 拡張子まで書いてあれば、拡張子も含めて比べる
-    - 拡張子を書いていなければ、開ける形式(Excel・Word・PDF…)のどれか。FIND_ORDER の順、同じなら新しいもの
-    比べ方は `name_key`(0-1-1_ﾊﾝﾏｰの取り扱い と ０－１－１＿ハンマーの取り扱い.xlsx は同じ)。サブフォルダは見ない。"""
+
+def _walk(folder: "Path") -> list[tuple["Path", str, str]]:
+    """フォルダの下の、開ける形式のファイル → (場所, 名前の比べる形, 拡張子を除いた比べる形)。"""
+    out: list[tuple["Path", str, str]] = []
+    stack = [(folder, 0)]
+    while stack and len(out) < MAX_WALK_FILES:
+        here, depth = stack.pop()
+        try:
+            entries = list(os.scandir(here))
+        except OSError:
+            continue
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    if depth < MAX_WALK_DEPTH and not e.name.startswith("."):
+                        stack.append((Path(e.path), depth + 1))
+                elif e.is_file() and not e.name.startswith("~$"):          # ~$ は Excel が開いているときの印
+                    p = Path(e.path)
+                    if p.suffix.lower() in OPEN_KINDS:
+                        out.append((p, name_key(p.name), name_key(p.stem)))
+            except OSError:
+                continue
+    return out
+
+
+def _entries(folder: "Path", *, fresh: bool = False) -> tuple[list[tuple["Path", str, str]], float]:
+    key = str(folder)
+    now = time.monotonic()
+    with _index_lock:
+        got = _index.get(key)
+        if got and not fresh and now - got[0] < INDEX_TTL_SEC:
+            return got[1], now - got[0]
+    items = _walk(folder)
+    with _index_lock:
+        _index[key] = (time.monotonic(), items)
+    return items, 0.0
+
+
+def forget_index() -> None:
+    with _index_lock:
+        _index.clear()
+
+
+def find_files(path: "Path") -> list["Path"]:
+    """そのファイル。無ければ**そのフォルダとサブフォルダ**から、名前が同じとみなせるものを探す(0.23.0 / 0.24.0)。
+
+    - 比べ方は `name_key`(0-1-1_ﾊﾝﾏｰの取り扱い と ０－１－１＿ハンマーの取り扱い.xlsx は同じ)
+    - 拡張子まで書いてあれば拡張子も含めて比べる。書いていなければ開ける形式のどれか
+    - **1 つのフォルダに 1 つ**(同じフォルダに .xlsx と .pdf があれば FIND_ORDER の順、同じなら新しいほう)
+    - 返す順: 書いたフォルダそのもの → 新しいもの。いくつもあれば呼ぶ側が選ばせる"""
     from pathlib import Path as _P
     path = _P(path)
-    if path.is_file():
-        return path
-    folder = path.parent
     try:
+        if path.is_file():
+            return [path]
+        folder = path.parent
         if not folder.is_dir():
-            return None
-        files = [f for f in folder.iterdir() if f.is_file()]
+            return []
     except OSError:
-        return None
+        return []
     has_ext = path.suffix.lower() in OPEN_KINDS
     want = name_key(path.name)
-    if has_ext:
-        hits = [f for f in files if name_key(f.name) == want]
-    else:
-        hits = [f for f in files if f.suffix.lower() in OPEN_KINDS and name_key(f.stem) == want]
+
+    def match(items):
+        return [p for p, full, stem in items if (full if has_ext else stem) == want]
+    items, age = _entries(folder)
+    hits = match(items)
+    if not hits and age > INDEX_RETRY_SEC:                              # 目録を作ったあとに置かれたかもしれない
+        hits = match(_entries(folder, fresh=True)[0])
     if not hits:
-        return None
+        return []
     order = {ext: i for i, ext in enumerate(FIND_ORDER)}
 
-    def rank(f):
+    def mtime(f):
         try:
-            age = -f.stat().st_mtime
+            return f.stat().st_mtime
         except OSError:
-            age = 0
-        return (order.get(f.suffix.lower(), len(order)), age)
-    return sorted(hits, key=rank)[0]
+            return 0.0
+    best: dict[str, "Path"] = {}
+    for f in sorted(hits, key=lambda f: (order.get(f.suffix.lower(), len(order)), -mtime(f))):
+        best.setdefault(str(f.parent), f)
+    return sorted(best.values(), key=lambda f: (f.parent != folder, -mtime(f)))
+
+
+def find_file(path: "Path") -> Optional["Path"]:
+    """いちばん目の候補(`find_files`)。無ければ None。"""
+    got = find_files(path)
+    return got[0] if got else None
 
 
 def open_kind(path) -> str:
@@ -659,7 +724,5 @@ def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base,
             return "", None, f"この値は開けません(URL でもファイルの場所でもない): {value}"
         if kind == "url":
             return "url", target, ""
-        path = file_target(target, base)
-        return "file", (find_file(path) or path) if path is not None else None, ""
-    path = file_target(value, base)
-    return "file", (find_file(path) or path) if path is not None else None, ""
+        return "file", file_target(target, base), ""
+    return "file", file_target(value, base), ""

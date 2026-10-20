@@ -61,8 +61,19 @@ document.getElementById("ext").addEventListener("click", function (e) {{
     return Response(body, content_type="text/html; charset=utf-8")
 
 
-def _where(table: str, column: str, value: str, need: str, rowid=None):
-    """(種類, 行き先, 断りの応答)。rowid は場所の決まりに {列名} があるとき(その行の値で埋める。0.23.0)。"""
+def _rel(path, base) -> str:
+    """候補の名札(探し始めたフォルダからの場所。/ で区切る)。選んだものを確かめるのに使う。"""
+    try:
+        return path.relative_to(base).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str = ""):
+    """(種類, 行き先, 断りの応答)。種類は "url" / "file" / "choose"(同じ名前がいくつものフォルダにある。0.24.0)。
+
+    rowid は場所の決まりに {列名} があるとき(その行の値で埋める。0.23.0)。pick は選んだ候補の名札
+    (サーバが探し直した候補の中にあるものだけ受け付ける)。"""
     try:
         conn = get_db()
         session_setup.get_setup(conn)
@@ -71,12 +82,59 @@ def _where(table: str, column: str, value: str, need: str, rowid=None):
     kind, target, problem = simple_table.resolve(conn, table, column, value, ref_base(), need=need, rowid=rowid)
     if problem:
         return "", None, (problem, 403)
-    if kind == "file" and (target is None or not target.is_file()):
-        searched = target is not None and target.suffix.lower() not in simple_table.OPEN_KINDS
-        return "", None, (f"ファイルが見つかりません: {target or value}"
-                          + ("(このフォルダの Excel・Word・PDF などを、全角・半角・大文字小文字を問わず探しました。"
-                             "サブフォルダは見ません)" if searched else ""), 404)
-    return kind, target, None
+    if kind == "url":
+        return kind, target, None
+    if target is None:
+        return "", None, (f"ファイルが見つかりません: {value}", 404)
+    found = simple_table.find_files(target)
+    if pick:
+        chosen = next((f for f in found if _rel(f, target.parent) == pick), None)
+        if chosen is None:
+            return "", None, ("選んだファイルが見つかりません(動かされたかもしれません。もう一度押してください)。", 404)
+        return "file", chosen, None
+    if len(found) > 1:
+        return "choose", (target, found), None
+    if not found:
+        searched = target.suffix.lower() not in simple_table.OPEN_KINDS
+        return "", None, (f"ファイルが見つかりません: {target}"
+                          + ("(このフォルダとサブフォルダの Excel・Word・PDF などを、全角・半角・大文字小文字を問わず"
+                             "探しました)" if searched else ""), 404)
+    return "file", found[0], None
+
+
+def _choices(target, found) -> list[dict]:
+    from datetime import datetime
+    out = []
+    for f in found:
+        try:
+            when = datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y/%m/%d %H:%M")
+        except OSError:
+            when = ""
+        folder = _rel(f.parent, target.parent) if f.parent != target.parent else ""
+        out.append({"pick": _rel(f, target.parent), "name": f.name, "folder": folder or "(このフォルダ)",
+                    "mtime": when, "what": simple_table.open_kind(f)})
+    return out
+
+
+def _choose_page(target, found) -> Response:
+    """同じ名前がいくつものフォルダにあるとき、プレビューの窓で選ばせる(新しい順)。"""
+    from html import escape
+    from urllib.parse import urlencode
+    args = {k: v for k, v in request.args.items() if k not in ("pick", "go", "sheet")}
+    rows = "".join(
+        f"<li><a href='{escape(request.path + '?' + urlencode({**args, 'pick': c['pick']}), quote=True)}'>"
+        f"<b>{escape(c['folder'])}</b> / {escape(c['name'])}</a><small>{escape(c['mtime'])}・{escape(c['what'])}</small></li>"
+        for c in _choices(target, found))
+    body = (f"<!doctype html><html lang='ja'><meta charset='utf-8'><title>{escape(target.name)} を選ぶ</title>"
+            "<style>body{font:14px system-ui,'Yu Gothic UI',sans-serif;padding:24px;color:#1b2730;background:#f6f8f9}"
+            "@media (prefers-color-scheme: dark){body{color:#e2eaef;background:#11191f} a{color:#7cc4e0}}"
+            "ul{list-style:none;padding:0;margin:12px 0} li{margin:0 0 8px}"
+            "a{display:inline-block;padding:6px 10px;border:1px solid #9bb3bf;border-radius:6px;text-decoration:none;color:#0e6b84}"
+            "small{margin-left:10px;color:#6b7c86}</style>"
+            f"<p>「{escape(target.name)}」と同じ名前のファイルが <b>{len(found)} か所</b>にあります。見るものを選んでください"
+            "(新しい順)。</p>"
+            f"<ul>{rows}</ul></html>")
+    return Response(body, content_type="text/html; charset=utf-8")
 
 
 @bp.get("/api/file/preview")
@@ -84,9 +142,12 @@ def preview():
     table = request.args.get("table", "")
     column = request.args.get("column", "")
     value = request.args.get("value", "")
-    kind, target, refuse = _where(table, column, value, simple_table.CLICK_PREVIEW, request.args.get("rowid"))
+    kind, target, refuse = _where(table, column, value, simple_table.CLICK_PREVIEW, request.args.get("rowid"),
+                                  request.args.get("pick", ""))
     if refuse:
         return _page(*refuse)
+    if kind == "choose":
+        return _choose_page(*target)
     if kind == "url":
         trace.event("file.preview", target, data={"table": table, "column": column, "url": target})
         return _url_page(target)
@@ -218,10 +279,15 @@ def open_file():
     body = request.get_json(silent=True) or {}
     table, column = str(body.get("table") or ""), str(body.get("column") or "")
     value = "" if body.get("value") is None else str(body.get("value"))
-    kind, target, refuse = _where(table, column, value, simple_table.CLICK_OPEN, body.get("rowid"))
+    kind, target, refuse = _where(table, column, value, simple_table.CLICK_OPEN, body.get("rowid"),
+                                  str(body.get("pick") or ""))
     if refuse:
         message, status = refuse
         return jsonify({"error": {"code": "open", "message": message}}), status
+    if kind == "choose":                                  # 同じ名前がいくつものフォルダに → 画面で選ばせる
+        base, found = target
+        return jsonify({"ok": False, "kind": "choose", "choices": _choices(base, found),
+                        "message": f"「{base.name}」と同じ名前のファイルが {len(found)} か所にあります。開くものを選んでください。"})
     if kind == "url":
         return jsonify({"ok": True, "kind": "url", "url": target})
     what = simple_table.open_kind(target)
