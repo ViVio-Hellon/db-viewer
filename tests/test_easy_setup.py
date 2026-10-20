@@ -522,6 +522,52 @@ class WorkFileTest(_Case):
         self.assertEqual(r.status_code, 404)
         self.assertIn("探すフォルダに届きません", r.get_data(as_text=True))
 
+    def set_place(self, place, column="作業名", click="preview"):
+        st = self.ok("/api/easy/state", table="作業")
+        rows = [dict(c, **({column: {"click": click, "place": place}}.get(c["name"], {}))) for c in st["columns"]]
+        return self.post("/api/easy/columns", table="作業", rows=rows)
+
+    def test_wildcard_absorbs_naming(self):
+        """0.26.0: 場所に * (何文字でもよい)。名前の付け方が違っても、番号などの確かな所で探せる。"""
+        (self.dir / "L-1作業場").mkdir()
+        (self.dir / "L-1作業場" / "０－１－３ 無いもの 改定3.pdf").write_bytes(b"%PDF-1.4 3")  # 区切りが空白・余計な語
+        (self.dir / "0-1-30_別の作業.pdf").write_bytes(b"%PDF-1.4 30")
+        simple_table.forget_index()
+        k = simple_table.find_files
+        names = {p.name for p in k(self.dir / "0-1-3*")}
+        self.assertEqual(names, {"０－１－３ 無いもの 改定3.pdf", "0-1-30_別の作業.pdf"})       # 0-1-30 も当たる
+        self.assertEqual([p.name for p in k(self.dir / "0-1-3_*")], [])                         # _ の後ろ…は空白区切りに当たらない
+        self.assertEqual([p.name for p in simple_table.near_files(self.dir / "0-1-3_*")],
+                         ["０－１－３ 無いもの 改定3.pdf"])                                    # 番号が同じものを似た名前に
+        self.assertEqual([p.name for p in k(self.dir / "*無いもの*")], ["０－１－３ 無いもの 改定3.pdf"])
+        self.assertEqual([p.name for p in k(self.dir / "0-1-1_*.pdf")], ["0-1-1_ハンマーの取り扱い.pdf"])  # 拡張子つき
+        # 押したとき: 1 件ならそのまま、何件もあれば選ばせる
+        self.assertEqual(self.set_place(str(self.dir) + "/*{作業名}*").status_code, 200)
+        r = self.preview("無いもの", self.rowid["0-1-3"])
+        self.assertEqual((r.status_code, r.data), (200, b"%PDF-1.4 3"))
+        self.assertEqual(self.set_place(str(self.dir) + "/{作業NO}*").status_code, 200)
+        r = self.preview("無いもの", self.rowid["0-1-3"])
+        self.assertIn("2 か所", r.get_data(as_text=True))
+        # 書けない所・手がかりが無い
+        for bad, why in ((str(self.dir) + "/*/{作業NO}", "ファイル名の所だけ"), (str(self.dir) + "/*", "* だけでは")):
+            r = self.set_place(bad)
+            self.assertEqual(r.status_code, 422, bad)
+            self.assertIn(why, r.get_json()["message"])
+
+    def test_try_place(self):
+        """0.26.0: 「試す」: 表の行で本当に探す。何行で見つかったか・見つからない例と理由・似た名前。"""
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=str(self.dir) + "/{作業NO}_{作業名}")
+        self.assertEqual((j["ok"], j["tried"], j["hit"]), (True, 4, 2))                       # 0-1-1 と 0-1-2
+        self.assertEqual(j["example"]["found"][0]["name"], "0-1-1_ハンマーの取り扱い.xlsx")
+        self.assertIn("その下のフォルダ", j["missing"]["why"])
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=str(self.dir) + "/*")
+        self.assertEqual(j["ok"], False)
+        self.assertIn("* だけでは", j["message"])
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place="x/{作業番号}")
+        self.assertIn("{作業番号} という列", j["message"])
+        st = self.ok("/api/easy/state", table="作業")
+        self.assertEqual(st["sample"]["作業NO"], "0-1-1")                                     # 例に使う行
+
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")
         rows = [dict(c, **({"作業名": {"click": "preview", "place": "x/{作業番号}_{値}"}}.get(c["name"], {})))

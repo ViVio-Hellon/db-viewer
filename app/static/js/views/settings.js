@@ -158,19 +158,21 @@ function startBrowser() {
     browser[key] = document.getElementById(id);
   }
   if (!browser.dialog) return;
-  for (const button of document.querySelectorAll("[data-browse]")) {
-    button.addEventListener("click", () => {
-      browseTarget = document.getElementById(button.dataset.browse);
-      // data-browse-file="either": ファイルを押しても、「このフォルダを選ぶ」でもよい(設定ファイル。0.22.0)
-      const either = button.dataset.browseFile === "either";
-      browseFile = either || button.dataset.browseFile === "1" || button.dataset.browse === "accdbSource";
-      browser.pick.hidden = browseFile && !either;
-      const label = document.querySelector(`label[for="${button.dataset.browse}"]`);
-      browser.for.textContent = label ? label.textContent : "";
-      browser.dialog.showModal();
-      browseTo(browseTarget.value);
-    });
-  }
+  // 「参照…」は後から足したボタン(かんたん設定の場所の「フォルダを選ぶ…」。0.26.0)でも効くよう、まとめて受ける
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-browse]");
+    if (!button) return;
+    browseTarget = document.getElementById(button.dataset.browse);
+    if (!browseTarget) return;
+    // data-browse-file="either": ファイルを押しても、「このフォルダを選ぶ」でもよい(設定ファイル。0.22.0)
+    const either = button.dataset.browseFile === "either";
+    browseFile = either || button.dataset.browseFile === "1" || button.dataset.browse === "accdbSource";
+    browser.pick.hidden = browseFile && !either;
+    const label = document.querySelector(`label[for="${button.dataset.browse}"]`);
+    browser.for.textContent = button.dataset.browseFor || (label ? label.textContent : "");
+    browser.dialog.showModal();
+    browseTo(browseTarget.dataset.keepName === "1" ? folderPart(browseTarget.value) : browseTarget.value);
+  });
   browser.rows.addEventListener("click", (event) => {
     const dir = event.target.closest("tr[data-dir]");
     if (dir) { browseTo(dir.dataset.dir); return; }
@@ -193,10 +195,33 @@ function startBrowser() {
   });
   browser.up.addEventListener("click", () => browseTo(browser.upPath));
   browser.pick.addEventListener("click", () => {
+    if (browseTarget && browseTarget.dataset.keepName === "1") {
+      // 場所の決まり: フォルダだけ入れ替え、ファイル名の所({作業NO}_{作業名} など)は残す
+      const folder = browser.path.value.replace(/[\\/]+$/, "");
+      const sep = folder.includes("\\") || !folder.includes("/") ? "\\" : "/";
+      browseTarget.value = `${folder}${sep}${namePart(browseTarget.value) || "{値}"}`;
+      browseTarget.dispatchEvent(new Event("input", { bubbles: true }));
+      browseTarget.dispatchEvent(new Event("change", { bubbles: true }));
+      browser.dialog.close();
+      toast("フォルダを入れました。「列の設定を保存」を押すと効きます。", "info");
+      return;
+    }
     if (browseTarget) browseTarget.value = browser.path.value;
     browser.dialog.close();
     toast("フォルダを入れました。「保存」を押すと効きます。", "info");
   });
+}
+
+/** 場所の決まりのフォルダの所 / ファイル名の所(最後の \ か / で分ける)。 */
+function folderPart(text) {
+  const t = String(text || "").trim();
+  const cut = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
+  return cut > 0 ? t.slice(0, cut) : "";
+}
+function namePart(text) {
+  const t = String(text || "").trim();
+  const cut = Math.max(t.lastIndexOf("\\"), t.lastIndexOf("/"));
+  return cut >= 0 ? t.slice(cut + 1) : t;
 }
 
 /* ---------------- Access 取り込み(長時間処理は jobs.js が見張る) ---------------- */

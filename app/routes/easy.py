@@ -219,6 +219,19 @@ def access_password():
     return jsonify({"ok": True, "message": result.message})
 
 
+@bp.post("/api/easy/try-place")
+def try_place():
+    """場所の決まりを、表の行で試す(0.26.0)。保存はしない。見るだけなので 閲覧のみ でも使える。"""
+    conn, _setup, err = _open()
+    if err:
+        return err
+    from .record import ref_base
+    body = request.get_json(silent=True) or {}
+    out = easy_setup.try_place(conn, str(body.get("table") or ""), str(body.get("column") or ""),
+                               str(body.get("place") or "").strip(), ref_base())
+    return jsonify(out)
+
+
 @bp.post("/api/easy/retire")
 def retire():
     conn, _setup, err = _open()

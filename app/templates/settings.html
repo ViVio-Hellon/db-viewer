@@ -142,6 +142,23 @@
                 開く・プレビューの「場所」には <code>{値}</code>(押したマスの値)と <code>{列名}</code>(同じ行のほかの列)が書けます。
                 例 <code>\\server\手順書\{作業NO}_{作業名}</code> … 拡張子を書かなければ、全角・半角・大文字小文字を問わずに探します。
                 列名で覚えるので、列の並びが変わっても・列が増えても(増えた列は 表示・文字・印刷)ずれません。DB を替えれば、その DB の設定になります。</p>
+              <details class="placeguide">
+                <summary>開く・プレビューの「場所」の書き方(ファイルの名前の付け方に合わせる)</summary>
+                <p class="why">クリックを「現物を開く」か「プレビュー」にすると、場所の欄と案内が出ます。
+                  <b>▸ フォルダを選ぶ…</b> で探すフォルダを選び、列名のボタンで名前の形を作り、<b>試す</b> で本当に見つかるか確かめてから保存してください。
+                  フォルダは上の階層を 1 つ選べば、サブフォルダは自動で探します。全角・半角・大文字小文字・空白は問いません。</p>
+                <div class="tablewrap"><table class="table">
+                  <thead><tr><th>ファイルの名前の付け方</th><th>場所の書き方(ファイル名の所)</th><th>見つかる名前の例</th></tr></thead>
+                  <tbody>
+                    <tr><td>番号_名前 で決まっている</td><td><code>{作業NO}_{作業名}</code></td><td>0-1-1_ハンマーの取り扱い.xlsx</td></tr>
+                    <tr><td>番号_ のあとは人によって違う</td><td><code>{作業NO}_*</code></td><td>0-1-1_ハンマー取扱い(改定3).xls</td></tr>
+                    <tr><td>番号で始まる(区切りもまちまち)</td><td><code>{作業NO}*</code></td><td>0-1-1 ハンマー.xlsx・0-1-1ハンマー.pdf(0-1-10… も当たる → 押したときに選ぶ)</td></tr>
+                    <tr><td>番号がどこかに入っている</td><td><code>*{品番}*</code></td><td>【最新】図面_A-100_改.pdf</td></tr>
+                    <tr><td>マスの値がファイル名そのもの</td><td><code>{値}</code>(フォルダだけ選ぶ)</td><td>A-100.xlsx</td></tr>
+                  </tbody>
+                </table></div>
+                <p class="why">* は「何文字でもよい」。ファイル名の所だけに書けます。いくつも当たったときは、押したときに選ぶ窓が出ます(勝手には開きません)。</p>
+              </details>
               <p class="status status--warn" id="easyLegacy" hidden></p>
               <div class="tablewrap easytable">
                 <table class="table">
@@ -718,6 +735,20 @@
   /* 0.25.0: クリックの列は広く。場所(パス)は欄いっぱいで、長いパスも見えるように */
   .easytable td.click { width:52%; min-width:30em; }
   .easytable td.click .pick { flex-direction:column; align-items:stretch; }
+  .placeguide td, .placeguide th { text-align:left !important; }
+  .placeguide summary { cursor:pointer; color:var(--accent); font-weight:600; margin:4px 0; }
+  .placehelp { display:flex; flex-direction:column; gap:4px; }
+  .placehelp__chips { display:flex; flex-wrap:wrap; gap:4px; }
+  .placehelp .phchip { font:inherit; font-size:var(--fs-xs); padding:2px 8px; border-radius:999px; cursor:pointer;
+                     border:1px solid var(--rule); background:var(--surface); color:var(--ink); }
+  .placehelp .phchip:hover { background:var(--accent-soft); }
+  .placehelp .phchip:disabled { opacity:.5; cursor:default; }
+  .placehelp__ex { color:var(--muted); font-family:var(--mono); font-size:var(--fs-xs); overflow-wrap:anywhere; }
+  .placehelp__try { display:flex; gap:8px; align-items:flex-start; }
+  .placehelp__result { white-space:pre-wrap; font-size:var(--fs-xs); color:var(--muted); overflow-wrap:anywhere; }
+  .placehelp__result.is-ok { color:var(--ok); }
+  .placehelp__result.is-warn { color:var(--warn, #b26b00); }
+  .placehelp__result.is-ng { color:var(--ng, #b4232a); }
   .easytable td.click [data-f="place"] { width:100% !important; font-family:var(--mono); font-size:var(--fs-sm);
                                          resize:vertical; min-height:3.2em; line-height:1.45; white-space:pre-wrap;
                                          overflow-wrap:anywhere; }

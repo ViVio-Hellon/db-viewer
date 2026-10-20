@@ -267,6 +267,9 @@ def validate(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -
                       or (_SCHEME.match(place) and not _DRIVE.match(place) and not _URL_OK.match(place))):
             return [], (f"「{name}」の場所は、http:// か https:// で始まる URL か、ファイルの場所にしてください"
                         f"(マスの値を入れる所は {PLACE_MARK}。空なら値そのもの)。")
+        problem = _place_problem(place)
+        if problem:
+            return [], f"「{name}」の場所: {problem}"
         unknown = [m for m in row_marks(place) if m not in known]
         if unknown:
             return [], (f"「{name}」の場所に書いた {{{unknown[0]}}} という列は [{table}] にありません"
@@ -387,6 +390,19 @@ def actions(settings, table: str = "") -> dict[str, dict[str, str]]:
             for c in settings if c.click}
 
 
+def _place_problem(place: str) -> str:
+    """場所の決まりの「*」の使い方を確かめる(0.26.0)。だめなら理由。"""
+    if not place or WILD not in place or _URL_OK.match(place):
+        return ""
+    parts = re.split(r"[\\/]", place)
+    if any(WILD in seg for seg in parts[:-1]):
+        return "* はファイル名の所だけに書けます(フォルダの所には書けません。サブフォルダは自動で探します)。"
+    clue = _ROW_MARK.sub("", parts[-1]).replace(WILD, "")
+    if not _ROW_MARK.search(parts[-1]) and not name_key(clue):
+        return "* だけでは探せません。番号などの手がかり({列名} か 文字)も書いてください。"
+    return ""
+
+
 def row_marks(place: str) -> list[str]:
     """場所の決まりに書いた {列名}({値} は除く)。"""
     return [m for m in _ROW_MARK.findall(place or "") if m != PLACE_MARK[1:-1]]
@@ -496,6 +512,24 @@ def forget_index() -> None:
         _index.clear()
 
 
+WILD = "*"
+MAX_FOUND = 30                # 「*」で多く当たりすぎたときに選ばせる上限
+
+
+def name_matcher(name: str):
+    """ファイル名(場所の決まりを埋めたもの)→ (比べ方, 拡張子まで比べるか)。
+
+    「*」(0.26.0)は「何文字でもよい」。`0-1-1*` は 0-1-1 で始まる名前、`*A-100*` は A-100 を含む名前。
+    比べるときはどちらも `name_key` の形(全角・半角・大文字小文字・空白・ハイフンの種類を問わない)。"""
+    has_ext = Path(name.replace(WILD, "x")).suffix.lower() in OPEN_KINDS
+    if WILD not in name:
+        want = name_key(name)
+        return (lambda full, stem: (full if has_ext else stem) == want), has_ext
+    parts = [name_key(p) for p in name.split(WILD)]
+    rx = re.compile("^" + ".*".join(re.escape(p) for p in parts) + "$", re.DOTALL)
+    return (lambda full, stem: bool(rx.match(full if has_ext else stem))), has_ext
+
+
 def find_files(path: "Path") -> list["Path"]:
     """そのファイル。無ければ**そのフォルダとサブフォルダ**から、名前が同じとみなせるものを探す(0.23.0 / 0.24.0)。
 
@@ -513,11 +547,10 @@ def find_files(path: "Path") -> list["Path"]:
             return []
     except OSError:
         return []
-    has_ext = path.suffix.lower() in OPEN_KINDS
-    want = name_key(path.name)
+    test, _has_ext = name_matcher(path.name)
 
     def match(items):
-        return [p for p, full, stem in items if (full if has_ext else stem) == want]
+        return [p for p, full, stem in items if test(full, stem)]
     items, age = _entries(folder)
     hits = match(items)
     if not hits and age > INDEX_RETRY_SEC:                              # 目録を作ったあとに置かれたかもしれない
@@ -531,10 +564,11 @@ def find_files(path: "Path") -> list["Path"]:
             return f.stat().st_mtime
         except OSError:
             return 0.0
-    best: dict[str, "Path"] = {}
+    # 同じフォルダの同じ名前(形式違い)は 1 つに。「*」で違う名前が当たれば、それぞれ出す
+    best: dict[tuple[str, str], "Path"] = {}
     for f in sorted(hits, key=lambda f: (order.get(f.suffix.lower(), len(order)), -mtime(f))):
-        best.setdefault(str(f.parent), f)
-    return sorted(best.values(), key=lambda f: (f.parent != folder, -mtime(f)))
+        best.setdefault((str(f.parent), name_key(f.stem)), f)
+    return sorted(best.values(), key=lambda f: (f.parent != folder, -mtime(f)))[:MAX_FOUND]
 
 
 MAX_NEAR = 8
@@ -557,12 +591,12 @@ def near_files(path: "Path") -> list["Path"]:
     items, _age = _entries(path.parent)
     want = name_key(path.stem if path.suffix.lower() in OPEN_KINDS else path.name)
     hits: dict[str, "Path"] = {}
-    if "_" in want:
+    if "_" in want and WILD not in want.split("_", 1)[0]:        # 「{作業NO}_*」でも番号の所で似た名前を出す
         no = want.split("_", 1)[0]
         for p, _full, stem in items:
             if no and stem.startswith(no) and (len(stem) == len(no) or stem[len(no)] not in "0123456789-."):
                 hits.setdefault(str(p), p)
-    else:
+    elif WILD not in want:                                       # 「*」があってもう幅を持たせてあるなら似た名前は探さない
         stems: dict[str, list] = {}
         for p, _full, stem in items:
             stems.setdefault(stem, []).append(p)
@@ -591,8 +625,10 @@ def explain_missing(path: "Path") -> str:
         return (f"探すフォルダに届きません: {folder}({exc})。場所の決まりのフォルダ名と、"
                 "その PC・共有フォルダにつながるか(エクスプローラで開けるか)を確かめてください。")
     _items, stats, _age = _entries_stats(folder)
+    how = "に当てはまる名前" if WILD in path.name else "と同じとみなせる名前"
     msg = (f"{folder} と、その下のフォルダ {max(stats['dirs'] - 1, 0)} 個(ファイル {stats['files']:,} 個)を探しましたが、"
-           f"「{path.name}」と同じとみなせる名前はありませんでした(全角・半角・大文字小文字・空白は問わずに比べています)。")
+           f"「{path.name}」{how}はありませんでした(全角・半角・大文字小文字・空白は問わずに比べています。"
+           f"名前の付け方が違うときは、場所の決まりに * を使うと幅を持たせられます)。")
     if stats["denied"]:
         msg += f" 読めなかったフォルダが {stats['denied']} 個あります({stats['error']})。"
     if stats["truncated"]:

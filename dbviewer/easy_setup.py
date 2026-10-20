@@ -66,7 +66,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     except Exception:                                   # noqa: BLE001 - 出せないだけ
         db = ""
     return {
-        "db": db, "store": simple_table.store_info(conn),
+        "db": db, "store": simple_table.store_info(conn), "sample": sample_row(conn, table),
         "tables": tables, "table": table, "columns": columns,
         "inputs": [[k, label] for k, label in simple_table.INPUTS],
         "clicks": [[k, label] for k, label in simple_table.CLICKS],
@@ -145,3 +145,78 @@ def save_columns(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]
 def _backup(conn: sqlite3.Connection, why: str) -> str:
     from .master_admin import _backup as backup
     return backup(conn, why)
+
+
+# ------------------------------------------------------------------
+# 場所の決まりを試す(0.26.0。かんたん設定の「試す」)
+# ------------------------------------------------------------------
+def sample_row(conn: sqlite3.Connection, table: str) -> dict[str, str]:
+    """例に使う行: 空でない値がいちばん多い先頭のほうの行(画面の「例」に出す)。"""
+    if not table:
+        return {}
+    try:
+        cur = conn.execute(f"SELECT * FROM {q(table)} LIMIT 50")
+    except sqlite3.Error:
+        return {}
+    names = [d[0] for d in cur.description]
+    best: dict[str, str] = {}
+    for r in cur.fetchall():
+        row = {n: simple_table.text_of(v).strip() for n, v in zip(names, r)}
+        if sum(1 for v in row.values() if v) > sum(1 for v in best.values() if v):
+            best = row
+    return best
+
+
+def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, base) -> dict[str, Any]:
+    """その場所の決まりで、表の行を使って本当に探してみる(保存はしない)。
+
+    行は「押す列」に値がある先頭の行(最大 20 行まで試して、見つかった最初の行を出す)。"""
+    from .settings_tables import column_names, table_exists
+    if not table_exists(conn, table) or column not in column_names(conn, table):
+        return {"ok": False, "message": "その表・列がありません。"}
+    problem = simple_table._place_problem(place)
+    unknown = [m for m in simple_table.row_marks(place) if m not in column_names(conn, table)]
+    if problem or unknown:
+        return {"ok": False, "message": problem or f"{{{unknown[0]}}} という列は [{table}] にありません。"}
+    setting = simple_table.ColumnSetting(column, click=simple_table.CLICK_PREVIEW, place=place)
+    cur = conn.execute(f"SELECT * FROM {q(table)} WHERE {q(column)} IS NOT NULL AND CAST({q(column)} AS TEXT) <> '' "
+                       f"LIMIT 20")
+    names = [d[0] for d in cur.description]
+    rows = [dict(zip(names, r)) for r in cur.fetchall()]
+    if not rows:
+        return {"ok": False, "message": f"「{column}」に値の入った行がありません。"}
+    hits, misses, tried = [], [], 0
+    for row in rows:
+        value = simple_table.text_of(row.get(column)).strip()
+        kind, target = simple_table.click_target(setting, value, row)
+        if kind == "url":
+            return {"ok": True, "kind": "url", "value": value, "target": target, "tried": 1, "hit": 1,
+                    "message": f"URL として開きます: {target}"}
+        if kind != "file":
+            continue
+        tried += 1
+        path = simple_table.file_target(target, base)
+        found = simple_table.find_files(path) if path is not None else []
+        item = {"value": value, "target": str(path),
+                "found": [{"name": f.name, "folder": _rel(f.parent, path.parent)} for f in found]}
+        (hits if found else misses).append((item, path))
+    if not tried:
+        return {"ok": False, "message": "開ける値の行がありません(URL でもファイルの場所でもない)。"}
+    out: dict[str, Any] = {"ok": True, "kind": "file", "tried": tried, "hit": len(hits),
+                           "message": f"先頭の {tried} 行で試しました: {len(hits)} 行で見つかりました。"}
+    if hits:
+        out["example"] = hits[0][0]
+    if misses:
+        item, path = misses[0]
+        item["why"] = simple_table.explain_missing(path)
+        item["near"] = [{"name": f.name, "folder": _rel(f.parent, path.parent)} for f in simple_table.near_files(path)]
+        out["missing"] = item
+    return out
+
+
+def _rel(path, base) -> str:
+    try:
+        rel = path.relative_to(base).as_posix()
+    except ValueError:
+        return str(path)
+    return rel if rel != "." else "(このフォルダ)"

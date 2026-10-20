@@ -148,16 +148,20 @@ function columnRow(c) {
   place.rows = 2; place.value = c.place || ""; place.spellcheck = false;
   place.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
   place.addEventListener("input", () => { if (/[\r\n]/.test(place.value)) place.value = place.value.replace(/[\r\n]+/g, ""); });
-  place.placeholder = "場所: 空 = 値そのもの / 例 図面\\{値}.pdf ・ 手順書\\{作業NO}_{作業名}";
+  place.placeholder = "場所: 空 = 値そのもの / 例 手順書\\{作業NO}_{作業名} ・ 手順書\\{作業NO}_* ・ 図面\\*{品番}*";
+  place.id = `place-${placeSeq++}`;
+  place.dataset.keepName = "1";                      // 「フォルダを選ぶ…」でファイル名の所を残す
   place.title = "開くもの(Excel・Word・PDF・URL)は、値か この場所 から決まります。{値} にマスの値、"
     + "{列名} に同じ行のその列の値が入ります。拡張子を書かなければ、フォルダの中から 全角・半角・大文字小文字を問わず "
-    + "Excel → Word → PDF の順に探します";
+    + "Excel → Word → PDF の順に探します。* は「何文字でもよい」(0.26.0)";
   place.setAttribute("aria-label", `${c.name} の開く場所`);
   const opens = () => ["open", "preview"].includes(click.value);
-  place.hidden = !opens();
-  click.addEventListener("change", () => { place.hidden = !opens(); });
+  const help = placeHelp(c, place);
+  const showPlace = () => { place.hidden = help.hidden = !opens(); };
+  showPlace();
+  click.addEventListener("change", showPlace);
   click.disabled = place.disabled = !st.can_write;
-  clickPick.append(click, place);
+  clickPick.append(click, place, help);
   clickTd.appendChild(clickPick);
   tr.append(name, box("show", c.show, "表示"), kind, box("print", c.print, "印刷"), clickTd);
   tr.addEventListener("change", () => {
@@ -165,6 +169,94 @@ function columnRow(c) {
     tr.classList.toggle("is-off", !tr.querySelector('[data-f="show"]').checked);
   });
   return tr;
+}
+
+/* ---------------- 場所の決まりの案内(0.26.0) ----------------
+   ボタンで {列名}・{値}・* を入れる / フォルダを選ぶ / この表の行で作った例を見る / 本当に探してみる(試す) */
+let placeSeq = 0;
+
+function fillExample(place, colName) {
+  const sample = (st && st.sample) || {};
+  const value = String(sample[colName] ?? "");
+  if (!place.trim()) return value;
+  let out = place.split("{値}").join(value);
+  out = out.replace(/\{([^{}]+)\}/g, (m, n) => (n in sample ? String(sample[n] ?? "") : m));
+  return out;
+}
+
+function insertAt(area, text) {
+  const start = area.selectionStart ?? area.value.length;
+  const end = area.selectionEnd ?? area.value.length;
+  area.value = area.value.slice(0, start) + text + area.value.slice(end);
+  area.focus();
+  area.selectionStart = area.selectionEnd = start + text.length;
+  area.dispatchEvent(new Event("input", { bubbles: true }));
+  area.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function placeHelp(c, place) {
+  const box = document.createElement("div");
+  box.className = "placehelp";
+  const chips = document.createElement("div");
+  chips.className = "placehelp__chips";
+  const chip = (label, title, onClick) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "phchip"; b.textContent = label; b.title = title;
+    b.disabled = !st.can_write;
+    b.addEventListener("click", onClick);
+    chips.appendChild(b);
+    return b;
+  };
+  const folder = chip("▸ フォルダを選ぶ…", "探すフォルダを選ぶ(ファイル名の所はそのまま。サブフォルダは自動で探します)", () => {});
+  folder.dataset.browse = place.id;
+  folder.dataset.browseFor = `${c.name} を探すフォルダ`;
+  for (const col of st.columns.map((x) => x.name)) {
+    chip(`{${col}}`, `同じ行の「${col}」の値を入れる`, () => insertAt(place, `{${col}}`));
+  }
+  chip("{値}", "押したマスの値を入れる", () => insertAt(place, "{値}"));
+  chip("*", "何文字でもよい(名前の付け方が決まっていない所)", () => insertAt(place, "*"));
+  const example = document.createElement("small");
+  example.className = "placehelp__ex";
+  const tryRow = document.createElement("div");
+  tryRow.className = "placehelp__try";
+  const tryBtn = document.createElement("button");
+  tryBtn.type = "button"; tryBtn.className = "btn btn--find"; tryBtn.textContent = "試す";
+  tryBtn.title = "この決まりで、表の先頭の行(20 行まで)のファイルを本当に探してみる(保存はしません)";
+  const result = document.createElement("span");
+  result.className = "placehelp__result";
+  tryRow.append(tryBtn, result);
+  box.append(chips, example, tryRow);
+  const showExample = () => {
+    const ex = fillExample(place.value, c.name);
+    example.textContent = ex ? `例(この表の行で): ${ex}` : "";
+    result.textContent = ""; result.className = "placehelp__result";
+  };
+  place.addEventListener("input", showExample);
+  showExample();
+  tryBtn.addEventListener("click", async () => {
+    result.textContent = "探しています…"; result.className = "placehelp__result";
+    try {
+      const r = await api.post("/api/easy/try-place", { table: st.table, column: c.name, place: place.value.trim() });
+      const lines = [r.message];
+      if (r.example && r.example.found.length) {
+        const f = r.example.found[0];
+        lines.push(`見つかった例: ${r.example.value} → ${f.folder === "(このフォルダ)" ? "" : f.folder + " / "}${f.name}`
+          + (r.example.found.length > 1 ? `(ほか ${r.example.found.length - 1} 件。押したときに選びます)` : ""));
+      }
+      if (r.missing) {
+        lines.push(`見つからない例: ${r.missing.value} → ${r.missing.why}`);
+        if (r.missing.near && r.missing.near.length) {
+          lines.push(`似た名前: ${r.missing.near.map((n) => n.name).join("、")}(名前の付け方が違うなら * を使うと拾えます)`);
+        }
+      }
+      result.textContent = lines.join("\n");
+      result.className = `placehelp__result ${!r.ok ? "is-ng" : r.hit === r.tried ? "is-ok" : "is-warn"}`;
+    } catch (err) {
+      result.textContent = err.message;
+      result.className = "placehelp__result is-ng";
+    }
+  });
+  return box;
 }
 
 function collect() {
