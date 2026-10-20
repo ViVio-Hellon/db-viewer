@@ -1,6 +1,6 @@
 /*
-  かんたん設定(設定 → かんたん設定)。決めるのは 見る DB と、列ごとの 表示・入力・印刷・クリック、
-  権限を読む アクセス権限マスタ(0.16.0)。
+  かんたん設定(設定 → かんたん設定)。決めるのは 設定ファイル(権限・かんたん設定・接続先。0.22.0)と、
+  列ごとの 表示・入力・印刷・クリック、アクセス権限の行。
   判断(誰が書けるか・値の確かめ)はサーバ(easy_setup.py / simple_table.py)。ここは選ばせて送るだけ。
 */
 import { api } from "../api.js";
@@ -35,13 +35,6 @@ function option(value, label, selected) {
 
 function render() {
   el.easyDb.textContent = st.db || "(接続先が決まっていません)";
-  // かんたん設定の保存先(0.21.0)
-  if (st.store) {
-    el.easyStore.textContent = st.store.where === "db"
-      ? `いまの保存先: DB の中(${st.store.path})`
-      : `いまの保存先: ${st.store.path}${st.store.exists ? "" : "(まだ無い。最初に保存したときに作ります)"}`;
-  }
-  if (document.activeElement !== el.easyDir) el.easyDir.value = st.easy_dir || "";
   el.easyTable.replaceChildren(...st.tables.map((t) =>
     option(t.name, `${t.name}(${t.rows >= 0 ? t.rows.toLocaleString() : "?"} 件)`, t.name === st.table)));
   el.easyColsWhere.textContent = `[${st.table}] の ${st.columns.length} 列`;
@@ -57,7 +50,7 @@ function render() {
   el.easyColsHint.textContent = st.can_write ? "" : "閲覧のみです(保存は 編集可 の権限で)。";
 }
 
-/* ---------------- 権限(梱包資材マスタの「アクセス権限」) ---------------- */
+/* ---------------- 権限(設定ファイルの「アクセス権限」)・設定ファイル ---------------- */
 async function loadRights() {
   try { rights = await api.post("/api/easy/rights", {}); } catch (err) { toastError(err); return; }
   const me = rights.me || {};
@@ -66,17 +59,21 @@ async function loadRights() {
   el.rightsNow.style.color = me.edit ? "var(--ok)" : "";
   el.rightsWhy.textContent = me.reason || "";
   const o = rights.master || {};
-  if (document.activeElement !== el.rightsPath) el.rightsPath.value = o.configured || "";
-  el.rightsUsing.textContent = !o.path ? "(決めていません。誰でも 編集可)"
-    : `${o.path}${o.auto ? "(見ている DB と同じフォルダ)" : ""}`
-      + (o.found ? ` ・ ${o.rows} 行` : ` ・ 読めません: ${o.problem}`);
-  el.rightsSave.disabled = !rights.can_change;
-  el.rightsPath.disabled = !rights.can_change;
+  el.rightsUsing.textContent = `${o.path || "?"}` + (o.found ? ` の「${o.table}」・ ${o.rows} 行` : ` ・ 読めません: ${o.problem}`);
   const rows = o.edit_rows || [];
   el.rightsHint.textContent = !o.found ? ""
-    : rows.length ? `${o.permission} の行(この行に当てはまる ID・PC が 編集可):`
-    : `${o.permission} の行がまだありません。編集させたい人・PC の行を「${o.table}」に足してください`
-      + "(権限 = dbviewer:edit、有効 = 1。ログインID・PC名の空欄は「問わない」)。";
+    : !o.rows ? "アクセス権限の表に行がまだありません(誰でも 編集可)。下の「アクセス権限を直す」で行を足すと効き始めます。"
+    : rows.length ? `権限が ${o.permission} の行(この行に当てはまる ID・PC が 編集可):`
+    : `権限が ${o.permission} の行がありません(誰も直せません。管理者パスワードで行を足してください)。`;
+  // 設定ファイル(0.22.0)
+  const f = rights.file || {};
+  el.sfNow.textContent = `いまの設定ファイル: ${f.path || "?"}${f.configured ? "" : "(この PC の既定の場所)"}`;
+  const c = f.counts || {};
+  el.sfCounts.textContent = f.problem ? `開けません: ${f.problem}`
+    : `接続先 ${c["接続先"] ?? 0} 件 ・ かんたん設定 ${c["かんたん設定"] ?? 0} 表 ・ アクセス権限 ${c["アクセス権限"] ?? 0} 行`;
+  if (document.activeElement !== el.sfText) el.sfText.value = f.configured || "";
+  el.sfSave.disabled = el.sfDefault.disabled = !rights.can_change;
+  el.sfSave.title = rights.can_change ? "" : "編集可 の権限か、管理者パスワードの鍵が要ります";
   el.rightsRowsWrap.hidden = !rows.length;
   el.rightsRows.replaceChildren(...rows.map((r) => {
     const tr = document.createElement("tr");
@@ -87,13 +84,12 @@ async function loadRights() {
   }));
 }
 
-async function saveRightsPath() {
+async function saveSettingsFile(path) {
   try {
-    const res = await api.post("/api/easy/rights", { path: el.rightsPath.value.trim(), save: true });
-    toast(res.message || "保存しました。", "ok");
-    rights = null;
-    await recheckRights();
-    await loadAccess();
+    const res = await api.post("/api/easy/settings-file", { path });
+    // 権限・かんたん設定・接続先 が替わるので、画面ごと読み直す
+    try { sessionStorage.setItem("dbviewer.dbswitch.note", res.message || ""); } catch (_) { /* 出せないだけ */ }
+    location.reload();
   } catch (err) { toastError(err, "warn"); }
 }
 
@@ -206,7 +202,8 @@ async function loadAccess() {
     return;
   }
   el.accNote2.textContent = `${access.path} の「アクセス権限」(${access.rows.length} 行)`;
-  el.accPerms.replaceChildren(...access.permissions.map((p) => { const o = document.createElement("option"); o.value = p; return o; }));
+  const keep = el.accPerm.value;
+  el.accPerm.replaceChildren(...access.permissions.map((p) => option(p, p, p === keep)));
   showLock(access.admin);
   renderAccess();
 }
@@ -220,8 +217,7 @@ function showLock(open) {
 function renderAccess() {
   if (!access) return;
   const me = access.me || {};
-  const only = el.accOnlyMine.checked;
-  const rows = access.rows.filter((r) => !only || String(r["権限"] || "").toLowerCase().startsWith("dbviewer:"));
+  const rows = access.rows;
   el.accRows.replaceChildren(...rows.map((r) => {
     const tr = document.createElement("tr");
     const mine = (!r["ログインID"] || String(r["ログインID"]).toLowerCase() === String(me.login_id).toLowerCase())
@@ -253,7 +249,9 @@ function editRow(r) {
   el.accNo.textContent = r ? String(r["管理番号"]) : "(新しい行)";
   el.accLogin.value = r ? (r["ログインID"] ?? "") : "";
   el.accPc.value = r ? (r["PC名"] ?? "") : "";
-  el.accPerm.value = r ? (r["権限"] ?? "") : "dbviewer:edit";
+  const perm = r ? String(r["権限"] ?? "") : "編集可";
+  if (perm && ![...el.accPerm.options].some((o) => o.value === perm)) el.accPerm.appendChild(option(perm, perm, false));
+  el.accPerm.value = perm;
   el.accOn.checked = r ? isOn(r["有効"]) : true;
   el.accNote.value = r ? (r["備考"] ?? "") : "";
   el.accForm.hidden = false;
@@ -325,12 +323,13 @@ async function changePassword() {
 }
 
 export function start() {
-  for (const id of ["easyProblem", "easyBody", "easyDb", "easyStore", "easyDir", "easyDirSave", "easyDirClear", "easyGoSource", "easyTable", "easyColsWhere",
+  for (const id of ["easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
                     "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyVbaCard", "easyVbaList",
-                    "rightsWho", "rightsNow", "rightsWhy", "rightsPath", "rightsSave", "rightsRecheck", "rightsUsing",
+                    "rightsWho", "rightsNow", "rightsWhy", "rightsRecheck", "rightsUsing",
+                    "sfNow", "sfCounts", "sfText", "sfSave", "sfDefault",
                     "rightsHint", "rightsRowsWrap", "rightsRows",
-                    "accLocked", "accPass", "accUnlock", "accOpen", "accNew", "accLock", "accOnlyMine", "accForm", "accNo",
-                    "accLogin", "accMyId", "accPc", "accMyPc", "accPerm", "accPerms", "accOn", "accNote", "accCancel",
+                    "accLocked", "accPass", "accUnlock", "accOpen", "accNew", "accLock", "accForm", "accNo",
+                    "accLogin", "accMyId", "accPc", "accMyPc", "accPerm", "accOn", "accNote", "accCancel",
                     "accRows", "accNote2", "accPwCur", "accPwNew", "accPwNew2", "accPwChange",
                     "easyRetire"]) {
     el[id] = document.getElementById(id);
@@ -344,7 +343,8 @@ export function start() {
     load(el.easyTable.value);
   });
   el.easyColsSave.addEventListener("click", saveColumns);
-  el.rightsSave.addEventListener("click", saveRightsPath);
+  el.sfSave.addEventListener("click", () => saveSettingsFile(el.sfText.value.trim()));
+  el.sfDefault.addEventListener("click", () => saveSettingsFile(""));
   el.rightsRecheck.addEventListener("click", recheckRights);
   el.accUnlock.addEventListener("click", unlock);
   el.accPass.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); unlock(); } });
@@ -352,21 +352,11 @@ export function start() {
   el.accNew.addEventListener("click", () => editRow(null));
   el.accCancel.addEventListener("click", () => { el.accForm.hidden = true; editing = null; });
   el.accForm.addEventListener("submit", saveRow);
-  el.accOnlyMine.addEventListener("change", renderAccess);
   el.accMyId.addEventListener("click", () => { el.accLogin.value = (access && access.me.login_id) || ""; });
   el.accMyPc.addEventListener("click", () => { el.accPc.value = (access && access.me.pc) || ""; });
   el.accPwChange.addEventListener("click", changePassword);
   el.easyRetire.addEventListener("click", retireVba);
   el.easyGoSource.addEventListener("click", () => document.getElementById("tab-source")?.click());
-  const saveStore = async (dir) => {
-    try {
-      const res = await api.post("/api/settings/save", { easy_dir: dir });
-      toast(res.message, "ok");
-      await load();
-    } catch (err) { toastError(err); }
-  };
-  el.easyDirSave.addEventListener("click", () => saveStore(el.easyDir.value));
-  el.easyDirClear.addEventListener("click", () => { el.easyDir.value = ""; saveStore(""); });
   // タブを開くたびに読み直す(接続先で DB を替えたかもしれない)
   document.getElementById("tab-easy")?.addEventListener("click", () => { load(); loadRights(); loadAccess(); });
   load();

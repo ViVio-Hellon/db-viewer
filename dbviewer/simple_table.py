@@ -9,10 +9,10 @@ VBA 版の決まり(全般設定・<表>_設定・管理番号・入力形式の
     クリック … マスの値を押したときに すること(なし / 値をコピー / 現物を開く / プレビュー)(0.12.0・0.13.0)
                開くもの(Excel・Word・PDF・URL)は値(または「場所」の決まり)から決まる
 
-【どこに覚えるか】既定は DB の中の隠した表「ツールの設定」に、表ごとに 1 行(JSON)。DB を使う全員で同じ。
-0.21.0 から、設定 → かんたん設定 の「保存先」でフォルダを決めると、**DB の外**の
-`<フォルダ>\<DB の名前>_かんたん設定.sqlite3` に同じ形で書く(DB ファイルには何も書かない)。
-共有フォルダにすれば全 PC で同じ。そこにまだ無い表は、DB の中の設定を読む(決め直すまで今までどおり)。
+【どこに覚えるか】0.22.0 から**設定ファイル**(`settings_file.py`。権限・接続先と同じファイル)の
+「かんたん設定」に、DB ごと・表ごとに 1 行(JSON)。**DB ファイルには書かない。**
+設定ファイルにまだ無い表は、0.21.0 の保存先(<DB 名>_かんたん設定.sqlite3)→ DB の中の隠した表「ツールの設定」
+(0.20.0 まで)の順に読む(決め直すまで今までどおり)。
 **列名で**覚えるので、列の並びが変わっても・列が増えても(既定: 表示・文字・印刷)ずれない。
 DB を替えれば、その DB の設定になる(無ければ既定)。
 
@@ -35,7 +35,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Optional
 
-from . import config, user_settings
+from . import config
 from .settings_tables import column_names, q, table_exists
 
 SETTINGS_TABLE = config.TOOL_SETTINGS_TABLE
@@ -105,64 +105,50 @@ class ColumnSetting:
 
 
 # ------------------------------------------------------------------
-# 設定を読む・書く
+# 設定を読む・書く(0.22.0 から保存先は設定ファイル)
 # ------------------------------------------------------------------
-def _ensure(conn: sqlite3.Connection) -> None:
-    conn.execute(f"CREATE TABLE IF NOT EXISTS {q(SETTINGS_TABLE)} "
-                 f"({q('表')} TEXT PRIMARY KEY, {q('設定')} TEXT, {q('更新者')} TEXT, {q('更新日時')} TEXT)")
-
-
-# ------------------------------------------------------------------
-# 保存先(0.21.0): DB の中 か、DB の外のフォルダ
-# ------------------------------------------------------------------
-STORE_SUFFIX = "_かんたん設定.sqlite3"
-STORE_TIMEOUT_SEC = 10
-
-
 def _db_file(conn: sqlite3.Connection) -> Optional[Path]:
     row = conn.execute("PRAGMA database_list").fetchone()
     return Path(row[2]) if row and row[2] else None
 
 
-def store_folder() -> str:
-    """設定の保存先フォルダ(この PC の設定)。空なら DB の中。"""
-    return str(user_settings.get(config.KEY_EASY_DIR, "") or "").strip()
-
-
-def store_path(conn: sqlite3.Connection) -> Optional[Path]:
-    """DB の外に書くときのファイル。DB の中に書くときは None。"""
-    folder = store_folder()
-    if not folder:
-        return None
-    db = _db_file(conn)
-    return config.resolve_dir(folder) / ((db.stem if db else "DB") + STORE_SUFFIX)
-
-
 def store_info(conn: sqlite3.Connection) -> dict[str, Any]:
-    """画面に出す保存先。"""
-    path = store_path(conn)
-    if path is None:
-        return {"where": "db", "path": str(_db_file(conn) or ""), "folder": "", "exists": True}
-    return {"where": "folder", "path": str(path), "folder": store_folder(), "exists": path.is_file()}
+    """画面に出す保存先(設定ファイル)。"""
+    from . import settings_file
+    p = settings_file.path()
+    return {"where": "file", "path": str(p), "exists": p.is_file()}
 
 
-def _open_store(path: Path) -> sqlite3.Connection:
-    store = sqlite3.connect(str(path), timeout=STORE_TIMEOUT_SEC)
-    store.execute(f"PRAGMA busy_timeout={STORE_TIMEOUT_SEC * 1000}")
-    return store
+def _parse(text: Any) -> dict[str, Any]:
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _raw(conn: sqlite3.Connection, table: str) -> dict[str, Any]:
-    """表の設定(JSON)。外のフォルダに決めていれば先にそこ、無ければ DB の中。"""
-    path = store_path(conn)
-    if path is not None and path.is_file():
+    """表の設定(JSON)。設定ファイル → 0.21.0 の保存先 → DB の中 の順に、あるものを読む。"""
+    from . import settings_file
+    db = _db_file(conn)
+    if db is not None:
         try:
-            with closing(_open_store(path)) as store:
-                data = _raw_in(store, table)
-        except sqlite3.Error:
-            data = {}
+            data = _parse(settings_file.easy_read(db, table))
+        except (sqlite3.Error, OSError):
+            data = {}                                   # 届かない: 前の場所の設定で見せる(保存は断る)
         if data:
             return data
+        old = settings_file.legacy_easy_file(db)
+        if old.is_file():
+            try:
+                with closing(sqlite3.connect(f"file:{old}?mode=ro", uri=True, timeout=3)) as store:
+                    data = _raw_in(store, table)
+            except sqlite3.Error:
+                data = {}
+            if data:
+                return data
     return _raw_in(conn, table)
 
 
@@ -286,27 +272,11 @@ def save(conn: sqlite3.Connection, table: str, settings: list[ColumnSetting], *,
     for c in settings:
         cols[c.name] = c.to_json()
     data["columns"] = cols
-    path = store_path(conn)
-    if path is None:
-        _write_raw(conn, table, data, user)
-        return
-    if not path.parent.is_dir():
-        raise sqlite3.OperationalError(f"かんたん設定の保存先フォルダがありません: {path.parent}")
-    with closing(_open_store(path)) as store:
-        _write_raw(store, table, data, user)
-
-
-def _write_raw(conn: sqlite3.Connection, table: str, data: dict[str, Any], user: str) -> None:
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        _ensure(conn)
-        conn.execute(f"INSERT OR REPLACE INTO {q(SETTINGS_TABLE)} VALUES (?, ?, ?, ?)",
-                     (table, json.dumps(data, ensure_ascii=False), user,
-                      datetime.now().strftime("%Y/%m/%d %H:%M:%S")))
-        conn.execute("COMMIT")
-    except sqlite3.Error:
-        conn.execute("ROLLBACK")
-        raise
+    from . import settings_file
+    db = _db_file(conn)
+    if db is None:
+        raise sqlite3.OperationalError("見ている DB のファイルが分かりません。")
+    settings_file.easy_write(db, table, json.dumps(data, ensure_ascii=False), user)
 
 
 # ------------------------------------------------------------------

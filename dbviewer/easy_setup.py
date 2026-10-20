@@ -6,7 +6,7 @@ VBA 版は 全般設定・ID・<メイン>_設定 を Access で開いて決ま�
     見る DB          … 設定「接続先」で選ぶ(ここでは今の DB を見せるだけ)
     列ごとの設定      … 表を選び、列ごとに 表示 / 入力(文字・コンボボックス・スピンボタン・カレンダー)/ 印刷
                          → DB の中の隠した表「ツールの設定」に表ごとに書く(simple_table.py)
-    権限             … 0.16.0 から 梱包資材マスタの「アクセス権限」(編集可 / 閲覧のみ。access_rights.py)。
+    権限             … 0.22.0 から 設定ファイルの「アクセス権限」(編集可 / 閲覧のみ。access_rights.py)。
                          ID の表・パスワード・Level は使わない
 
 全般設定・<表>_設定 は要らない。<表>_設定 は画面では使わず(0.9.0)、入力の種類を取り込んで消せる(`retire_vba`)。
@@ -30,7 +30,7 @@ REFUSE_INPUT = "bad_input"
 REFUSE_TABLE = "no_table"
 REFUSE_FAILED = "failed"
 
-MSG_LEVEL = "設定を保存するには 編集可 の権限が要ります(梱包資材マスタの「アクセス権限」に dbviewer:edit の行)。"
+MSG_LEVEL = "設定を保存するには 編集可 の権限が要ります(設定ファイルの「アクセス権限」に 権限 = 編集可 の行)。"
 
 
 @dataclass
@@ -66,7 +66,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     except Exception:                                   # noqa: BLE001 - 出せないだけ
         db = ""
     return {
-        "db": db, "store": simple_table.store_info(conn), "easy_dir": simple_table.store_folder(),
+        "db": db, "store": simple_table.store_info(conn),
         "tables": tables, "table": table, "columns": columns,
         "inputs": [[k, label] for k, label in simple_table.INPUTS],
         "clicks": [[k, label] for k, label in simple_table.CLICKS],

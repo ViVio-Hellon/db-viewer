@@ -59,6 +59,7 @@ EV_LABEL = {
     "access.delete": "アクセス権限の行を消した",
     "access.password": "管理者パスワードを変えた",
     "settings.access_db": "アクセス権限マスタの場所",
+    "settings.file": "設定ファイルを決めた",
     "app.start": "起動",
     "app.stop": "終了",
 }

@@ -77,20 +77,25 @@ def db_files_list():
 
 @bp.get("/api/settings/db-choices")
 def db_choices():
-    """選び直せる DB(最近開いたもの・同じフォルダの .sqlite3)。上の帯の「DB」のメニュー。"""
-    from dbviewer import db_files
-    return jsonify(db_files.choices())
+    """選べる DB: 設定ファイルの接続先と、同じフォルダの .sqlite3(足せる人だけ)。上の帯の「DB」と 接続先 の一覧。"""
+    from dbviewer import auth, db_files
+    return jsonify(db_files.choices(can_add=auth.ensure().can_edit))
 
 
 @bp.post("/api/settings/db-forget")
 def db_forget():
-    """「最近開いた DB」から外す(ファイルは消さない)。"""
-    from dbviewer import db_files, shared_db
+    """接続先から外す(ファイルは消さない)。編集可 の人だけ。いま開いている DB は外せない。"""
+    from dbviewer import auth, db_files, settings_file, shared_db
     path = str((request.get_json(silent=True) or {}).get("path", ""))
-    if not shared_db.forget(path):
+    s = auth.ensure()
+    if not s.can_edit:
+        return jsonify({"error": {"code": "level", "message": "接続先を外すのは 編集可 の人だけです。"}}), 403
+    if shared_db.is_set() and settings_file.same_file(path, shared_db.configured()):
         return jsonify({"error": {"code": "current", "message": "いま開いている DB は外せません。"}}), 400
-    trace.event("db.forget", "最近開いた DB から外した", data={"path": path})
-    return jsonify(db_files.choices())
+    if not settings_file.remove_db(path):
+        return jsonify({"error": {"code": "gone", "message": "その接続先はもうありません。"}}), 404
+    trace.event("db.forget", "接続先から外した", data={"path": path, "by": s.user_id})
+    return jsonify(db_files.choices(can_add=s.can_edit))
 
 
 @bp.post("/api/settings/open-db")

@@ -43,7 +43,7 @@
   </div>
   <div class="ribbon__slots">
     {# 値はサーバが持つ(`shell.ribbon_values`)。画面を移っても消えない #}
-    {# 0.20.0: DB の名前を押すと、最近開いた DB・同じフォルダの .sqlite3 から 1 回で選び直せる(dbswitch.js) #}
+    {# 0.20.0: DB の名前を押すと、接続先(設定ファイルの一覧。0.22.0)・同じフォルダの .sqlite3 から 1 回で選び直せる(dbswitch.js) #}
     <div class="slot slot--db">
       <span class="k">DB</span>
       <button class="v dbpick" id="rb-db" type="button" aria-haspopup="true" aria-expanded="false"
@@ -74,7 +74,7 @@
     <span class="running__track" aria-hidden="true"><i id="rb-run-fill"></i></span>
   </div>
   <div class="ribbon__end">
-    {% if ribbon.user %}<button class="btn" type="button" id="logout" title="アクセス権限マスタを読み直して、この PC の権限を確かめる">権限を確認</button>{% endif %}
+    {% if ribbon.user %}<button class="btn" type="button" id="logout" title="アクセス権限を読み直して、この PC の権限を確かめる">権限を確認</button>{% endif %}
     <button class="btn btn--danger" type="button" id="quit"><span class="gl">■</span>終了</button>
   </div>
 </header>

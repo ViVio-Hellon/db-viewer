@@ -9,7 +9,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-from dbviewer import auth, config, shared_db, simple_table, user_settings
+from dbviewer import auth, config, settings_file, shared_db, simple_table, user_settings
 from tests._fixture_db import fresh_db_path
 from tests._web import TOKEN, make_client
 
@@ -82,53 +82,68 @@ class PlainDbTest(_Case):
             rows.append(c)
         return self.post("/api/easy/columns", table=table, rows=rows)
 
-    def test_settings_outside_the_db(self):
-        """0.21.0: かんたん設定の保存先をフォルダにすると、DB ファイルには書かず <DB 名>_かんたん設定.sqlite3 に書く。"""
-        self.addCleanup(user_settings.save, config.KEY_EASY_DIR, "")
+    def test_settings_file_holds_everything(self):
+        """0.22.0: 権限・かんたん設定・接続先 は、決めたファイル名の設定ファイルに(無ければ作る)。DB には書かない。"""
+        self.addCleanup(user_settings.save, config.KEY_SETTINGS_FILE, "")
         self.login()
-        self.assertEqual(self.save_cols("部品", 単価={"show": False}).status_code, 200)    # まず DB の中
-        self.assertIn(config.TOOL_SETTINGS_TABLE, self.tables())
-        st = self.ok("/api/easy/state", table="部品")
-        self.assertEqual(st["store"]["where"], "db")
-        # 決められないフォルダ
-        for bad, why in ((str(self.tmp / "無い"), "見つかりません"), (str(self.path), "フォルダを指定")):
-            r = self.post("/api/settings/save", easy_dir=bad)
-            self.assertEqual(r.status_code, 400)
-            self.assertIn(why, r.get_json()["error"]["message"])
-        self.assertEqual(simple_table.store_folder(), "")
-        # 共有フォルダのつもり
-        shared = self.tmp / "共有設定"
+        shared = self.tmp / "共有"
         shared.mkdir()
-        self.ok("/api/settings/save", easy_dir=f'"{shared}"')
-        st = self.ok("/api/easy/state", table="部品")
-        store = shared / "部品台帳_かんたん設定.sqlite3"
-        self.assertEqual((st["store"]["where"], st["store"]["path"], st["store"]["exists"]), ("folder", str(store), False))
-        shown = {c["name"]: c["show"] for c in st["columns"]}
-        self.assertFalse(shown["単価"])                                    # まだ外に無い → DB の中の設定を読む
-        before = self.q(f"SELECT 設定 FROM [{config.TOOL_SETTINGS_TABLE}]")
-        self.assertEqual(self.save_cols("部品", 単価={"show": True}, 名前={"show": False}).status_code, 200)
-        self.assertTrue(store.is_file())
-        self.assertEqual(self.q(f"SELECT 設定 FROM [{config.TOOL_SETTINGS_TABLE}]"), before)   # DB には書いていない
-        cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
-        self.assertEqual(cols, ["品番", "単価", "入荷日"])                         # 外の設定で一覧に出る
-        # 別の DB は別のファイル
-        (self.tmp / "ほか").mkdir()
-        other = plain_db(self.tmp / "ほか" / "設備台帳.sqlite3")
-        self.ok("/api/settings/open-db", path=str(other))
-        self.assertEqual(self.ok("/api/easy/state", table="部品")["store"]["path"],
-                         str(shared / "設備台帳_かんたん設定.sqlite3"))
-        # 読み取り専用の DB でも、外に保存できる
-        os.chmod(other, 0o444)
-        self.addCleanup(os.chmod, other, 0o644)
-        self.assertEqual(self.save_cols("仕入先", 電話={"print": False}).status_code, 200)
-        with closing(sqlite3.connect(other)) as c:
-            self.assertEqual(c.execute("SELECT name FROM sqlite_master WHERE name=?",
-                                       (config.TOOL_SETTINGS_TABLE,)).fetchall(), [])
-        # DB の中に戻すと、DB の中の設定(単価を隠した時のもの)
-        self.ok("/api/settings/open-db", path=str(self.path))
-        self.ok("/api/settings/save", easy_dir="")
+        first = shared / "梱包課の設定.sqlite3"
+        # 決められないもの
+        (shared / "メモ.sqlite3").write_text("これは sqlite ではない", encoding="utf-8")
+        for bad, why in ((str(self.tmp / "無い" / "x.sqlite3"), "フォルダが見つかりません"),
+                         (str(shared / "メモ.sqlite3"), "読めません")):
+            r = self.post("/api/easy/settings-file", path=bad)
+            self.assertEqual(r.status_code, 422, bad)
+            self.assertIn(why, r.get_json()["error"]["message"])
+        # 無ければ作る(3 つの表)
+        j = self.ok("/api/easy/settings-file", path=f'"{first}"')
+        self.assertTrue(j["created"])
+        self.assertEqual(settings_file.path(), first)
+        with closing(sqlite3.connect(first)) as c:
+            names = {n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            cols = [r[1] for r in c.execute("PRAGMA table_info(アクセス権限)")]
+        self.assertTrue({"接続先", "かんたん設定", "アクセス権限"} <= names)
+        self.assertEqual(cols, ["管理番号", "ログインID", "PC名", "権限", "有効", "備考"])
+        self.assertEqual(self.ok("/api/easy/rights")["file"]["path"], str(first))
+        # かんたん設定は設定ファイルに(DB には書かない)
+        self.assertEqual(self.save_cols("部品", 単価={"show": False}).status_code, 200)
+        self.assertNotIn(config.TOOL_SETTINGS_TABLE, self.tables())
         cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
         self.assertEqual(cols, ["品番", "名前", "入荷日"])
+        # 拡張子が無ければ .sqlite3。別の設定ファイルにすると、そのファイルの設定(まだ無いので既定)
+        j = self.ok("/api/easy/settings-file", path=str(shared / "別の設定"))
+        self.assertEqual(settings_file.path(), shared / "別の設定.sqlite3")
+        cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
+        self.assertEqual(cols, ["品番", "名前", "単価", "入荷日"])
+        # 戻せば元の設定
+        self.ok("/api/easy/settings-file", path=str(first))
+        cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
+        self.assertEqual(cols, ["品番", "名前", "入荷日"])
+        # フォルダだけなら DBビューア設定.sqlite3
+        self.ok("/api/easy/settings-file", path=str(shared))
+        self.assertEqual(settings_file.path(), shared / settings_file.DEFAULT_NAME)
+        # 0.21.0 の保存先(同じフォルダの <DB 名>_かんたん設定.sqlite3)も読む
+        with closing(sqlite3.connect(shared / "部品台帳_かんたん設定.sqlite3")) as c:
+            c.execute(f"CREATE TABLE {config.TOOL_SETTINGS_TABLE} (表 TEXT PRIMARY KEY, 設定 TEXT, 更新者 TEXT, 更新日時 TEXT)")
+            c.execute(f"INSERT INTO {config.TOOL_SETTINGS_TABLE} VALUES ('部品', ?, '', '')",
+                      ('{"columns": {"名前": {"show": false}}}',))
+            c.commit()
+        cols = [c["name"] for c in self.ok("/api/list/data", table="部品")["columns"]]
+        self.assertEqual(cols, ["品番", "単価", "入荷日"])
+        # 閲覧のみの人は設定ファイルを替えられない(空のファイルに替えて 編集可 になれないように)。鍵があれば替えられる
+        self.ok("/api/easy/settings-file", path=str(first))
+        with closing(sqlite3.connect(first)) as c:
+            c.execute("INSERT INTO アクセス権限 (ログインID, PC名, 権限, 有効) VALUES ('だれか', '', '編集可', 1)")
+            c.commit()
+        self.assertEqual(self.login()["label"], "閲覧のみ")
+        r = self.post("/api/easy/settings-file", path=str(shared / "抜け道.sqlite3"))
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse((shared / "抜け道.sqlite3").exists())
+        self.ok("/api/easy/access/unlock", password="nisk")
+        self.addCleanup(self.post, "/api/easy/access/unlock", lock=True)
+        self.ok("/api/easy/settings-file", path="")                            # この PC の既定に戻す
+        self.assertEqual(settings_file.path(), settings_file.default_path())
 
     def test_open_and_edit_any_table_without_settings(self):
         j = self.login()
@@ -177,7 +192,10 @@ class PlainDbTest(_Case):
         r = self.save_cols("部品", 品番={"print": False}, 名前={"input": "combo"},
                            単価={"input": "spin", "step": "0.5"}, 入荷日={"input": "calendar", "show": True})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        self.assertIn(config.TOOL_SETTINGS_TABLE, self.tables())               # DB の中の隠した表に覚える
+        self.assertNotIn(config.TOOL_SETTINGS_TABLE, self.tables())            # 0.22.0: DB には書かない
+        with closing(sqlite3.connect(settings_file.path())) as c:              # 設定ファイルに覚える
+            self.assertEqual(c.execute("SELECT 表 FROM かんたん設定 WHERE DB = ?",
+                                       (settings_file.db_key(self.path),)).fetchall(), [("部品",)])
         d = self.ok("/api/list/data", table="部品")
         self.assertNotIn(config.TOOL_SETTINGS_TABLE, [t["name"] for t in d["tables"]])
         spec = d["edit"]["columns"]
@@ -387,8 +405,8 @@ class ClickActionTest(_Case):
         self.assertEqual(self.ok("/api/list/data", table="仕入先")["actions"], {})   # 決めていない表は空
 
     def test_old_url_setting_reads_as_open(self):
-        with closing(sqlite3.connect(self.path)) as c:
-            simple_table._ensure(c)
+        with closing(sqlite3.connect(self.path)) as c:                     # 0.20.0 までの DB の中の設定も読む
+            c.execute(f"CREATE TABLE {config.TOOL_SETTINGS_TABLE} (表 TEXT PRIMARY KEY, 設定 TEXT, 更新者 TEXT, 更新日時 TEXT)")
             c.execute(f"INSERT INTO {config.TOOL_SETTINGS_TABLE} VALUES (?, ?, '', '')",
                       ("部品", '{"columns": {"名前": {"click": "url", "url": "https://x.example/{値}"}}}'))
             c.commit()

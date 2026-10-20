@@ -11,7 +11,7 @@ python-web-tools(梱包資材総合ツール)の `app/__init__.py` を複製し�
 - 静的ファイルの URL への版付与とキャッシュ方針
 
 【DBビューアの権限】
-誰が何をできるかは 梱包資材マスタの「アクセス権限」が決める(編集可 / 閲覧のみ。0.16.0)
+誰が何をできるかは 設定ファイルの「アクセス権限」が決める(編集可 / 閲覧のみ。0.16.0 / 0.22.0)
 (`dbviewer/auth.py`)。ログインは Phase 4 で `before_request` に足す。
 """
 from __future__ import annotations
@@ -260,7 +260,7 @@ LOGIN_EXEMPT_PATHS = frozenset({"/", "/login", "/api/login", "/api/logout", "/ap
 
 def _login_required():
     """画面を開けば、この PC のログイン ID・PC 名で自動で入る(0.16.0。パスワードは無い)。
-    編集可 / 閲覧のみ は 梱包資材マスタの「アクセス権限」が決める(`access_rights`)。"""
+    編集可 / 閲覧のみ は 設定ファイルの「アクセス権限」が決める(`access_rights`)。"""
     from dbviewer import auth
 
     path = request.path

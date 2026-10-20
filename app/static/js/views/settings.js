@@ -80,9 +80,8 @@ function showReal(node, text, prefix = "→ ") {
 function render(state) {
   LEVEL_LABEL = state.level_label || LEVEL_LABEL;
   el.statusGrid.replaceChildren(...state.sections.map(sectionCard));
-  el.dbPathText.value = state.db_path_text || "";
   // 相対で入れたときだけ、実際に開く場所を出す
-  showReal(el.dbPath, state.db_path && state.db_path !== state.db_path_text ? state.db_path : "");
+  showReal(el.dbPath, state.db_path || "");
   el.refDir.value = state.ref_dir;
   el.exportDir.value = state.export_dir;
   showReal(el.refDirReal, state.ref_dir_real);
@@ -98,7 +97,7 @@ function render(state) {
   el.accdbTarget.value = state.accdb_target || "";
   showTargetDefault();
   loadDbFiles();
-  dbswitch.renderRecent(el.dbRecent);
+  dbswitch.renderList(el.dbRecent, { select: el.dbSelect, addBox: el.dbAddBox, where: el.dbListWhere });
   logTab.render(state.log);
   if (el.settingsTabs) tabs.setBadges(el.settingsTabs, state.tab_badges);
 }
@@ -162,8 +161,10 @@ function startBrowser() {
   for (const button of document.querySelectorAll("[data-browse]")) {
     button.addEventListener("click", () => {
       browseTarget = document.getElementById(button.dataset.browse);
-      browseFile = button.dataset.browseFile === "1" || button.dataset.browse === "accdbSource";
-      browser.pick.hidden = browseFile;
+      // data-browse-file="either": ファイルを押しても、「このフォルダを選ぶ」でもよい(設定ファイル。0.22.0)
+      const either = button.dataset.browseFile === "either";
+      browseFile = either || button.dataset.browseFile === "1" || button.dataset.browse === "accdbSource";
+      browser.pick.hidden = browseFile && !either;
       const label = document.querySelector(`label[for="${button.dataset.browse}"]`);
       browser.for.textContent = label ? label.textContent : "";
       browser.dialog.showModal();
@@ -527,7 +528,7 @@ function startBring() {
 }
 
 export function start(state) {
-  for (const id of ["statusGrid", "dbPathText", "dbPath", "dbRecent",
+  for (const id of ["statusGrid", "dbPathText", "dbPath", "dbRecent", "dbSelect", "dbAddBox", "dbListWhere",
                     "refDir", "refDirReal", "exportDir", "exportDirReal", "exportDirState", "refDirState", "exportEncoding",
                     "saveExport", "openExport", "saveRef",
                     "accessLog", "reloginMinutes", "accdbSource", "accdbTarget", "accdbTargetDefault", "openConverted",

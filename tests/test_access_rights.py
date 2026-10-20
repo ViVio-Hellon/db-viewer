@@ -1,7 +1,8 @@
-"""権限(0.16.0): 梱包資材マスタの「アクセス権限」で 編集可 / 閲覧のみ
+"""権限(0.16.0。0.22.0 から設定ファイルの「アクセス権限」)で 編集可 / 閲覧のみ
 
-読み方は all-tools・python-web-tools と同じ(空欄は問わない・両方空は効かない・大文字小文字を区別しない・
-有効 0 は効かない・当てはまる行の和・当てはまらなければ 閲覧のみ・届かなければ前回の結果)。
+表は 管理番号・ログインID・PC名・権限・有効・備考。権限 = 編集可(all-tools の dbviewer:edit も読む)。
+空欄は問わない・両方空は効かない・大文字小文字を区別しない・有効 0 は効かない・当てはまる行の和・
+当てはまらなければ 閲覧のみ・表に行が無ければ誰でも 編集可・届かなければ前回の結果。
 """
 from __future__ import annotations
 
@@ -13,21 +14,22 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-from dbviewer import access_rights, auth, config, user_settings
-
-DDL = ('CREATE TABLE "アクセス権限" ("管理番号" INTEGER PRIMARY KEY, "ログインID" TEXT DEFAULT \'\','
-       ' "PC名" TEXT DEFAULT \'\', "権限" TEXT NOT NULL, "有効" INTEGER DEFAULT 1, "備考" TEXT DEFAULT \'\')')
+from dbviewer import access_rights, auth, config, settings_file, user_settings
 
 
 def access_db(path: Path, rows) -> Path:
-    """梱包資材マスタ(実物と同じ「アクセス権限」の定義)。rows = (ログインID, PC名, 権限, 有効)。作り直す。"""
-    if path.exists():
-        path.unlink()
+    """設定ファイルの「アクセス権限」を rows にする(無ければ作る)。rows = (ログインID, PC名, 権限, 有効)。"""
+    settings_file.ensure(path)
     with closing(sqlite3.connect(path)) as c:
-        c.execute(DDL)
-        c.execute("CREATE TABLE パレット (管理番号 INTEGER)")                 # ほかの表もある
+        c.execute('DELETE FROM "アクセス権限"')
         c.executemany('INSERT INTO "アクセス権限" (ログインID, PC名, 権限, 有効) VALUES (?, ?, ?, ?)', rows)
         c.commit()
+    return path
+
+
+def use_settings_file(case: unittest.TestCase, path: Path) -> Path:
+    user_settings.save(config.KEY_SETTINGS_FILE, str(path))
+    case.addCleanup(user_settings.save, config.KEY_SETTINGS_FILE, "")
     return path
 
 
@@ -37,17 +39,19 @@ class DecideTest(unittest.TestCase):
 
     def test_rules(self):
         d = lambda rows, who="taro", pc="PC-1": access_rights.decide(self.rows(*rows), who, pc)[0]
-        self.assertTrue(d([("taro", "PC-1", "dbviewer:edit", 1)]))
+        self.assertTrue(d([("taro", "PC-1", "編集可", 1)]))
+        self.assertTrue(d([("taro", "PC-1", "dbviewer:edit", 1)]))                # all-tools の書き方も読む
         self.assertTrue(d([("TARO", "pc-1", "DBVIEWER:EDIT", 1)]))                 # 大文字小文字
-        self.assertTrue(d([("ｔａｒｏ", "", "dbviewer:edit", 1)]))                  # 全角も・PC は問わない
-        self.assertTrue(d([("", "PC-1", "dbviewer:edit", None)]))                 # ID は問わない・有効の空欄は有効
-        self.assertFalse(d([("", "", "dbviewer:edit", 1)]))                       # 両方空は誰にも効かない
-        self.assertFalse(d([("taro", "PC-2", "dbviewer:edit", 1)]))               # PC が違う
-        self.assertFalse(d([("jiro", "PC-1", "dbviewer:edit", 1)]))
+        self.assertTrue(d([("ｔａｒｏ", "", "編集可", 1)]))                        # 全角も・PC は問わない
+        self.assertTrue(d([("", "PC-1", "編集可", None)]))                        # ID は問わない・有効の空欄は有効
+        self.assertFalse(d([("", "", "編集可", 1)]))                              # 両方空は誰にも効かない
+        self.assertFalse(d([("taro", "PC-2", "編集可", 1)]))                      # PC が違う
+        self.assertFalse(d([("jiro", "PC-1", "編集可", 1)]))
+        self.assertFalse(d([("taro", "PC-1", "閲覧のみ", 1)]))
         for off in (0, "0", "false", "×", "無効"):
-            self.assertFalse(d([("taro", "PC-1", "dbviewer:edit", off)]), off)
-        self.assertFalse(d([("taro", "PC-1", "mode:fullaccess", 1), ("taro", "PC-1", "作業長", 1)]))  # ほかのツールの権限
-        self.assertTrue(d([("taro", "PC-1", "mode:field", 1), ("taro", "", "dbviewer:edit", 1)]))     # 和
+            self.assertFalse(d([("taro", "PC-1", "編集可", off)]), off)
+        self.assertFalse(d([("taro", "PC-1", "mode:fullaccess", 1), ("taro", "PC-1", "作業長", 1)]))  # ほかの値
+        self.assertTrue(d([("taro", "PC-1", "閲覧のみ", 1), ("taro", "", "編集可", 1)]))              # 和
         self.assertFalse(d([]))                                                   # 行が無ければ 閲覧のみ
 
 
@@ -59,55 +63,62 @@ class EvaluateTest(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"DBVIEWER_LOCAL_DIR": str(self.tmp / "local")})
         env.start()
         self.addCleanup(env.stop)
-        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
-        self.master = access_db(self.tmp / "梱包資材マスタ.sqlite3", [
-            ("taro", "PC-1", "dbviewer:edit", 1), ("hanako", "", "mode:field", 1), ("", "PC-9", "dbviewer:edit", 0)])
+        self.master = use_settings_file(self, access_db(self.tmp / "設定.sqlite3", [
+            ("taro", "PC-1", "編集可", 1), ("hanako", "", "閲覧のみ", 1), ("", "PC-9", "編集可", 0)]))
 
-    def test_unset_master_lets_everyone_edit(self):
-        user_settings.save(config.KEY_ACCESS_DB, "")
-        with mock.patch.object(access_rights, "master_path", return_value=None):
-            d = access_rights.evaluate("anyone", "PC-X")
+    def test_empty_table_lets_everyone_edit(self):
+        access_db(self.master, [])
+        d = access_rights.evaluate("anyone", "PC-X")
         self.assertEqual((d.edit, d.source, d.label), (True, "unset", "編集可"))
+        self.assertIn("まだ行が無い", d.reason)
 
-    def test_master_decides(self):
-        user_settings.save(config.KEY_ACCESS_DB, str(self.master))
+    def test_settings_file_decides(self):
         d = access_rights.evaluate("taro", "PC-1")
         self.assertEqual((d.edit, d.source, d.label), (True, "master", "編集可"))
-        self.assertEqual([r["権限"] for r in d.matched], ["dbviewer:edit"])
+        self.assertEqual([r["権限"] for r in d.matched], ["編集可"])
         d = access_rights.evaluate("hanako", "PC-1")
         self.assertEqual((d.edit, d.label), (False, "閲覧のみ"))
-        self.assertIn("dbviewer:edit の行がありません", d.reason)
+        self.assertIn("編集可 の行がありません", d.reason)
         o = access_rights.overview()
-        self.assertEqual((o["found"], o["rows"], len(o["edit_rows"])), (True, 3, 2))   # 誰が編集可か(無効の行も見せる)
+        self.assertEqual((o["found"], o["rows"], len(o["edit_rows"]), o["path"]), (True, 3, 2, str(self.master)))
+
+    def test_missing_settings_file_is_created(self):
+        fresh = use_settings_file(self, self.tmp / "新しい" / "設定.sqlite3")
+        d = access_rights.evaluate("taro", "PC-1")                            # 無ければ作る → 行が無い → 編集可
+        self.assertTrue(fresh.is_file())
+        self.assertEqual((d.edit, d.source), (True, "unset"))
+
+    def test_old_master_rows_carried_over(self):
+        """上げたとき: 梱包資材マスタの dbviewer:edit の行を 編集可 として写す(ほかのツールの行は写さない)。"""
+        old = self.tmp / "梱包資材マスタ.sqlite3"
+        with closing(sqlite3.connect(old)) as c:
+            c.execute('CREATE TABLE "アクセス権限" ("管理番号" INTEGER PRIMARY KEY, "ログインID" TEXT, "PC名" TEXT,'
+                      ' "権限" TEXT, "有効" INTEGER, "備考" TEXT)')
+            c.executemany('INSERT INTO "アクセス権限" (ログインID, PC名, 権限, 有効) VALUES (?, ?, ?, ?)',
+                          [("taro", "", "dbviewer:edit", 1), ("hanako", "", "mode:field", 1), ("", "PC-9", "dbviewer:edit", 0)])
+            c.commit()
+        user_settings.save(config.KEY_ACCESS_DB, str(old))
+        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
+        fresh = use_settings_file(self, self.tmp / "上げた" / "設定.sqlite3")
+        self.assertTrue(access_rights.evaluate("taro", "PC-1").edit)
+        d = access_rights.evaluate("hanako", "PC-1")
+        self.assertEqual((d.edit, d.source), (False, "master"))                # 誰でも 編集可 にはならない
+        with closing(sqlite3.connect(fresh)) as c:
+            rows = c.execute("SELECT ログインID, PC名, 権限, 有効 FROM アクセス権限 ORDER BY 管理番号").fetchall()
+        self.assertEqual(rows, [("taro", "", "編集可", 1), ("", "PC-9", "編集可", 0)])
 
     def test_unreachable_uses_last_result_then_view_only(self):
-        user_settings.save(config.KEY_ACCESS_DB, str(self.master))
         self.assertTrue(access_rights.evaluate("taro", "PC-1").edit)          # 読めた結果を覚える
-        self.master.rename(self.tmp / "退避.sqlite3")                          # 共有フォルダに届かない
-        d = access_rights.evaluate("taro", "PC-1")
-        self.assertEqual((d.edit, d.source), (True, "cache"))
-        self.assertIn("前回", d.reason)
-        d = access_rights.evaluate("jiro", "PC-2")                            # 前回の結果が無い人は 閲覧のみ
-        self.assertEqual((d.edit, d.source), (False, "unreachable"))
-
-    def test_same_folder_as_db_is_found(self):
-        user_settings.save(config.KEY_ACCESS_DB, "")
-        from dbviewer import shared_db
-        with mock.patch.object(shared_db, "db_path", return_value=self.tmp / "作業標準管理システム.sqlite3"):
-            self.assertEqual(access_rights.master_path(), self.master)
-            self.assertTrue(access_rights.overview()["auto"])
-
-    def test_check_path(self):
-        self.assertEqual(access_rights.check_path(str(self.master)), "")
-        self.assertIn(".sqlite3", access_rights.check_path(str(self.tmp / "a.xlsx")))
-        other = self.tmp / "違う.sqlite3"
-        with closing(sqlite3.connect(other)) as c:
-            c.execute("CREATE TABLE x (a)")
-        self.assertIn("アクセス権限", access_rights.check_path(str(other)))
+        with mock.patch.object(access_rights, "read_rows", side_effect=OSError("共有フォルダに届きません")):
+            d = access_rights.evaluate("taro", "PC-1")
+            self.assertEqual((d.edit, d.source), (True, "cache"))
+            self.assertIn("前回", d.reason)
+            d = access_rights.evaluate("jiro", "PC-2")                        # 前回の結果が無い人は 閲覧のみ
+            self.assertEqual((d.edit, d.source), (False, "unreachable"))
 
 
 class RightsApiTest(unittest.TestCase):
-    """かんたん設定 → 権限: アクセス権限マスタの場所を決める。変えられるのは 編集可 か、まだ決めていない・読めないとき。"""
+    """かんたん設定 → 権限: 設定ファイルの行で 編集可 / 閲覧のみ。閲覧のみは直せない・設定ファイルも替えられない。"""
 
     def setUp(self):
         from tests.test_easy_setup import _Case, plain_db
@@ -116,22 +127,18 @@ class RightsApiTest(unittest.TestCase):
         self.addCleanup(case.doCleanups)
         self.case = case
         case.use(plain_db(case.tmp / "部品台帳.sqlite3"))
-        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
-        self.master = access_db(case.tmp / "kms.sqlite3",
-                                [("tester", "PC-TEST", "mode:field", 1)])
+        self.master = use_settings_file(self, access_db(case.tmp / "設定.sqlite3", []))
 
-    def test_set_master_then_view_only_cannot_change_it(self):
+    def test_rows_decide_then_view_only_cannot_change(self):
         c = self.case
         j = c.ok("/api/easy/rights")
         self.assertEqual((j["me"]["label"], j["me"]["source"], j["can_change"]), ("編集可", "unset", True))
-        self.assertEqual(c.post("/api/easy/rights", path=str(c.tmp / "無い.sqlite3"), save=True).status_code, 422)
-        c.ok("/api/easy/rights", path=str(self.master), save=True)
-        s = c.ok("/api/login")
-        self.assertEqual(s["label"], "閲覧のみ")                                     # dbviewer:edit の行が無い
+        self.assertEqual(j["file"]["path"], str(self.master))
+        access_db(self.master, [("tester", "PC-TEST", "閲覧のみ", 1)])
+        self.assertEqual(c.ok("/api/login")["label"], "閲覧のみ")                  # 編集可 の行が無い
         j = c.ok("/api/easy/rights")
         self.assertEqual((j["me"]["edit"], j["can_change"], j["master"]["found"]), (False, False, True))
-        r = c.post("/api/easy/rights", path="", save=True)
-        self.assertEqual(r.status_code, 403)                                        # 閲覧のみは場所を変えられない
+        self.assertEqual(c.post("/api/easy/settings-file", path="").status_code, 403)
         # 閲覧のみ: かんたん設定の保存・列の追加・行の追加は断る
         st = c.ok("/api/easy/state", table="部品")
         self.assertFalse(st["can_write"])
@@ -141,7 +148,7 @@ class RightsApiTest(unittest.TestCase):
         d = c.ok("/api/list/data", table="部品")
         self.assertEqual((d["count"], d["edit"]["allowed"], d["can"]["add"]), (3, False, False))
         # 行を足してもらう → 読み直すと 編集可
-        access_db(self.master, [("tester", "PC-TEST", "dbviewer:edit", 1)])
+        access_db(self.master, [("tester", "PC-TEST", "編集可", 1)])
         self.assertEqual(c.ok("/api/login")["label"], "編集可")
         self.assertTrue(c.ok("/api/easy/state", table="部品")["can_write"])
 
@@ -200,11 +207,9 @@ class AccessEditApiTest(unittest.TestCase):
         admin_password.session.lock()
         self.addCleanup(admin_password.session.lock)
         self.addCleanup(access_rights.forget_backups)
-        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
         user_settings.save(config.KEY_ADMIN_PASSWORD, None)
-        self.master = access_db(case.tmp / "梱包資材マスタ.sqlite3",
-                                [("tester", "PC-TEST", "mode:field", 1), ("other", "", "作業長", 1)])
-        user_settings.save(config.KEY_ACCESS_DB, str(self.master))
+        self.master = use_settings_file(self, access_db(case.tmp / "設定.sqlite3",
+                                                        [("tester", "PC-TEST", "閲覧のみ", 1), ("other", "", "編集可", 1)]))
         self.assertEqual(case.ok("/api/login")["label"], "閲覧のみ")
 
     def rows(self):
@@ -215,8 +220,9 @@ class AccessEditApiTest(unittest.TestCase):
         c = self.c
         j = c.ok("/api/easy/access/rows")
         self.assertEqual((len(j["rows"]), j["admin"]), (2, False))              # 見るだけなら鍵は要らない
-        self.assertEqual(j["permissions"][0], "dbviewer:edit")
-        new = {"ログインID": "tester", "PC名": "PC-TEST", "権限": "dbviewer:edit", "有効": 1, "備考": "試験"}
+        self.assertEqual(j["permissions"][:2], ["編集可", "閲覧のみ"])
+        self.assertEqual(j["columns"], ["管理番号", "ログインID", "PC名", "権限", "有効", "備考"])
+        new = {"ログインID": "tester", "PC名": "PC-TEST", "権限": "編集可", "有効": 1, "備考": "試験"}
         self.assertEqual(c.post("/api/easy/access/save", row=new).status_code, 403)   # 鍵が要る
         r = c.post("/api/easy/access/unlock", password="違う")
         self.assertEqual((r.status_code, r.get_json()["error"]["code"]), (403, "bad_password"))
@@ -229,7 +235,7 @@ class AccessEditApiTest(unittest.TestCase):
         r = c.ok("/api/easy/access/save", row=new)
         self.assertEqual(r["label"], "編集可")
         self.assertTrue(Path(r["backup"]).is_file())                             # 書く前に控え
-        self.assertEqual(self.rows()[-1], ("tester", "PC-TEST", "dbviewer:edit", 1, "試験"))
+        self.assertEqual(self.rows()[-1], ("tester", "PC-TEST", "編集可", 1, "試験"))
         no = r["no"]
         seen = {"管理番号": no, **new}
         # 直す(無効に)→ 閲覧のみ。2 回目は控えを取らない
@@ -248,11 +254,16 @@ class AccessEditApiTest(unittest.TestCase):
         c.ok("/api/easy/access/unlock", lock=True)
         self.assertEqual(c.post("/api/easy/access/save", row=new).status_code, 403)
 
-    def test_unlocked_can_change_master_path(self):
+    def test_unlocked_can_change_settings_file(self):
         c = self.c
-        self.assertEqual(c.post("/api/easy/rights", path="", save=True).status_code, 403)   # 閲覧のみ
+        other = c.tmp / "別の設定.sqlite3"
+        self.assertEqual(c.post("/api/easy/settings-file", path=str(other)).status_code, 403)   # 閲覧のみ
+        self.assertFalse(other.exists())
         c.ok("/api/easy/access/unlock", password="nisk")
-        c.ok("/api/easy/rights", path=str(self.master), save=True)               # 鍵が開いていれば変えられる
+        j = c.ok("/api/easy/settings-file", path=str(other))                    # 鍵が開いていれば替えられる
+        self.assertTrue(j["created"])
+        self.assertIn("編集可", j["message"])                                    # 新しいファイルは行が無い → 誰でも
+        c.ok("/api/easy/settings-file", path=str(self.master))
 
     def test_passwords_never_reach_the_log(self):
         import json as _json

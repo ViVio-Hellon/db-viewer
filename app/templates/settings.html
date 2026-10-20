@@ -101,20 +101,28 @@
           <section class="card">
             <header>
               <i class="ib ib--sm" aria-hidden="true">保</i>
-              <h3>かんたん設定の保存先</h3>
-              <span class="eyebrow">この PC の設定</span>
+              <h3>設定ファイル(権限・かんたん設定・接続先)</h3>
+              <span class="eyebrow">無ければ作ります</span>
             </header>
             <div class="pad">
-              <p class="easydb" id="easyStore"></p>
-              <p class="why">空なら <b>DB ファイルの中</b>(見えない表「ツールの設定」)に保存します。フォルダを決めると、
-                <b>DB ファイルには何も書かず</b>、そのフォルダに <code>&lt;DB の名前&gt;_かんたん設定.sqlite3</code> を作って保存します。
-                共有フォルダにすれば、同じフォルダを決めた PC どうしで同じ設定になります。まだそこに無い表は、DB の中の設定を読みます。</p>
+              <p class="easydb" id="sfNow"></p>
+              <p class="why" id="sfCounts" style="margin-top:0"></p>
+              <p class="why"><b>権限</b>(アクセス権限)・<b>かんたん設定</b>(列ごとの 表示・入力・印刷・クリック)・<b>接続先</b>(DB の一覧)を、
+                この 1 つの .sqlite3 に保存します。DB ファイルには何も書きません。<b>ファイル名まで</b>入れてください
+                (フォルダだけなら <code>DBビューア設定.sqlite3</code>)。<b>無ければ作ります。</b>
+                共有フォルダのファイルにすれば、同じファイルを決めた PC どうしで同じ設定になります。
+                替えるには 編集可 の権限か、下の管理者パスワードの鍵が要ります。</p>
               <div class="paths">
-                {{ pathrow("easyDir", "保存先フォルダ", "", "") }}
+                <label for="sfText">設定ファイル</label>
+                <span class="pathrow">
+                  <input class="input" id="sfText" spellcheck="false" autocomplete="off"
+                         placeholder="例: \\server\共有\DBビューア\DBビューア設定.sqlite3(空 = この PC の既定の場所)">
+                  <button class="btn btn--find" type="button" data-browse="sfText" data-browse-file="either"><span class="gl">▸</span>参照…</button>
+                </span>
               </div>
               <div class="btn-row" style="margin-top:8px">
-                <button class="btn btn--commit" type="button" id="easyDirSave">保存先を保存</button>
-                <button class="btn btn--find" type="button" id="easyDirClear">DB の中に戻す</button>
+                <button class="btn btn--commit" type="button" id="sfSave">この設定ファイルにする</button>
+                <button class="btn btn--find" type="button" id="sfDefault">この PC の既定に戻す</button>
               </div>
             </div>
           </section>
@@ -164,24 +172,20 @@
             <header>
               <i class="ib ib--sm" aria-hidden="true">権</i>
               <h3>権限(編集可 / 閲覧のみ)</h3>
-              <span class="eyebrow">梱包資材マスタの「アクセス権限」</span>
+              <span class="eyebrow">設定ファイルの「アクセス権限」</span>
             </header>
             <div class="pad">
-              <p class="why">パスワードは使いません。Windows の<b>ログイン ID</b>と<b>PC 名</b>で、梱包資材マスタ
-                (<code>梱包資材マスタ.sqlite3</code>)の「アクセス権限」を引き、権限に <code>dbviewer:edit</code> の行があれば
-                <b>編集可</b>、無ければ<b>閲覧のみ</b>です。空欄は「問わない」、有効が 0 の行は効きません(all-tools と同じ読み方)。</p>
+              <p class="why">パスワードは使いません。Windows の<b>ログイン ID</b>と<b>PC 名</b>で、設定ファイルの「アクセス権限」
+                (管理番号・ログインID・PC名・権限・有効・備考)を引き、権限が <b>編集可</b> の行が当てはまれば<b>編集可</b>、
+                無ければ<b>閲覧のみ</b>です。空欄は「問わない」、有効が 0 の行は効きません。
+                <b>表に行が 1 つも無いうちは誰でも 編集可</b>です(行を足すと効き始めます)。</p>
               <div class="optgrid">
                 <span>この PC</span><b id="rightsWho"></b>
                 <span>いまの権限</span><b id="rightsNow"></b>
                 <span>理由</span><span id="rightsWhy" class="why" style="margin:0"></span>
-                <label for="rightsPath">アクセス権限マスタ</label>
-                <span class="easyrow" style="margin:0">
-                  <input class="input" id="rightsPath" spellcheck="false" style="width:30em; max-width:100%"
-                         placeholder="空 = 見ている DB と同じフォルダの 梱包資材マスタ.sqlite3">
-                  <button class="btn btn--commit" type="button" id="rightsSave">保存</button>
-                  <button class="btn btn--find" type="button" id="rightsRecheck">読み直す</button>
-                </span>
-                <span>読んでいる所</span><span id="rightsUsing" class="why" style="margin:0"></span>
+                <span>読んでいる所</span>
+                <span class="easyrow" style="margin:0"><span id="rightsUsing" class="why" style="margin:0"></span>
+                  <button class="btn btn--find" type="button" id="rightsRecheck">読み直す</button></span>
               </div>
               <p class="why" id="rightsHint"></p>
               <div class="tablewrap" id="rightsRowsWrap" hidden>
@@ -204,7 +208,6 @@
                   <button class="btn btn--commit" type="button" id="accNew">＋ 行を足す</button>
                   <button class="btn btn--find" type="button" id="accLock">鍵を掛ける</button>
                 </div>
-                <label class="checkline" style="margin-top:8px"><input type="checkbox" id="accOnlyMine" checked> DBビューアの行(dbviewer:)だけ出す</label>
                 <form class="accedit__form" id="accForm" hidden autocomplete="off">
                   <div class="optgrid">
                     <span>管理番号</span><b id="accNo">(新しい行)</b>
@@ -215,8 +218,7 @@
                     <span class="easyrow" style="margin:0"><input class="input" id="accPc" spellcheck="false" style="width:16em" placeholder="空 = 問わない">
                       <button class="btn btn--find" type="button" id="accMyPc">この PC</button></span>
                     <label for="accPerm">権限</label>
-                    <span><input class="input" id="accPerm" list="accPerms" spellcheck="false" style="width:16em" value="dbviewer:edit">
-                      <datalist id="accPerms"></datalist></span>
+                    <span><select class="input" id="accPerm" style="width:16em"></select></span>
                     <span>有効</span><label class="checkline" style="margin:0"><input type="checkbox" id="accOn" checked> 効かせる</label>
                     <label for="accNote">備考</label>
                     <input class="input" id="accNote" style="width:24em; max-width:100%">
@@ -254,34 +256,42 @@
           <header>
             <i class="ib ib--sm" aria-hidden="true">接</i>
             <h3>接続先</h3>
-            <span class="eyebrow">見る DB ファイル 1 つ</span>
+            <span class="eyebrow">設定ファイルの一覧から選ぶ</span>
           </header>
           <div class="pad">
-            <p class="why" style="margin-top:0">見たい .sqlite3 のファイルを<b>フルパスで 1 つ</b>指定します(共有フォルダでも手元でも同じ)。
-              「参照…」で選ぶか、下の「このフォルダのファイル」の「これを開く」でも入ります。</p>
             <div class="paths">
-              <label for="dbPathText">DB ファイル</label>
+              <label for="dbSelect">見る DB</label>
               <span class="pathrow">
-                <input class="input" id="dbPathText" value="{{ view.db_path_text }}" spellcheck="false" autocomplete="off"
-                       placeholder="例: \\server\共有\作業標準DB\作業標準管理システム.sqlite3">
-                <button class="btn btn--find" type="button" data-browse="dbPathText" data-browse-file="1"><span class="gl">▸</span>参照…</button>
+                <select class="input" id="dbSelect"></select>
               </span>
-              <small class="why real" id="dbPath" {% if not view.db_path or view.db_path == view.db_path_text %}hidden{% endif %}>→ {{ view.db_path }}</small>
+              <small class="why real" id="dbPath" {% if not view.db_path %}hidden{% endif %}>→ {{ view.db_path }}</small>
             </div>
-            <div class="btn-row" style="margin-top:8px">
-              <button class="btn btn--commit" type="button" id="saveSource">接続先を保存</button>
+            <p class="why">選ぶとすぐその DB に切り替わります(上の帯の DB の名前を押しても同じ一覧が出ます)。
+              一覧は設定ファイルの「接続先」です(かんたん設定 → 設定ファイル)。</p>
+            <div id="dbAddBox">
+              <h4 class="accedit__title">接続先を足す <small class="why" style="margin:0">編集可 の人だけ。足すとすぐ開きます</small></h4>
+              <div class="paths">
+                <label for="dbPathText">DB ファイル</label>
+                <span class="pathrow">
+                  <input class="input" id="dbPathText" spellcheck="false" autocomplete="off"
+                         placeholder="例: \\server\共有\作業標準DB\作業標準管理システム.sqlite3">
+                  <button class="btn btn--find" type="button" data-browse="dbPathText" data-browse-file="1"><span class="gl">▸</span>参照…</button>
+                </span>
+              </div>
+              <div class="btn-row" style="margin-top:8px">
+                <button class="btn btn--commit" type="button" id="saveSource">足して開く</button>
+              </div>
             </div>
           </div>
         </section>
         <section class="card" style="margin-top:12px">
           <header>
-            <i class="ib ib--sm" aria-hidden="true">近</i>
-            <h3>最近開いた DB</h3>
-            <span class="eyebrow">この PC で 10 個まで</span>
+            <i class="ib ib--sm" aria-hidden="true">覧</i>
+            <h3>接続先の一覧</h3>
+            <span class="eyebrow" id="dbListWhere"></span>
           </header>
           <div class="pad">
-            <p class="why" style="margin-top:0">押すとその DB に切り替わります。上の帯の DB の名前を押しても同じものが出ます。
-              × は一覧から外すだけで、ファイルは消しません。</p>
+            <p class="why" style="margin-top:0">押すとその DB に切り替わります。× は一覧から外すだけで、ファイルは消しません(編集可 の人だけ)。</p>
             <div class="dbmenu dbmenu--inline" id="dbRecent"></div>
           </div>
         </section>

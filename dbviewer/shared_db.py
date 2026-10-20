@@ -1,7 +1,6 @@
 """見る DB(.sqlite3)を開く。0.19.0 から接続先は「DB ファイル」1 つ(フルパス)だけ。"""
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
@@ -29,8 +28,21 @@ def configured() -> str:
     """
     text = user_settings.get(config.KEY_DB_PATH, None)
     if text is None:
-        text = _migrate_legacy()
+        text = _migrate_legacy() or _first_registered()
     return str(text or "").strip()
+
+
+def _first_registered() -> str:
+    """まだ DB を選んでいない PC: 設定ファイルの接続先のいちばん上(0.22.0)。"""
+    from . import settings_file
+    try:
+        first = next(iter(settings_file.dbs()), None)
+    except (sqlite3.Error, OSError):
+        return ""
+    if not first:
+        return ""
+    user_settings.save(config.KEY_DB_PATH, first["パス"])
+    return first["パス"]
 
 
 def _migrate_legacy() -> str:
@@ -49,48 +61,10 @@ def _migrate_legacy() -> str:
         folder = config.resolve_dir(data.get(config.KEY_SERVER_DIR, "") or prof.server_dir)
     path = str(folder / (data.get(config.KEY_DB_FILE, "") or prof.db_file))
     user_settings.save(config.KEY_DB_PATH, path)
-    remember(path)
     for k in keys:
         user_settings.delete(k)
     log.info("接続先を DB ファイル 1 つに移しました: %s", path)
     return path
-
-
-# ------------------------------------------------------------------
-# 最近開いた DB(0.20.0)。この PC で覚え、上の帯の「DB」から 1 回で選び直せるようにする
-# ------------------------------------------------------------------
-MAX_RECENT = 10
-
-
-def recent() -> list[str]:
-    """最近開いた DB ファイル(新しい順。設定に入れた文字のまま)。"""
-    value = user_settings.get(config.KEY_DB_RECENT, [])
-    if not isinstance(value, list):
-        return []
-    return [str(v).strip() for v in value if isinstance(v, str) and v.strip()]
-
-
-def same_file(a: str, b: str) -> bool:
-    """同じファイルを指しているか(Windows は大文字・小文字と / \\ の違いを見ない)。"""
-    norm = lambda t: os.path.normcase(os.path.normpath(str(config.resolve_dir(t))))   # noqa: E731
-    return norm(a) == norm(b)
-
-
-def remember(text: str) -> None:
-    """開いた DB を「最近」のいちばん上へ(同じものは 1 つにまとめる。MAX_RECENT まで)。"""
-    text = str(text or "").strip()
-    if not text:
-        return
-    keep = [t for t in recent() if not same_file(t, text)]
-    user_settings.save(config.KEY_DB_RECENT, [text] + keep[:MAX_RECENT - 1])
-
-
-def forget(text: str) -> bool:
-    """「最近」から外す。いま開いている DB は外さない(帯から消えると困る)。"""
-    if is_set() and same_file(text, configured()):
-        return False
-    user_settings.save(config.KEY_DB_RECENT, [t for t in recent() if not same_file(t, text)])
-    return True
 
 
 def is_set() -> bool:

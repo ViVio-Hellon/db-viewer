@@ -455,16 +455,16 @@ _TEXT_KEYS = {
 
 
 def _rights_check() -> "Check":
-    """直せる人(0.16.0): 梱包資材マスタの「アクセス権限」。"""
+    """直せる人: 設定ファイルの「アクセス権限」(0.22.0)。"""
     from .. import access_rights, auth
     s = auth.current()
     me = f"この PC は {s.label}" if s else ""
     o = access_rights.overview()
-    if not o["path"]:
-        return Check("直せる人", "誰でも(アクセス権限マスタを決めていない)", INFO,
-                     "かんたん設定 → 権限 で 梱包資材マスタ を決めると 編集可 / 閲覧のみ が効きます")
     if not o["found"]:
-        return Check("直せる人", "アクセス権限マスタを読めません", WARN, f"{o['path']}: {o['problem']} {me}")
+        return Check("直せる人", "設定ファイルのアクセス権限を読めません", WARN, f"{o['path']}: {o['problem']} {me}")
+    if not o["rows"]:
+        return Check("直せる人", "誰でも(アクセス権限の表に行が無い)", INFO,
+                     "かんたん設定 → 権限 で行を足すと 編集可 / 閲覧のみ が効きます")
     return Check("直せる人", f"{access_rights.EDIT} の行の人・PC({len(o['edit_rows'])} 行)", OK,
                  f"{o['path']} {me}")
 
@@ -474,11 +474,6 @@ def save(body: dict[str, Any]) -> SaveResult:
     message = "設定を保存しました。"
     if "db_path" in body:
         result = _save_db_path(str(body["db_path"] or ""))
-        if not result.ok:
-            return result
-        message = result.message
-    if "easy_dir" in body:
-        result = _save_easy_dir(str(body["easy_dir"] or ""))
         if not result.ok:
             return result
         message = result.message
@@ -523,26 +518,6 @@ def save(body: dict[str, Any]) -> SaveResult:
 MAX_LOG_KEEP_DAYS = 3650
 
 
-def _save_easy_dir(text: str) -> SaveResult:
-    """かんたん設定の保存先フォルダ(0.21.0)。**書けるのを確かめてから**保存する。空なら DB の中。"""
-    text = text.strip().strip('"')
-    if not text:
-        user_settings.save(config.KEY_EASY_DIR, "")
-        return SaveResult(True, "かんたん設定は DB の中に保存します(今までどおり)。")
-    folder = config.resolve_dir(text)
-    if folder.suffix.lower() in source_db.SUFFIXES or folder.is_file():
-        return SaveResult(False, f"ファイルではなく、フォルダを指定してください: {folder}", REFUSE_BAD_INPUT, "easy_dir")
-    if not folder.is_dir():
-        return SaveResult(False, f"フォルダが見つかりません: {folder}(共有フォルダならつながっているか確かめてください)",
-                          REFUSE_BAD_INPUT, "easy_dir")
-    why = logging_utils.probe_writable(folder)
-    if why:
-        return SaveResult(False, f"このフォルダに書き込めません: {folder}({why})", REFUSE_BAD_INPUT, "easy_dir")
-    user_settings.save(config.KEY_EASY_DIR, text)
-    return SaveResult(True, f"かんたん設定を {folder} に保存します(DB ファイルには書きません)。"
-                            "まだそこに無い表は、DB の中の設定を読みます。")
-
-
 def _save_db_path(text: str) -> SaveResult:
     """見る DB ファイル(フルパス)を決める。**開ける .sqlite3 のときだけ**保存する。空にすると「決めていない」。"""
     from .. import db_files
@@ -565,8 +540,17 @@ def _save_db_path(text: str) -> SaveResult:
     info = db_files.inspect_sqlite(path)
     if info["kind"] != db_files.KIND_OPEN:
         return SaveResult(False, f"{path.name} は開けません: {info['note']}", REFUSE_BAD_INPUT, "db_path")
+    # 0.22.0: 接続先は設定ファイルの一覧から選ぶ。一覧に無い DB を足すのは 編集可 の人だけ
+    from .. import auth, settings_file
+    try:
+        if settings_file.find_db(text) is None:
+            if not auth.ensure().can_edit:
+                return SaveResult(False, "接続先に無い DB です。接続先を足すのは 編集可 の人だけです"
+                                         "(接続先の一覧から選んでください)。", "level", "db_path")
+            settings_file.add_db(text)
+    except (sqlite3.Error, OSError) as exc:
+        return SaveResult(False, f"設定ファイルを開けないので、接続先に足せません: {exc}", REFUSE_BAD_INPUT, "db_path")
     user_settings.save(config.KEY_DB_PATH, text)
-    shared_db.remember(text)
     return SaveResult(True, f"{path.name} を開きます({info['note']})。")
 
 

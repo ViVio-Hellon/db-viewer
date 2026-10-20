@@ -108,33 +108,37 @@ def _same(a: Path, b: Path) -> bool:
 
 
 # ------------------------------------------------------------------
-# DB を選び直す(0.20.0。上の帯の「DB」と 設定 → 接続先 の「最近開いた DB」)
+# DB を選び直す(0.20.0。0.22.0 から一覧は設定ファイルの「接続先」)
 # ------------------------------------------------------------------
 MAX_SAME_FOLDER = 40
 
 
-def _entry(path: Path, *, text: str = "", current: bool = False) -> dict[str, Any]:
-    """1 つの候補。中は読まない(帯のメニューは速く出したい。開けるかは開くときに確かめる)。"""
+def _entry(path: Path, *, text: str = "", current: bool = False, name: str = "", no: int = 0) -> dict[str, Any]:
+    """1 つの候補。中は読まない(メニューは速く出したい。開けるかは開くときに確かめる)。"""
     try:
         st = path.stat()
         exists, mtime = path.is_file(), datetime.fromtimestamp(st.st_mtime).strftime("%Y/%m/%d %H:%M")
     except OSError:
         exists, mtime = False, ""
-    return {"name": path.name, "path": text or str(path), "folder": str(path.parent),
-            "exists": exists, "mtime": mtime, "current": current}
+    return {"no": no, "name": name or path.name, "file": path.name, "path": text or str(path),
+            "folder": str(path.parent), "exists": exists, "mtime": mtime, "current": current}
 
 
-def choices() -> dict[str, Any]:
-    """選び直せる DB: 最近開いたもの(新しい順)と、いまの DB と同じフォルダの .sqlite3。"""
-    from . import shared_db
+def choices(*, can_add: bool = True) -> dict[str, Any]:
+    """接続先(設定ファイルの一覧)と、いまの DB と同じフォルダの .sqlite3(一覧に無いもの。足せる人だけ)。"""
+    from . import settings_file, shared_db
     now = shared_db.configured()
-    texts = shared_db.recent()
-    if now and not any(shared_db.same_file(t, now) for t in texts):
-        texts = [now] + texts                          # 0.19.0 からの人は「最近」がまだ空
-    recent = [_entry(config.resolve_dir(t), text=t, current=bool(now) and shared_db.same_file(t, now))
-              for t in texts]
-    out: dict[str, Any] = {"current": now, "recent": recent, "folder": "", "same_folder": [], "message": ""}
-    if not now:
+    out: dict[str, Any] = {"current": now, "dbs": [], "folder": "", "same_folder": [], "message": "",
+                           "can_add": can_add, "settings_file": str(settings_file.path())}
+    try:
+        registered = settings_file.dbs()
+    except (sqlite3.Error, OSError) as exc:
+        registered = []
+        out["message"] = f"設定ファイルを開けません({exc})。"
+    texts = [d["パス"] for d in registered]
+    out["dbs"] = [_entry(config.resolve_dir(d["パス"]), text=d["パス"], name=d["名前"] or "", no=d["管理番号"],
+                         current=bool(now) and settings_file.same_file(d["パス"], now)) for d in registered]
+    if not now or not can_add:
         return out
     folder = config.resolve_dir(now).parent
     out["folder"] = str(folder)
@@ -145,5 +149,5 @@ def choices() -> dict[str, Any]:
         out["message"] = f"フォルダを読めません({exc})。"
         return out
     out["same_folder"] = [_entry(p) for p in found
-                          if not any(shared_db.same_file(str(p), t) for t in texts)][:MAX_SAME_FOLDER]
+                          if not any(settings_file.same_file(str(p), t) for t in texts)][:MAX_SAME_FOLDER]
     return out

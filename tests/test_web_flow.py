@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -84,12 +85,18 @@ class WebFlowTest(unittest.TestCase):
         self.assertEqual((r.get_json()["executed"], r.get_json()["reset_filters"]), ("DELETE", True))
 
     def test_level_refusal(self):
-        """閲覧のみ(アクセス権限に dbviewer:edit の行が無い)→ 新規は断る・ダブルクリックは参照。行を足すと 編集可。"""
-        from tests.test_access_rights import access_db
-        master = access_db(Path(self.tmp.name) / "梱包資材マスタ.sqlite3",
-                           [("Xfa-Ngyinazawa", "NLM-NGY-240638", "mode:field", 1)])
-        user_settings.save(config.KEY_ACCESS_DB, str(master))
-        self.addCleanup(user_settings.save, config.KEY_ACCESS_DB, "")
+        """閲覧のみ(設定ファイルのアクセス権限に、この ID・PC で 編集可 の行が無い)→ 新規は断る・ダブルクリックは参照。
+        行を足すと 編集可。"""
+        from dbviewer import settings_file
+        sf = Path(self.tmp.name) / "設定.sqlite3"
+        user_settings.save(config.KEY_SETTINGS_FILE, str(sf))
+        self.addCleanup(user_settings.save, config.KEY_SETTINGS_FILE, "")
+
+        def add(login, pc, perm):
+            with closing(settings_file.connect()) as c:
+                c.execute("INSERT INTO アクセス権限 (ログインID, PC名, 権限, 有効) VALUES (?, ?, ?, 1)", (login, pc, perm))
+                c.commit()
+        add("Xfa-Ngyinazawa", "NLM-NGY-240638", "閲覧のみ")
         r = self.login()
         self.assertEqual((r.status_code, r.get_json()["level"], r.get_json()["label"]), (200, 1, "閲覧のみ"))
         r = self.c.post("/api/record/form", json={"mode": "新規"}, headers=self.h)
@@ -97,7 +104,7 @@ class WebFlowTest(unittest.TestCase):
         r = self.c.post("/api/record/form", json={"mode": "修正", "key": "2", "click": "DblClick"}, headers=self.h)
         self.assertEqual(r.get_json()["mode"], "参照")
         self.assertIn("閲覧のみ", self.c.get("/list").get_data(as_text=True))    # 上の帯
-        access_db(master, [("Xfa-Ngyinazawa", "", "dbviewer:edit", 1)])
+        add("Xfa-Ngyinazawa", "", "編集可")
         r = self.login()
         self.assertEqual((r.get_json()["level"], r.get_json()["label"]), (5, "編集可"))
         r = self.c.post("/api/record/form", json={"mode": "新規"}, headers=self.h)
@@ -177,11 +184,19 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(self.c.post("/api/list/data", json={}, headers=self.h).status_code, 200)
         save(str(self.path))
 
-    def test_recent_dbs_to_switch_quickly(self):
-        """0.20.0: 開いた DB を覚え、上の帯の DB から 1 回で選び直せる。同じフォルダの .sqlite3 も並ぶ。"""
+    def use_own_settings_file(self) -> Path:
+        """この試験だけの設定ファイル(権限・接続先がほかの試験に漏れないように)。"""
+        sf = Path(self.tmp.name) / "設定" / "DBビューア設定.sqlite3"
+        user_settings.save(config.KEY_SETTINGS_FILE, str(sf))
+        self.addCleanup(user_settings.save, config.KEY_SETTINGS_FILE, "")
+        return sf
+
+    def test_db_list_in_settings_file(self):
+        """0.22.0: 接続先は設定ファイルの一覧(コンボボックス)。足す・外すは 編集可 の人だけ。"""
         import shutil
-        user_settings.save(config.KEY_DB_RECENT, [])
-        self.addCleanup(user_settings.save, config.KEY_DB_RECENT, [])
+        from dbviewer import settings_file
+        sf = self.use_own_settings_file()
+        self.assertFalse(sf.exists())
         self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
         root = Path(self.tmp.name)
         a = root / "A" / "部品.sqlite3"
@@ -194,37 +209,39 @@ class OperationTest(unittest.TestCase):
 
         def choices():
             return self.c.get("/api/settings/db-choices", headers=self.h).get_json()
-        d = choices()                                  # まだ「最近」が無くても、いまの DB は出る
-        self.assertEqual([(r["name"], r["current"]) for r in d["recent"]], [(self.path.name, True)])
-        for p in (a, b, a):                            # 開いた順。同じものは 1 つにまとめて上へ
+        d = choices()                                  # 作ったばかりの設定ファイルに、いまの DB が入る
+        self.assertTrue(sf.is_file())
+        self.assertEqual([(r["file"], r["current"]) for r in d["dbs"]], [(self.path.name, True)])
+        for p in (a, b, a):                            # 足した順(管理番号)。同じものは 1 つ
             r = self.c.post("/api/settings/open-db", json={"path": str(p)}, headers=self.h)
             self.assertEqual(r.status_code, 200, r.get_json())
         d = choices()
-        self.assertEqual([r["name"] for r in d["recent"]], ["部品.sqlite3", "設備.sqlite3"])
-        self.assertTrue(d["recent"][0]["current"])
-        self.assertEqual(d["folder"], str(a.parent))
-        self.assertEqual([r["name"] for r in d["same_folder"]], ["仕入先.sqlite3"])  # 最近に無いものだけ
-        # 帯のボタン
-        page = self.c.get("/list").get_data(as_text=True)
-        self.assertIn('id="rb-db"', page)
-        self.assertIn('id="dbMenu"', page)
+        self.assertEqual([r["file"] for r in d["dbs"]], [self.path.name, "部品.sqlite3", "設備.sqlite3"])
+        self.assertEqual([r["no"] for r in d["dbs"]], [1, 2, 3])
+        self.assertTrue(d["dbs"][1]["current"])
+        self.assertEqual(d["settings_file"], str(sf))
+        self.assertEqual([r["file"] for r in d["same_folder"]], ["仕入先.sqlite3"])  # 一覧に無いものだけ
+        # 画面: 帯のボタン・接続先のコンボボックス
+        self.assertIn('id="dbMenu"', self.c.get("/list").get_data(as_text=True))
+        self.assertIn('id="dbSelect"', self.c.get("/settings?tab=source").get_data(as_text=True))
         # 外す(ファイルは消さない)。いま開いているものは外せない
         r = self.c.post("/api/settings/db-forget", json={"path": str(b)}, headers=self.h)
-        self.assertEqual([x["name"] for x in r.get_json()["recent"]], ["部品.sqlite3"])
+        self.assertEqual([x["file"] for x in r.get_json()["dbs"]], [self.path.name, "部品.sqlite3"])
         self.assertTrue(b.is_file())
-        r = self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h)
+        self.assertEqual(self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h).status_code, 400)
+        # 閲覧のみ: 一覧から選ぶだけ(足す・外すはできない。同じフォルダの候補も出さない)
+        with closing(settings_file.connect()) as c:
+            c.execute("INSERT INTO アクセス権限 (ログインID, PC名, 権限, 有効) VALUES ('だれか', '', '編集可', 1)")
+            c.commit()
+        auth.end()
+        d = choices()
+        self.assertEqual((d["can_add"], d["same_folder"]), (False, []))
+        r = self.c.post("/api/settings/open-db", json={"path": str(self.path)}, headers=self.h)
+        self.assertEqual(r.status_code, 200)                                     # 一覧にある → 選べる
+        r = self.c.post("/api/settings/open-db", json={"path": str(b)}, headers=self.h)
         self.assertEqual(r.status_code, 400)
-        # 見つからなくなったものは「見つかりません」で並ぶ(外せる)
-        self.c.post("/api/settings/open-db", json={"path": str(b)}, headers=self.h)
-        self.c.post("/api/settings/open-db", json={"path": str(a)}, headers=self.h)
-        b.unlink()
-        gone = [r for r in choices()["recent"] if r["name"] == "設備.sqlite3"][0]
-        self.assertFalse(gone["exists"])
-        # 10 個まで
-        for i in range(12):
-            shared_db.remember(str(root / f"x{i}.sqlite3"))
-        self.assertEqual(len(shared_db.recent()), shared_db.MAX_RECENT)
-        self.assertEqual(shared_db.recent()[0], str(root / "x11.sqlite3"))
+        self.assertIn("接続先に無い DB", r.get_json()["error"]["message"])
+        self.assertEqual(self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h).status_code, 403)
 
     def test_old_settings_move_to_one_path(self):
         """0.18.0 までの 5 つの設定しか無い PC は、指していたファイルを 1 回だけ DB ファイルに移す。"""
@@ -244,9 +261,16 @@ class OperationTest(unittest.TestCase):
         user_settings.save(config.KEY_ONLINE, True)
         self.assertEqual(str(shared_db.db_path()),
                          str(Path(config.profile(4).server_dir) / "作業標準管理システム.sqlite3"))
-        # 何も無い PC は「決めていない」(勝手な場所を見に行かない)
+        # 何も無い PC で、設定ファイルの接続先も空なら「決めていない」(勝手な場所を見に行かない)
+        user_settings.save(config.KEY_SETTINGS_FILE, str(Path(self.tmp.name) / "空の設定.sqlite3"))
+        self.addCleanup(user_settings.save, config.KEY_SETTINGS_FILE, "")
         user_settings.delete(config.KEY_DB_PATH)
         self.assertFalse(shared_db.is_set())
+        # 接続先があれば、いちばん上を開く(0.22.0)
+        from dbviewer import settings_file
+        settings_file.add_db(str(self.path))
+        user_settings.delete(config.KEY_DB_PATH)
+        self.assertEqual(shared_db.db_path(), self.path)
 
     def test_access_log_written_like_vba(self):
         from dbviewer import access_log

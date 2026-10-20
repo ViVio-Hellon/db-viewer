@@ -1,37 +1,28 @@
-"""アクセス権限(0.16.0)── 梱包資材マスタの「アクセス権限」表で、この端末が 編集可 か 閲覧のみ かを決める
+"""アクセス権限 ── この端末が 編集可 か 閲覧のみ か(0.16.0。0.22.0 から設定ファイルの表)
 
-VBA 版から続いていた「ID の表 + パスワード + Level 1〜5」はやめた。Windows の**ログインID**と**PC名**を条件に、
-梱包資材マスタ(`梱包資材マスタ.sqlite3`)の `アクセス権限` 表を引く。パスワードは要らない
-(パスワードは教え合える。ログインIDとPC名は Windows が持っている事実で、利用者が画面から変えられない)。
+Windows の**ログインID**と**PC名**を条件に、**設定ファイル**(`settings_file.py`。かんたん設定・接続先と同じ
+ファイル)の `アクセス権限` 表を引く。パスワードは要らない(ログインIDとPC名は Windows が持っている事実で、
+利用者が画面から変えられない)。
 
-【表と読み方は all-tools・python-web-tools と同じ】
-`アクセス権限` は 1 行 = 1 つの許可。`権限` 列にはほかのツールの文字列(mode:field・作業長…)も入る。
-このツールが読むのは次の 1 つだけ。**ほかの文字列はそのままにして使わない**(ほかのツールの権限なので)。
+    管理番号  ログインID  PC名             権限      有効  備考
+    --------  ----------  ---------------  --------  ----  ----
+    1         yamada      (空)             編集可    1     山田はどの PC でも編集可
+    2         (空)        NLM-NGY-240638   編集可    1     この PC は誰でも編集可
+    3         suzuki      NLM-NGY-240638   閲覧のみ  1     書いておくだけ(編集可の行が無ければ閲覧のみ)
 
-    dbviewer:edit  … DBビューアで 編集可(行を足す・直す・消す・列を足す・設定を保存)
-
-    ログインID      PC名             権限            有効
-    --------------  ---------------  --------------  ----
-    yamada          (空)             dbviewer:edit   1   … 山田はどの PC でも編集可
-    (空)            NLM-NGY-240638   dbviewer:edit   1   … この PC は誰でも編集可
-    suzuki          NLM-NGY-240638   dbviewer:edit   1   … 鈴木がこの PC のときだけ
-
+* 権限が `編集可`(all-tools と同じ書き方の `dbviewer:edit` も)の行が当てはまれば 編集可。無ければ 閲覧のみ
 * 空欄は「問わない」。**ログインIDもPC名も空の行は誰にも効かない**(全員への許可になり、権限を設ける意味が消える)
 * 大文字小文字・全角半角は区別しない(Windows の ID と PC 名がそうなので)
 * `有効` は空欄なら有効、`0` / `false` / `×` / `無効` などなら無効
-* 当てはまる行の**和**を取る。**当てはまる行が無ければ 閲覧のみ**(締め出さず、直す力も渡さない)
-
-【どの梱包資材マスタか】設定「アクセス権限マスタ」。空なら、見ている DB と同じフォルダの
-`梱包資材マスタ.sqlite3`。どちらも無ければ「決めていない」=誰でも 編集可(0.8.0 からの「ID の表が無い DB は
-誰でも直せる」と同じ。決めれば効き始める)。
+* **表に行が 1 つも無ければ、誰でも 編集可**(作ったばかりの設定ファイル。行を足すと効き始める)
 
 【直すとき(0.17.0)】設定 → かんたん設定 → 権限 で、**管理者パスワード**(既定 nisk。`admin_password`)で
-鍵を開けたときだけ、この表の行を足す・直す・消す。書く前に梱包資材マスタの控えを取り、ほかの PC が先に変えて
-いたら書かない。見るときはいつも読み取り専用で開く。
+鍵を開けたときだけ、この表の行を足す・直す・消す。書く前に設定ファイルの控えを取り、ほかの PC が先に変えて
+いたら書かない。
 
-【届かないとき】梱包資材マスタは共有フォルダにある。届かないたびに 閲覧のみ に落とすと仕事が止まるので、
+【届かないとき】設定ファイルを共有フォルダに置いたとき。届かないたびに 閲覧のみ に落とすと仕事が止まるので、
 **前回読めた結果をこの PC に覚えておき**、届かないときはそれで決める(all-tools と同じ)。
-一度も読めていなければ 閲覧のみ(決めてあるのに読めないのに、直す力は渡さない)。
+一度も読めていなければ 閲覧のみ。
 """
 from __future__ import annotations
 
@@ -43,14 +34,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from . import app_config, config, user_settings
+from . import app_config
 from .logging_utils import get_logger
 
 log = get_logger("access_rights")
 
 TABLE = "アクセス権限"
-MASTER_NAME = "梱包資材マスタ.sqlite3"
-EDIT = "dbviewer:edit"
+EDIT = "編集可"
+VIEW = "閲覧のみ"
+EDIT_WORDS = {"編集可", "dbviewer:edit"}          # all-tools の書き方も読む
 COL_NO, COL_LOGIN, COL_PC, COL_PERMISSION, COL_ENABLED, COL_NOTE = (
     "管理番号", "ログインID", "PC名", "権限", "有効", "備考")
 _OFF = {"0", "false", "no", "off", "×", "x", "無効", "いいえ", "n"}
@@ -98,37 +90,31 @@ def applies(row: dict[str, Any], login_id: str, pc: str) -> bool:
 
 
 def decide(rows: list[dict[str, Any]], login_id: str, pc: str) -> tuple[bool, list[dict[str, Any]]]:
-    """(編集可か, 当てはまった dbviewer:edit の行)。"""
-    hit = [r for r in rows if _norm(r.get(COL_PERMISSION)) == EDIT and enabled(r.get(COL_ENABLED))
+    """(編集可か, 当てはまった 編集可 の行)。"""
+    hit = [r for r in rows if is_edit(r.get(COL_PERMISSION)) and enabled(r.get(COL_ENABLED))
            and applies(r, login_id, pc)]
     return bool(hit), hit
 
 
+def is_edit(permission: Any) -> bool:
+    return _norm(permission) in {_norm(w) for w in EDIT_WORDS}
+
+
 def edit_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """表の中の dbviewer:edit の行(設定の画面で「誰が編集可か」を見せる)。"""
-    return [r for r in rows if _norm(r.get(COL_PERMISSION)) == EDIT]
+    """表の中の 編集可 の行(設定の画面で「誰が編集可か」を見せる)。"""
+    return [r for r in rows if is_edit(r.get(COL_PERMISSION))]
 
 
 # ------------------------------------------------------------------
-# どの梱包資材マスタか
+# どのファイルか: 設定ファイル(無ければ作る)
 # ------------------------------------------------------------------
-def configured_path() -> str:
-    return str(user_settings.get(config.KEY_ACCESS_DB, "") or "").strip().strip('"')
-
-
-def master_path() -> Optional[Path]:
-    """読む梱包資材マスタ。設定が空なら、見ている DB と同じフォルダの 梱包資材マスタ.sqlite3(あれば)。"""
-    text = configured_path()
-    if text:
-        return Path(text)
+def master_path() -> Path:
+    from . import settings_file
     try:
-        from . import shared_db
-        if not shared_db.is_set():
-            return None
-        cand = shared_db.db_path().parent / MASTER_NAME
-    except Exception:                                    # noqa: BLE001 - DB を決めていない
-        return None
-    return cand if cand.is_file() else None
+        return settings_file.ensure()
+    except (sqlite3.Error, OSError) as exc:              # 届かない: 読むときに前回の結果で決める
+        log.warning("設定ファイルを開けません: %s", exc)
+        return settings_file.path()
 
 
 def read_rows(path: Path) -> list[dict[str, Any]]:
@@ -179,25 +165,25 @@ def evaluate(login_id: str, pc: str) -> Decision:
     """この人・この端末は 編集可 か 閲覧のみ か。"""
     now = time.time()
     path = master_path()
-    if path is None:
-        return Decision(True, SOURCE_UNSET, "アクセス権限マスタを決めていないので、誰でも編集できます"
-                        "(設定 → かんたん設定 → 権限 で決めると効き始めます)。", login_id, pc, "", [], now)
     try:
         rows = read_rows(path)
     except Exception as exc:                             # noqa: BLE001 - 届かない・壊れている
         cached = _load_cache(str(path), login_id, pc)
         if cached is not None:
             when = time.strftime("%m/%d %H:%M", time.localtime(float(cached.get("checked_at") or 0)))
-            log.warning("アクセス権限マスタを読めないので前回の結果(%s)を使います: %s", when, exc)
+            log.warning("設定ファイルのアクセス権限を読めないので前回の結果(%s)を使います: %s", when, exc)
             return Decision(bool(cached.get("edit")), SOURCE_CACHE,
-                            f"アクセス権限マスタに届かないので、前回({when})読めた結果を使っています: {exc}",
+                            f"設定ファイルに届かないので、前回({when})読めた結果を使っています: {exc}",
                             login_id, pc, str(path), list(cached.get("matched") or []), now)
-        log.warning("アクセス権限マスタを読めません(前回の結果も無いので閲覧のみ): %s", exc)
-        return Decision(False, SOURCE_UNREACHABLE, f"アクセス権限マスタを読めないので、閲覧のみにしています: {exc}",
+        log.warning("設定ファイルのアクセス権限を読めません(前回の結果も無いので閲覧のみ): %s", exc)
+        return Decision(False, SOURCE_UNREACHABLE, f"設定ファイルのアクセス権限を読めないので、閲覧のみにしています: {exc}",
                         login_id, pc, str(path), [], now)
+    if not rows:
+        return Decision(True, SOURCE_UNSET, "アクセス権限の表にまだ行が無いので、誰でも編集できます"
+                        "(設定 → かんたん設定 → 権限 で行を足すと効き始めます)。", login_id, pc, str(path), [], now)
     edit, hit = decide(rows, login_id, pc)
-    reason = (f"アクセス権限マスタの {len(hit)} 行が当てはまりました({EDIT})。" if edit else
-              f"アクセス権限マスタに、この ID・PC で {EDIT} の行がありません。")
+    reason = (f"アクセス権限の {len(hit)} 行が当てはまりました({EDIT})。" if edit else
+              f"アクセス権限に、この ID・PC で {EDIT} の行がありません。")
     d = Decision(edit, SOURCE_MASTER, reason, login_id, pc, str(path),
                  [{k: r.get(k) for k in (COL_NO, COL_LOGIN, COL_PC, COL_PERMISSION, COL_ENABLED, COL_NOTE)}
                   for r in hit], now)
@@ -206,15 +192,10 @@ def evaluate(login_id: str, pc: str) -> Decision:
 
 
 def overview() -> dict[str, Any]:
-    """設定の画面: どのマスタを読んでいるか・誰が編集可か。"""
+    """設定の画面: どのファイルを読んでいるか・誰が編集可か。"""
     path = master_path()
-    out: dict[str, Any] = {"configured": configured_path(), "path": str(path or ""), "found": False,
-                           "auto": not configured_path() and path is not None, "edit_rows": [], "problem": "",
-                           "permission": EDIT, "master_name": MASTER_NAME, "table": TABLE}
-    if path is None:
-        if configured_path():
-            out["problem"] = "見つかりません"
-        return out
+    out: dict[str, Any] = {"path": str(path), "found": False, "edit_rows": [], "rows": 0, "problem": "",
+                           "permission": EDIT, "table": TABLE}
     try:
         rows = read_rows(path)
     except Exception as exc:                             # noqa: BLE001
@@ -225,21 +206,6 @@ def overview() -> dict[str, Any]:
     out["edit_rows"] = [{k: r.get(k) for k in (COL_NO, COL_LOGIN, COL_PC, COL_ENABLED, COL_NOTE)}
                         for r in edit_rows(rows)]
     return out
-
-
-def check_path(text: str) -> str:
-    """設定に入れる前に確かめる。だめなら理由(空は「同じフォルダを探す」に戻す)。"""
-    text = (text or "").strip().strip('"')
-    if not text:
-        return ""
-    p = Path(text)
-    if p.suffix.lower() != config.DB_SUFFIX:
-        return f"{config.DB_SUFFIX} のファイルを選んでください。"
-    try:
-        read_rows(p)
-    except Exception as exc:                             # noqa: BLE001
-        return f"読めません: {exc}"
-    return ""
 
 
 # ------------------------------------------------------------------
@@ -273,7 +239,7 @@ def _clean(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
     on = row.get(COL_ENABLED)
     enabled_value = 0 if on in (False, 0, "0") or (isinstance(on, str) and not enabled(on)) else 1
     if not perm:
-        return {}, "権限を入れてください(DBビューアで編集可にするなら dbviewer:edit)。"
+        return {}, f"権限を選んでください({EDIT} / {VIEW})。"
     if not login and not pc:
         return {}, "ログインID か PC名 のどちらかは入れてください(両方空の行は誰にも効きません)。"
     for name, v in ((COL_LOGIN, login), (COL_PC, pc), (COL_PERMISSION, perm), (COL_NOTE, note)):
@@ -326,7 +292,7 @@ def _write(path: Path, work) -> WriteResult:
     try:
         conn = sqlite3.connect(path, timeout=5)
     except sqlite3.Error as exc:
-        return WriteResult(False, f"アクセス権限マスタを開けません: {exc}", "failed")
+        return WriteResult(False, f"設定ファイルを開けません: {exc}", "failed")
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
@@ -391,10 +357,10 @@ def delete_row(path: Path, no: int, seen: Optional[dict[str, Any]] = None) -> Wr
 
 
 def permissions_in_use(path: Path) -> list[str]:
-    """権限の欄の候補(この表で使われている値。dbviewer:edit を先に)。"""
+    """権限の欄の候補(編集可・閲覧のみ と、この表で使われているほかの値)。"""
     try:
         rows = read_rows(path)
     except Exception:                                    # noqa: BLE001
-        return [EDIT]
-    seen = {str(r.get(COL_PERMISSION) or "").strip() for r in rows} - {"", EDIT}
-    return [EDIT, *sorted(seen)]
+        return [EDIT, VIEW]
+    seen = {str(r.get(COL_PERMISSION) or "").strip() for r in rows} - {"", EDIT, VIEW}
+    return [EDIT, VIEW, *sorted(seen)]

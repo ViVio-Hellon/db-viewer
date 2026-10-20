@@ -3,22 +3,23 @@
 - `POST /api/easy/state`    … 見る DB・表・列ごとの設定(表示・入力・印刷)`{"table"}`
 - `POST /api/easy/columns`  … 列ごとの設定を保存 `{"table", "rows": [{name, show, input, step, print}]}`
 - `POST /api/easy/retire`   … VBA 版の <表>_設定 を取り込んで消す(編集可。控えを取る)
-- `POST /api/easy/rights`   … 権限: アクセス権限マスタ・この PC の 編集可 / 閲覧のみ・誰が編集可か(0.16.0)
-                              `{"path", "save": true}` でアクセス権限マスタの場所を保存
+- `POST /api/easy/rights`   … 権限: この PC の 編集可 / 閲覧のみ・誰が編集可か・設定ファイル(0.16.0 / 0.22.0)
+- `POST /api/easy/settings-file` … 設定ファイル(権限・かんたん設定・接続先)を決める `{"path"}`。無ければ作る(0.22.0。
+                              編集可 か 管理者パスワードの鍵が要る)
 - `POST /api/easy/access/unlock`   … 管理者パスワードで鍵を開ける `{"password"}` / 掛ける `{"lock": true}`(0.17.0)
 - `POST /api/easy/access/rows`     … アクセス権限の全部の行(見るだけなら鍵は要らない)
 - `POST /api/easy/access/save`     … 行を足す・直す `{"row", "seen"}`(鍵が要る)
 - `POST /api/easy/access/delete`   … 行を消す `{"no", "seen"}`(鍵が要る)
 - `POST /api/easy/access/password` … 管理者パスワードを変える `{"current", "new", "confirm"}`
 
-保存は 編集可 の権限で(梱包資材マスタの「アクセス権限」に dbviewer:edit の行)。
+保存は 編集可 の権限で(設定ファイルの「アクセス権限」に 権限 = 編集可 の行)。
 """
 from __future__ import annotations
 
 from flask import Blueprint, g, jsonify, request
 
-from dbviewer import access_rights, admin_password, auth, config, easy_setup, session_setup, settings_tables, \
-    shared_db, trace, user_settings
+from dbviewer import access_rights, admin_password, auth, config, easy_setup, session_setup, settings_file, \
+    settings_tables, shared_db, trace, user_settings
 from dbviewer.logging_utils import get_logger
 
 from .. import get_db
@@ -77,43 +78,52 @@ def columns():
 
 @bp.post("/api/easy/rights")
 def rights():
-    """権限の様子。保存は「編集可」か、アクセス権限マスタをまだ決めていない・読めないときだけ
-    (読めないままだと誰も直せなくなるので、場所を直す道は残す)。"""
-    body = request.get_json(silent=True) or {}
+    """権限の様子と、設定ファイル。"""
     s = auth.ensure()
     d = s.rights
-    can_change = (s.can_edit or admin_password.session.peek() or d is None
-                  or d.source in (access_rights.SOURCE_UNSET, access_rights.SOURCE_UNREACHABLE))
-    if body.get("save"):
-        if not can_change:
-            return _refuse("level", "アクセス権限マスタの場所を変えるには 編集可 の権限か、管理者パスワードが要ります。", 403)
-        text = str(body.get("path") or "").strip().strip('"')
-        problem = access_rights.check_path(text)
-        if problem:
-            return _refuse("bad_path", problem)
-        user_settings.save(config.KEY_ACCESS_DB, text)
-        trace.event("settings.access_db", text or "(同じフォルダを探す)", data={"path": text, "by": s.user_id})
-        message = (f"アクセス権限マスタを {text} にしました。" if text
-                   else "アクセス権限マスタは、見ている DB と同じフォルダの 梱包資材マスタ.sqlite3 を探します。")
-        return jsonify({"ok": True, "message": message})
+    can_change = s.can_edit or admin_password.session.peek()
     me = d.to_dict() if d else {}
     me.setdefault("login_id", auth.network_id())
     me.setdefault("pc", auth.pc_name())
     me["label"], me["edit"] = s.label, s.can_edit
     if s.developer and d and not d.edit:
         me["reason"] = (me.get("reason") or "") + "(開発者の PC なので 編集可)"
-    return jsonify({"me": me, "master": access_rights.overview(), "can_change": can_change,
+    return jsonify({"me": me, "master": access_rights.overview(), "file": settings_file.info(),
+                    "can_change": can_change,
                     "admin": admin_password.session.peek(), "custom_password": admin_password.is_custom()})
+
+
+@bp.post("/api/easy/settings-file")
+def choose_settings_file():
+    """設定ファイルを決める(0.22.0)。無ければ作る。権限の出どころが替わるので、編集可 か 管理者パスワードの鍵が要る
+    (閲覧のみの人が空のファイルに替えて 編集可 になれないように)。"""
+    s = auth.ensure()
+    if not (s.can_edit or admin_password.session.is_open()):
+        return _refuse("level", "設定ファイルを替えるには 編集可 の権限か、管理者パスワードの鍵が要ります"
+                                "(下の「アクセス権限を直す」で鍵を開けてください)。", 403)
+    text = str((request.get_json(silent=True) or {}).get("path") or "").strip().strip('"')
+    target, problem = settings_file.check_target(text)
+    if problem:
+        return _refuse("bad_path", problem)
+    fresh = not target.exists()
+    try:
+        settings_file.ensure(target)
+    except Exception as exc:                             # noqa: BLE001 - 作れない・開けない
+        return _refuse("failed", f"設定ファイルを作れません: {exc}")
+    user_settings.save(config.KEY_SETTINGS_FILE, str(target) if text else "")
+    trace.event("settings.file", str(target), data={"path": str(target), "created": fresh, "by": s.user_id})
+    auth.sign_in()                                      # 権限の出どころが替わったので読み直す
+    now = auth.current()
+    message = (f"設定ファイルを作りました: {target}" if fresh else f"設定ファイルを {target} にしました。")
+    return jsonify({"ok": True, "message": message + f"(この PC は {now.label if now else '-'})",
+                    "created": fresh, "file": settings_file.info()})
 
 
 # ------------------------------------------------------------------
 # アクセス権限を直す(管理者パスワードで鍵を開けたときだけ。0.17.0)
 # ------------------------------------------------------------------
 def _master():
-    path = access_rights.master_path()
-    if path is None:
-        return None, _refuse("no_master", "アクセス権限マスタを先に決めてください(上の「アクセス権限マスタ」)。", 409)
-    return path, None
+    return access_rights.master_path(), None
 
 
 def _need_admin():
@@ -147,7 +157,7 @@ def access_rows():
     try:
         rows = access_rights.all_rows(path)
     except Exception as exc:                             # noqa: BLE001 - 届かない・表が無い
-        return _refuse("unreadable", f"アクセス権限マスタを読めません: {exc}", 409)
+        return _refuse("unreadable", f"設定ファイルのアクセス権限を読めません: {exc}", 409)
     return jsonify({"path": str(path), "rows": rows, "columns": list(access_rights.COLUMNS),
                     "permissions": access_rights.permissions_in_use(path), "admin": admin_password.session.peek(),
                     "me": {"login_id": auth.network_id(), "pc": auth.pc_name()}})

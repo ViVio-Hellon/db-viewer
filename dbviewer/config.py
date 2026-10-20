@@ -130,8 +130,9 @@ def profile(prog_no: Optional[int] = None) -> Profile:
 # 利用者設定の鍵(`user_settings`)
 # ------------------------------------------------------------------
 KEY_DB_PATH = "db_path"              # 見る DB ファイル(フルパス)。0.19.0 から接続先はこれだけ
+KEY_SETTINGS_FILE = "settings_file"  # 設定ファイル(0.22.0。権限・かんたん設定・接続先)。空ならデータフォルダの既定
 KEY_EASY_DIR = "easy_dir"            # かんたん設定の保存先フォルダ(0.21.0)。空なら DB の中の「ツールの設定」
-KEY_DB_RECENT = "db_recent"          # 最近開いた DB ファイル(新しい順。0.20.0。上の帯の DB から選び直す)
+KEY_DB_RECENT = "db_recent"          # (0.21.0 まで)最近開いた DB。0.22.0 から接続先は設定ファイル。作るときに取り込む
 # 0.18.0 までの接続先(システム・オンライン/オフライン・フォルダ 2 つ・ファイル名)。
 # 残っていれば shared_db が 1 回だけ KEY_DB_PATH に移して消す
 KEY_PROG_NO = "prog_no"              # 使うプロファイル
@@ -144,7 +145,7 @@ KEY_EXPORT_FORMAT = "export_format"  # 出力の既定の形式(csv / tsv / xlsx
 KEY_EXPORT_ENCODING = "export_encoding"  # csv / tsv の文字コード(cp932 / utf-8-sig)
 KEY_EXPORT_DIR = "export_dir"        # 出力先(空ならローカル領域 work)
 KEY_ADMIN_PASSWORD = "admin_password"  # 管理者パスワード(pbkdf2$…。平文は持たない。消すと既定の nisk)
-KEY_ACCESS_DB = "access_db"          # アクセス権限マスタ(梱包資材マスタ.sqlite3。空なら DB と同じフォルダ)
+KEY_ACCESS_DB = "access_db"          # (0.21.0 まで)アクセス権限マスタ。0.22.0 から権限は設定ファイル。使わない
 KEY_REF_DIR = "ref_dir"              # 参照ファイル(PDF 等)の相対パスの起点(空なら本体と同じフォルダ)
 KEY_ACCESS_LOG = "access_log"        # Access.log を書くか(既定 True)
 KEY_RELOGIN_MIN = "relogin_minutes"  # 無操作で再ログイン(0 = しない)

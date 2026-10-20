@@ -1,11 +1,11 @@
 /*
-  dbswitch.js — 上の帯の「DB」から、見る DB を選び直す(0.20.0)
+  dbswitch.js — 見る DB を選び直す(0.20.0。0.22.0 から一覧は設定ファイルの「接続先」)
 
-  .sqlite3 が何個もあると、毎回フルパスを打つのは面倒。そこで:
-  - この PC で**最近開いた DB**(新しい順・10 個まで)と、**いまの DB と同じフォルダの .sqlite3** を並べる
-  - 押せばすぐその DB に切り替える(中身が開ける .sqlite3 かはサーバが確かめる。だめなら理由を出して今のまま)
-  - 見つからなくなったもの・もう使わないものは × で「最近」から外せる(ファイルは消さない)
-  設定 → 接続先 の「最近開いた DB」も同じものを出す(`renderRecent`)。
+  - **接続先**(設定ファイルの一覧)を並べる。押せばすぐその DB に切り替える
+    (開ける .sqlite3 かはサーバが確かめる。だめなら理由を出して今のまま)
+  - 編集可 の人には、**いまの DB と同じフォルダの .sqlite3**(一覧に無いもの)も出す。押すと足して開く
+  - × で接続先から外す(編集可 の人だけ。ファイルは消さない)
+  上の帯の「DB」のメニューと、設定 → 接続先 のコンボボックス・一覧(`renderList`)で同じものを出す。
 */
 import { api } from "./api.js";
 import { toast, toastError } from "./toast.js";
@@ -34,7 +34,7 @@ function node(tag, cls, text) {
   return el;
 }
 
-function row(item, { removable = true } = {}) {
+function row(item, { removable = false } = {}) {
   const wrap = node("div", "dbmenu__row" + (item.current ? " is-current" : "") + (item.exists ? "" : " is-missing"));
   const pick = node("button");
   pick.type = "button";
@@ -42,7 +42,8 @@ function row(item, { removable = true } = {}) {
   pick.dataset.open = item.path;
   if (item.current) pick.dataset.current = "1";
   pick.title = item.path;
-  pick.append(node("b", "", item.name + (item.current ? "(いま開いている)" : "")),
+  const label = item.name && item.name !== item.file ? `${item.name}(${item.file})` : item.file || item.name;
+  pick.append(node("b", "", label + (item.current ? "(いま開いている)" : "")),
                node("small", "", item.exists ? `${item.folder}${item.mtime ? " ・ " + item.mtime : ""}`
                                              : `見つかりません: ${item.folder}`));
   wrap.appendChild(pick);
@@ -50,8 +51,8 @@ function row(item, { removable = true } = {}) {
     const x = node("button", "dbmenu__x", "×");
     x.type = "button";
     x.dataset.forget = item.path;
-    x.title = "「最近開いた DB」から外す(ファイルは消しません)";
-    x.setAttribute("aria-label", `${item.name} を最近開いた DB から外す`);
+    x.title = "接続先から外す(ファイルは消しません)";
+    x.setAttribute("aria-label", `${item.name} を接続先から外す`);
     wrap.appendChild(x);
   }
   return wrap;
@@ -59,20 +60,21 @@ function row(item, { removable = true } = {}) {
 
 function render(menu, data) {
   const parts = [];
-  if (data.recent.length) {
-    parts.push(node("div", "dbmenu__h", "最近開いた DB"), ...data.recent.map((r) => row(r)));
+  if (data.dbs.length) {
+    parts.push(node("div", "dbmenu__h", "接続先"), ...data.dbs.map((r) => row(r, { removable: data.can_add })));
   }
   if (data.same_folder.length) {
-    parts.push(node("div", "dbmenu__h", "同じフォルダの .sqlite3"),
-               ...data.same_folder.map((r) => row(r, { removable: false })));
+    parts.push(node("div", "dbmenu__h", "同じフォルダの .sqlite3(押すと接続先に足して開く)"),
+               ...data.same_folder.map((r) => row(r)));
   }
   if (data.message) parts.push(node("div", "dbmenu__note", data.message));
-  if (!parts.length) parts.push(node("div", "dbmenu__note", "まだ DB を開いていません。下の「ほかの DB を探す」から選んでください。"));
+  if (!parts.length) parts.push(node("div", "dbmenu__note", "接続先がまだありません。下の「ほかの DB を探す」から足してください。"));
   const foot = node("div", "dbmenu__foot");
   const more = node("button");
   more.type = "button";
   more.dataset.more = "1";
-  more.append(node("b", "", "ほかの DB を探す…"), node("small", "", "設定 → 接続先(パスを入れる・参照… で選ぶ)"));
+  more.append(node("b", "", data.can_add ? "ほかの DB を足す…" : "接続先の設定へ…"),
+              node("small", "", data.can_add ? "設定 → 接続先(パスを入れる・参照… で選ぶ)" : "設定 → 接続先"));
   foot.appendChild(more);
   parts.push(foot);
   menu.replaceChildren(...parts);
@@ -130,12 +132,27 @@ export function wire() {
   }
 }
 
-/** 設定 → 接続先 の「最近開いた DB」(開く・外す)。 */
-export async function renderRecent(list, { onChange } = {}) {
+/** 設定 → 接続先: コンボボックス・一覧(開く・外す)・足す欄(足せる人だけ)。 */
+export async function renderList(list, { select = null, addBox = null, where = null } = {}) {
   if (!list) return;
   const draw = (data) => {
-    list.replaceChildren(...(data.recent.length ? data.recent.map((r) => row(r))
-      : [node("div", "dbmenu__note", "まだありません。DB を開くとここに並びます。")]));
+    list.replaceChildren(...(data.dbs.length ? data.dbs.map((r) => row(r, { removable: data.can_add }))
+      : [node("div", "dbmenu__note", "接続先がまだありません。上の「接続先を足す」で足してください。")]));
+    if (where) where.textContent = `${data.dbs.length} 件 ・ ${data.settings_file}`;
+    if (addBox) addBox.hidden = !data.can_add;
+    if (select) {
+      const opts = data.dbs.map((r) => {
+        const o = node("option", "", `${r.name || r.file} ― ${r.folder}${r.exists ? "" : "(見つかりません)"}`);
+        o.value = r.path; o.selected = r.current;
+        return o;
+      });
+      if (!data.dbs.some((r) => r.current)) {
+        const o = node("option", "", data.current ? `(一覧に無い DB: ${data.current})` : "(選んでください)");
+        o.value = ""; o.selected = true; o.disabled = true;
+        opts.unshift(o);
+      }
+      select.replaceChildren(...opts);
+    }
   };
   if (list.dataset.wired !== "1") {
     list.dataset.wired = "1";
@@ -148,8 +165,14 @@ export async function renderRecent(list, { onChange } = {}) {
       }
       const pick = event.target.closest("[data-open]");
       if (!pick || pick.dataset.current) return;
-      try { await openDb(pick.dataset.open); if (onChange) onChange(); } catch (err) { toastError(err); }
+      try { await openDb(pick.dataset.open); } catch (err) { toastError(err); }
     });
+    if (select) {
+      select.addEventListener("change", async () => {
+        if (!select.value) return;
+        try { await openDb(select.value); } catch (err) { toastError(err); }
+      });
+    }
   }
   try { draw(await api.get("/api/settings/db-choices")); } catch (err) { toastError(err); }
 }

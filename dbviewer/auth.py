@@ -1,8 +1,8 @@
 """誰が使っているか と、編集可 / 閲覧のみ(0.16.0)
 
 【0.16.0 から】VBA 版から続いていた「ID の表 + パスワード + Level 1〜5」をやめた。
-Windows の**ログインID**と**PC名**で、梱包資材マスタの `アクセス権限` 表を引き、
-**編集可**(`dbviewer:edit` の行がある)か **閲覧のみ** かを決める(`access_rights`)。パスワードは要らない。
+Windows の**ログインID**と**PC名**で、設定ファイルの `アクセス権限` 表(0.22.0)を引き、
+**編集可**(権限 = 編集可 の行がある)か **閲覧のみ** かを決める(`access_rights`)。パスワードは要らない。
 画面を開けば自動で入る(ログインの画面は無い)。
 
 中の決まり(どの操作に何が要るか)は Level の数のまま持つ: 編集可 = 5、閲覧のみ = 1。
@@ -32,8 +32,8 @@ DEVELOPER_PCS = ("NLM-NGY-221790", "PCH370")
 
 EDIT_LEVEL = 5
 VIEW_LEVEL = 1
-MSG_NO_LEVEL = ("閲覧のみの権限です。直すには、アクセス権限マスタ(梱包資材マスタの「アクセス権限」)に、"
-                "この ID・PC で dbviewer:edit の行を足してもらってください。")
+MSG_NO_LEVEL = ("閲覧のみの権限です。直すには、設定ファイルの「アクセス権限」に、"
+                "この ID・PC で 権限 = 編集可 の行を足してもらってください。")
 
 
 def network_id() -> str:
@@ -62,7 +62,7 @@ class LoginResult:
 
 
 def rights_result() -> LoginResult:
-    """この PC のログイン ID・PC 名で、アクセス権限マスタを引く(パスワードは無い)。"""
+    """この PC のログイン ID・PC 名で、設定ファイルのアクセス権限を引く(パスワードは無い)。"""
     use_id, use_pc = network_id(), pc_name()
     d = access_rights.evaluate(use_id, use_pc)
     dev = is_developer(use_id, use_pc)
@@ -127,7 +127,7 @@ def start(result: LoginResult) -> Session:
 
 
 def sign_in() -> Session:
-    """アクセス権限マスタを引いて、セッションを始める(画面を開けば自動で)。"""
+    """設定ファイルのアクセス権限を引いて、セッションを始める(画面を開けば自動で)。"""
     result = rights_result()
     s = start(result)
     log.info("権限: %s / %s → %s(%s)", s.user_id, pc_name(), s.label, result.rights.source if result.rights else "")
