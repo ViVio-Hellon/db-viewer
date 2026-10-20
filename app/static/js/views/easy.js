@@ -144,8 +144,10 @@ function columnRow(c) {
   for (const [v, label] of st.clicks || []) click.appendChild(option(v, label, v === (c.click || "")));
   const place = document.createElement("input"); place.className = "input"; place.dataset.f = "place";
   place.type = "text"; place.value = c.place || ""; place.style.width = "22em";
-  place.placeholder = "場所: 空 = 値そのもの / 例 図面\\{値}.pdf ・ https://社内/?no={値}";
-  place.title = "開くもの(Excel・Word・PDF・URL)は、値か この場所 から決まります。{値} にマスの値が入ります";
+  place.placeholder = "場所: 空 = 値そのもの / 例 図面\\{値}.pdf ・ 手順書\\{作業NO}_{作業名}";
+  place.title = "開くもの(Excel・Word・PDF・URL)は、値か この場所 から決まります。{値} にマスの値、"
+    + "{列名} に同じ行のその列の値が入ります。拡張子を書かなければ、フォルダの中から 全角・半角・大文字小文字を問わず "
+    + "Excel → Word → PDF の順に探します";
   place.setAttribute("aria-label", `${c.name} の開く場所`);
   const opens = () => ["open", "preview"].includes(click.value);
   place.hidden = !opens();

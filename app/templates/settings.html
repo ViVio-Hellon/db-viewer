@@ -139,6 +139,8 @@
                 <select class="input" id="easyTable" style="width:22em"></select>
               </div>
               <p class="why">列ごとに、<b>表示</b>(一覧に出す)・<b>入力</b>(直すときの欄)・<b>印刷</b>(一覧の 印刷・出力 に入れる)・<b>クリック</b>(マスの値を押したときに コピー / 現物を開く / プレビュー。開くもの = Excel・Word・PDF・URL)を選びます。
+                開く・プレビューの「場所」には <code>{値}</code>(押したマスの値)と <code>{列名}</code>(同じ行のほかの列)が書けます。
+                例 <code>\\server\手順書\{作業NO}_{作業名}</code> … 拡張子を書かなければ、全角・半角・大文字小文字を問わずに探します。
                 列名で覚えるので、列の並びが変わっても・列が増えても(増えた列は 表示・文字・印刷)ずれません。DB を替えれば、その DB の設定になります。</p>
               <p class="status status--warn" id="easyLegacy" hidden></p>
               <div class="tablewrap easytable">

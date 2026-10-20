@@ -370,6 +370,86 @@ def _xlsx_shared(path: Path) -> Path:
     return path
 
 
+class WorkFileTest(_Case):
+    """0.23.0: 場所の決まりに {作業NO}_{作業名}(同じ行のほかの列)。名前は全角・半角を問わずに探す。"""
+
+    def setUp(self):
+        super().setUp()
+        path = self.tmp / "作業標準.sqlite3"
+        with closing(sqlite3.connect(path)) as c:
+            c.execute("CREATE TABLE 作業 (作業NO TEXT, 作業名 TEXT, 備考 TEXT)")
+            c.executemany("INSERT INTO 作業 VALUES (?, ?, '')", [("0-1-1", "ﾊﾝﾏｰの取り扱い"), ("0-1-2", "ＡＢＣ点検"),
+                                                                   ("0-1-3", "無いもの"), ("0-1-4", "ﾊﾝﾏｰの取り扱い")])
+            c.commit()
+        self.use(path)
+        self.login()
+        self.dir = self.tmp / "手順書"
+        self.dir.mkdir()
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "vendor"))
+        import xlsx_writer
+        xlsx_writer.write_xlsx([{"name": "ハンマー手順", "columns": ["手順"], "rows": [["握る"]]}],
+                               str(self.dir / "0-1-1_ハンマーの取り扱い.xlsx"))       # 全角カナで保存したもの
+        (self.dir / "0-1-1_ハンマーの取り扱い.pdf").write_bytes(b"%PDF-1.4 x")           # Excel が先
+        (self.dir / "0-1-1_ハンマー.xlsx").write_bytes(b"x")                           # 名前が違う
+        (self.dir / "０－１－２＿abc点検.pdf").write_bytes(b"%PDF-1.4 y")                # 全角の番号・小文字
+        place = str(self.dir) + "/{作業NO}_{作業名}"
+        st = self.ok("/api/easy/state", table="作業")
+        rows = [dict(c, **({"作業名": {"click": "preview", "place": place},
+                            "作業NO": {"click": "open", "place": place}}.get(c["name"], {}))) for c in st["columns"]]
+        self.assertEqual(self.post("/api/easy/columns", table="作業", rows=rows).status_code, 200)
+        d = self.ok("/api/list/data", table="作業")
+        self.rowid = {r[0]: r[d["key_index"]] for r in d["rows"]}
+        self.assertEqual(d["actions"]["作業名"]["place"], place)
+
+    def preview(self, value, rowid):
+        q = {"table": "作業", "column": "作業名", "value": value}
+        if rowid is not None:
+            q["rowid"] = rowid
+        return self.c.get("/api/file/preview", query_string=q, headers=self.h)
+
+    def test_name_key(self):
+        k = simple_table.name_key
+        self.assertEqual(k("0-1-1_ﾊﾝﾏｰの取り扱い"), k("０－１－１＿ハンマーの取り扱い"))
+        self.assertEqual(k("ABC点検"), k("ａｂｃ 点検"))
+        self.assertEqual(k("0‐1‐1"), k("0-1-1"))                                      # ハイフンの種類
+        self.assertNotEqual(k("ハンマー"), k("ハンマ"))
+        hit = simple_table.find_file(self.dir / "0-1-1_ﾊﾝﾏｰの取り扱い")
+        self.assertEqual(hit.name, "0-1-1_ハンマーの取り扱い.xlsx")                     # Excel → PDF の順
+        hit = simple_table.find_file(self.dir / "0-1-1_ﾊﾝﾏｰの取り扱い.pdf")             # 拡張子を書けばそれ
+        self.assertEqual(hit.name, "0-1-1_ハンマーの取り扱い.pdf")
+        self.assertIsNone(simple_table.find_file(self.dir / "0-1-3_無いもの"))
+
+    def test_preview_and_open_by_work_no_and_name(self):
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertIn("ハンマー手順", r.get_data(as_text=True))
+        from app.routes import files
+        opened = []
+        with mock.patch.object(files, "launch", side_effect=opened.append):
+            j = self.ok("/api/file/open", table="作業", column="作業NO", value="0-1-2", rowid=self.rowid["0-1-2"])
+        self.assertEqual((j["what"], [p.name for p in opened]), ("PDF", ["０－１－２＿abc点検.pdf"]))
+        # 見つからない: 理由に探し方
+        r = self.preview("無いもの", self.rowid["0-1-3"])
+        self.assertEqual(r.status_code, 404)
+        self.assertIn("全角・半角", r.get_data(as_text=True))
+        # 行が分からない・行と値が合わない(ほかの行の rowid)は断る
+        self.assertEqual(self.preview("ﾊﾝﾏｰの取り扱い", None).status_code, 403)
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-2"])
+        self.assertEqual(r.status_code, 403)
+        self.assertIn("値が変わっています", r.get_data(as_text=True))
+        # 同じ作業名でも 作業NO が違えば別のファイル(0-1-4 は無い)
+        self.assertEqual(self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-4"]).status_code, 404)
+
+    def test_unknown_column_in_place_refused(self):
+        st = self.ok("/api/easy/state", table="作業")
+        rows = [dict(c, **({"作業名": {"click": "preview", "place": "x/{作業番号}_{値}"}}.get(c["name"], {})))
+                for c in st["columns"]]
+        r = self.post("/api/easy/columns", table="作業", rows=rows)
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("{作業番号} という列", r.get_json()["message"])
+
+
 class ClickActionTest(_Case):
     """クリックで実行(0.12.0・0.13.0): 値をコピー / 現物を開く / プレビュー。開くもの = Excel・Word・PDF・URL。"""
 

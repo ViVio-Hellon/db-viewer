@@ -258,6 +258,14 @@ export function createGrid(root, opts = {}) {
     }));
   }
 
+  // 場所の決まりに {列名} がある列のために、その行の値と rowid を渡す(0.23.0)
+  function rowCtx(row) {
+    const values = {};
+    for (const [n, c] of Object.entries(st.byName)) values[n] = row.r[c.i] ?? "";
+    return { values, rowid: st.keyIndex >= 0 ? row.r[st.keyIndex] : "" };
+  }
+  const needsRow = (act) => act && /\{(?!値\})[^{}]+\}/.test(act.place || "");
+
   function rowEl(row, cols) {
     const tr = el("tr", { dataset: { k: row.k } });
     if (String(row.k) === String(st.selectedKey)) tr.setAttribute("aria-selected", "true");
@@ -266,9 +274,10 @@ export function createGrid(root, opts = {}) {
       const v = row.r[col.i] ?? "";
       const act = st.actions[n];
       let td;
-      if (act && actsOn(act, v)) {
+      const ctx = needsRow(act) ? rowCtx(row) : null;
+      if (act && actsOn(act, v, ctx)) {
         td = el("td", { class: col.kind === "num" ? "n" : "" },
-                el("span", { class: `cell-act cell-act--${act.click}`, text: v, title: actionHint(act, v) }));
+                el("span", { class: `cell-act cell-act--${act.click}`, text: v, title: actionHint(act, v, ctx) }));
       } else {
         td = el("td", { class: col.kind === "num" ? "n" : "", text: v });
         if (v.length > 12) td.title = v;
@@ -356,7 +365,10 @@ export function createGrid(root, opts = {}) {
     if (!act || e.detail > 1) return;
     const name = visible()[[...tr.cells].indexOf(act.closest("td"))];
     const row = rowByKey(tr.dataset.k);
-    if (name && row && st.actions[name]) runAction(st.actions[name], row.r[st.byName[name].i] ?? "");
+    if (name && row && st.actions[name]) {
+      const act2 = st.actions[name];
+      runAction(act2, row.r[st.byName[name].i] ?? "", needsRow(act2) ? rowCtx(row) : null);
+    }
   });
   // 値を押す列は、2 回目の押し下げで文字を選ばない(ダブルクリックで青く塗られて見えるのを防ぐ)
   tbody.addEventListener("mousedown", (e) => { if (e.detail > 1 && e.target.closest(".cell-act")) e.preventDefault(); });

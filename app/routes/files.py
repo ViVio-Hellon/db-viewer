@@ -61,18 +61,21 @@ document.getElementById("ext").addEventListener("click", function (e) {{
     return Response(body, content_type="text/html; charset=utf-8")
 
 
-def _where(table: str, column: str, value: str, need: str):
-    """(種類, 行き先, 断りの応答)。"""
+def _where(table: str, column: str, value: str, need: str, rowid=None):
+    """(種類, 行き先, 断りの応答)。rowid は場所の決まりに {列名} があるとき(その行の値で埋める。0.23.0)。"""
     try:
         conn = get_db()
         session_setup.get_setup(conn)
     except (shared_db.DbNotFound, settings_tables.SetupError) as exc:
         return "", None, (str(exc), 409)
-    kind, target, problem = simple_table.resolve(conn, table, column, value, ref_base(), need=need)
+    kind, target, problem = simple_table.resolve(conn, table, column, value, ref_base(), need=need, rowid=rowid)
     if problem:
         return "", None, (problem, 403)
     if kind == "file" and (target is None or not target.is_file()):
-        return "", None, (f"ファイルが見つかりません: {target or value}", 404)
+        searched = target is not None and target.suffix.lower() not in simple_table.OPEN_KINDS
+        return "", None, (f"ファイルが見つかりません: {target or value}"
+                          + ("(このフォルダの Excel・Word・PDF などを、全角・半角・大文字小文字を問わず探しました。"
+                             "サブフォルダは見ません)" if searched else ""), 404)
     return kind, target, None
 
 
@@ -81,7 +84,7 @@ def preview():
     table = request.args.get("table", "")
     column = request.args.get("column", "")
     value = request.args.get("value", "")
-    kind, target, refuse = _where(table, column, value, simple_table.CLICK_PREVIEW)
+    kind, target, refuse = _where(table, column, value, simple_table.CLICK_PREVIEW, request.args.get("rowid"))
     if refuse:
         return _page(*refuse)
     if kind == "url":
@@ -215,7 +218,7 @@ def open_file():
     body = request.get_json(silent=True) or {}
     table, column = str(body.get("table") or ""), str(body.get("column") or "")
     value = "" if body.get("value") is None else str(body.get("value"))
-    kind, target, refuse = _where(table, column, value, simple_table.CLICK_OPEN)
+    kind, target, refuse = _where(table, column, value, simple_table.CLICK_OPEN, body.get("rowid"))
     if refuse:
         message, status = refuse
         return jsonify({"error": {"code": "open", "message": message}}), status

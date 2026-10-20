@@ -139,7 +139,10 @@ function renderDetail(row) {
       b.addEventListener("click", () => previewFile(data.table, n, row[idx[n]]));
       dd.appendChild(b);
     }
-    const act = actionButton((data.actions || {})[n], row[idx[n]]);
+    const values = {};
+    for (const name of names) values[name] = row[idx[name]] ?? "";
+    const act = actionButton((data.actions || {})[n], row[idx[n]],
+                             { values, rowid: data.key_index >= 0 ? row[data.key_index] : "" });
     if (act) dd.appendChild(act);
     dl.append(dt, dd);
   };

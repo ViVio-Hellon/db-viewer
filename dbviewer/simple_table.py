@@ -82,6 +82,12 @@ OPEN_KINDS = {".xlsx": "Excel", ".xlsm": "Excel", ".xls": "Excel", ".csv": "Exce
               ".txt": "テキスト", ".log": "テキスト"}
 # アプリの窓の中で HTML にして見せるもの(office_preview)
 OFFICE_PREVIEW = {".xlsx", ".xlsm", ".docx"}
+# 場所の決まりの {列名}(0.23.0): 同じ行のほかの列の値を入れる。{値} は押したマスの値
+_ROW_MARK = re.compile(r"\{([^{}]+)\}")
+# 名前で探すとき(拡張子を書かなかった)の順: Excel → Word → PDF → ほか
+FIND_ORDER = (".xlsx", ".xlsm", ".xls", ".docx", ".docm", ".doc", ".pdf", ".csv",
+              ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".txt", ".log")
+_DASHES = re.compile("[\u2010-\u2015\u2212\uff0d]")     # ‐ ‑ ‒ – — ― − － → -
 MAX_CHOICES = 500
 
 MSG_CONFLICT = "ほかの端末が先にこの行を変えていました。いまの値に置き換えたので、もう一度直してください。"
@@ -258,6 +264,10 @@ def validate(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -
                       or (_SCHEME.match(place) and not _DRIVE.match(place) and not _URL_OK.match(place))):
             return [], (f"「{name}」の場所は、http:// か https:// で始まる URL か、ファイルの場所にしてください"
                         f"(マスの値を入れる所は {PLACE_MARK}。空なら値そのもの)。")
+        unknown = [m for m in row_marks(place) if m not in known]
+        if unknown:
+            return [], (f"「{name}」の場所に書いた {{{unknown[0]}}} という列は [{table}] にありません"
+                        f"(同じ行のほかの列は {{列名}}、押したマスの値は {PLACE_MARK})。")
         got[name] = ColumnSetting(name, bool(r.get("show", True)), inp, step or "1", bool(r.get("print", True)),
                                   click, place)
     if got and not any(c.show for c in got.values()):
@@ -374,11 +384,16 @@ def actions(settings, table: str = "") -> dict[str, dict[str, str]]:
             for c in settings if c.click}
 
 
-def click_target(setting: ColumnSetting, value: Any) -> tuple[str, str]:
+def row_marks(place: str) -> list[str]:
+    """場所の決まりに書いた {列名}({値} は除く)。"""
+    return [m for m in _ROW_MARK.findall(place or "") if m != PLACE_MARK[1:-1]]
+
+
+def click_target(setting: ColumnSetting, value: Any, row: Optional[dict[str, Any]] = None) -> tuple[str, str]:
     """開く列の、そのマスの行き先 → (種類, 行き先)。種類は "url" / "file" / ""(開けない)。
 
-    画面(`cellaction.js`)と同じ決まり。場所の決まりが空なら値そのもの、{値} があればそこへ、
-    無ければ末尾に付ける。URL の決まりなら値は URL 用に符号化する。
+    画面(`cellaction.js`)と同じ決まり。場所の決まりが空なら値そのもの。{値} か {列名}(同じ行のほかの列。
+    0.23.0)があればそこへ入れ、どちらも無ければ末尾に値を付ける。URL の決まりなら値は URL 用に符号化する。
     `javascript:` などの URL でもファイルでもないものは開かない。"""
     from urllib.parse import quote
     text = text_of(value).strip().strip('"')
@@ -388,13 +403,64 @@ def click_target(setting: ColumnSetting, value: Any) -> tuple[str, str]:
     if not place:
         target = text
     else:
-        put = quote(text, safe="") if _URL_OK.match(place) else text
-        target = place.replace(PLACE_MARK, put) if PLACE_MARK in place else place + put
+        is_url = bool(_URL_OK.match(place))
+        put = (lambda v: quote(v, safe="")) if is_url else (lambda v: v)
+        marks = row_marks(place)
+        if PLACE_MARK in place or marks:
+            target = place.replace(PLACE_MARK, put(text))
+            for name in marks:
+                if row is not None and name in row:
+                    target = target.replace("{" + name + "}", put(text_of(row[name]).strip()))
+        else:
+            target = place + put(text)
     if _URL_OK.match(target):
         return "url", target
     if _SCHEME.match(target) and not _DRIVE.match(target):
         return "", ""
     return "file", target
+
+
+def name_key(name: str) -> str:
+    """ファイル名を比べる形: 全角・半角(カナ・英数・記号)、大文字・小文字、空白、ハイフンの種類 を問わない。"""
+    text = unicodedata.normalize("NFKC", name or "")
+    text = _DASHES.sub("-", text)
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def find_file(path: "Path") -> Optional["Path"]:
+    """そのファイル。無ければ同じフォルダから、名前が同じとみなせるものを探す(0.23.0)。
+
+    - 拡張子まで書いてあれば、拡張子も含めて比べる
+    - 拡張子を書いていなければ、開ける形式(Excel・Word・PDF…)のどれか。FIND_ORDER の順、同じなら新しいもの
+    比べ方は `name_key`(0-1-1_ﾊﾝﾏｰの取り扱い と ０－１－１＿ハンマーの取り扱い.xlsx は同じ)。サブフォルダは見ない。"""
+    from pathlib import Path as _P
+    path = _P(path)
+    if path.is_file():
+        return path
+    folder = path.parent
+    try:
+        if not folder.is_dir():
+            return None
+        files = [f for f in folder.iterdir() if f.is_file()]
+    except OSError:
+        return None
+    has_ext = path.suffix.lower() in OPEN_KINDS
+    want = name_key(path.name)
+    if has_ext:
+        hits = [f for f in files if name_key(f.name) == want]
+    else:
+        hits = [f for f in files if f.suffix.lower() in OPEN_KINDS and name_key(f.stem) == want]
+    if not hits:
+        return None
+    order = {ext: i for i, ext in enumerate(FIND_ORDER)}
+
+    def rank(f):
+        try:
+            age = -f.stat().st_mtime
+        except OSError:
+            age = 0
+        return (order.get(f.suffix.lower(), len(order)), age)
+    return sorted(hits, key=rank)[0]
 
 
 def open_kind(path) -> str:
@@ -552,7 +618,7 @@ def file_target(value: str, base) -> Optional["Path"]:
 
 
 def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base, *,
-            need: str) -> tuple[str, Any, str]:
+            need: str, rowid: Any = None) -> tuple[str, Any, str]:
     """押したマスの行き先 → (種類 "url"/"file", URL か Path, だめなら理由)。
 
     **その表のその列に入っている値だけ**(どこのファイルでも開ける口にしない)。
@@ -572,10 +638,28 @@ def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base,
     if hit is None:
         return "", None, "その値は表に入っていません(保存してから開いてください)。"
     if s.click in OPENS:
-        kind, target = click_target(s, value)
+        row = None
+        marks = [m for m in row_marks(s.place) if m in column_names(conn, table)]
+        if marks:
+            # {列名} はその行の値で埋める。行は rowid で引き、押したマスの値がその行のものか確かめる
+            try:
+                key = int(str(rowid))
+            except (TypeError, ValueError):
+                return "", None, "どの行か分からないので開けません(一覧を読み直してください)。"
+            got = conn.execute(f"SELECT * FROM {q(table)} WHERE rowid = ?", (key,))
+            names = [d[0] for d in got.description]
+            found = got.fetchone()
+            if found is None:
+                return "", None, "その行はもうありません(一覧を読み直してください)。"
+            row = dict(zip(names, found))
+            if text_of(row.get(column)).strip() != str(value).strip():
+                return "", None, "その行の値が変わっています(一覧を読み直してください)。"
+        kind, target = click_target(s, value, row)
         if not kind:
             return "", None, f"この値は開けません(URL でもファイルの場所でもない): {value}"
         if kind == "url":
             return "url", target, ""
-        return "file", file_target(target, base), ""
-    return "file", file_target(value, base), ""
+        path = file_target(target, base)
+        return "file", (find_file(path) or path) if path is not None else None, ""
+    path = file_target(value, base)
+    return "file", (find_file(path) or path) if path is not None else None, ""
