@@ -436,44 +436,59 @@ INDEX_RETRY_SEC = 10.0        # 見つからなかったとき、この時間よ
 MAX_WALK_FILES = 50_000       # たどるファイルの上限(大きすぎる場所でいつまでも待たせない)
 MAX_WALK_DEPTH = 8
 _index_lock = threading.Lock()
-_index: dict[str, tuple[float, list[tuple["Path", str, str]]]] = {}
+_index: dict[str, tuple[float, list[tuple["Path", str, str]], dict[str, Any]]] = {}
 
 
-def _walk(folder: "Path") -> list[tuple["Path", str, str]]:
-    """フォルダの下の、開ける形式のファイル → (場所, 名前の比べる形, 拡張子を除いた比べる形)。"""
+def _walk(folder: "Path") -> tuple[list[tuple["Path", str, str]], dict[str, Any]]:
+    """フォルダの下の、開ける形式のファイル → (場所, 名前の比べる形, 拡張子を除いた比べる形)。
+
+    見つからなかったときに理由を言えるよう、たどった数・読めなかったフォルダも数える。"""
     out: list[tuple["Path", str, str]] = []
+    stats: dict[str, Any] = {"dirs": 0, "files": 0, "denied": 0, "error": "", "truncated": False}
     stack = [(folder, 0)]
-    while stack and len(out) < MAX_WALK_FILES:
+    while stack:
+        if len(out) >= MAX_WALK_FILES:
+            stats["truncated"] = True
+            break
         here, depth = stack.pop()
         try:
             entries = list(os.scandir(here))
-        except OSError:
+        except OSError as exc:
+            stats["denied"] += 1
+            stats["error"] = stats["error"] or f"{here}: {exc}"
             continue
+        stats["dirs"] += 1
         for e in entries:
             try:
                 if e.is_dir(follow_symlinks=False):
                     if depth < MAX_WALK_DEPTH and not e.name.startswith("."):
                         stack.append((Path(e.path), depth + 1))
                 elif e.is_file() and not e.name.startswith("~$"):          # ~$ は Excel が開いているときの印
+                    stats["files"] += 1
                     p = Path(e.path)
                     if p.suffix.lower() in OPEN_KINDS:
                         out.append((p, name_key(p.name), name_key(p.stem)))
             except OSError:
                 continue
-    return out
+    return out, stats
 
 
 def _entries(folder: "Path", *, fresh: bool = False) -> tuple[list[tuple["Path", str, str]], float]:
+    items, _stats, age = _entries_stats(folder, fresh=fresh)
+    return items, age
+
+
+def _entries_stats(folder: "Path", *, fresh: bool = False):
     key = str(folder)
     now = time.monotonic()
     with _index_lock:
         got = _index.get(key)
         if got and not fresh and now - got[0] < INDEX_TTL_SEC:
-            return got[1], now - got[0]
-    items = _walk(folder)
+            return got[1], got[2], now - got[0]
+    items, stats = _walk(folder)
     with _index_lock:
-        _index[key] = (time.monotonic(), items)
-    return items, 0.0
+        _index[key] = (time.monotonic(), items, stats)
+    return items, stats, 0.0
 
 
 def forget_index() -> None:
@@ -520,6 +535,69 @@ def find_files(path: "Path") -> list["Path"]:
     for f in sorted(hits, key=lambda f: (order.get(f.suffix.lower(), len(order)), -mtime(f))):
         best.setdefault(str(f.parent), f)
     return sorted(best.values(), key=lambda f: (f.parent != folder, -mtime(f)))
+
+
+MAX_NEAR = 8
+
+
+def near_files(path: "Path") -> list["Path"]:
+    """同じ名前は無いが、**似た名前**のファイル(見つからなかったときに見せる。新しい順)。
+
+    - 名前に「_」があれば、最初の「_」までが同じもの(作業NO が同じ。0-1-1_ハンマー取扱い・0-1-1 ハンマー など)。
+      0-1-1 と 0-1-10 は別とみなす。ほかの作業NO のファイルは出さない
+    - 「_」が無ければ、名前の比べる形がよく似ているもの(difflib)"""
+    import difflib
+    from pathlib import Path as _P
+    path = _P(path)
+    try:
+        if not path.parent.is_dir():
+            return []
+    except OSError:
+        return []
+    items, _age = _entries(path.parent)
+    want = name_key(path.stem if path.suffix.lower() in OPEN_KINDS else path.name)
+    hits: dict[str, "Path"] = {}
+    if "_" in want:
+        no = want.split("_", 1)[0]
+        for p, _full, stem in items:
+            if no and stem.startswith(no) and (len(stem) == len(no) or stem[len(no)] not in "0123456789-."):
+                hits.setdefault(str(p), p)
+    else:
+        stems: dict[str, list] = {}
+        for p, _full, stem in items:
+            stems.setdefault(stem, []).append(p)
+        for stem in difflib.get_close_matches(want, list(stems), n=MAX_NEAR, cutoff=0.75):
+            for p in stems[stem]:
+                hits.setdefault(str(p), p)
+
+    def mtime(f):
+        try:
+            return f.stat().st_mtime
+        except OSError:
+            return 0.0
+    return sorted(hits.values(), key=lambda f: -mtime(f))[:MAX_NEAR]
+
+
+def explain_missing(path: "Path") -> str:
+    """見つからなかった理由(フォルダに届かない・何を探したか・読めなかったフォルダ・打ち切り)。"""
+    from pathlib import Path as _P
+    path = _P(path)
+    folder = path.parent
+    try:
+        folder.stat()
+        if not folder.is_dir():
+            return f"探すフォルダがありません(ファイルです): {folder}"
+    except OSError as exc:
+        return (f"探すフォルダに届きません: {folder}({exc})。場所の決まりのフォルダ名と、"
+                "その PC・共有フォルダにつながるか(エクスプローラで開けるか)を確かめてください。")
+    _items, stats, _age = _entries_stats(folder)
+    msg = (f"{folder} と、その下のフォルダ {max(stats['dirs'] - 1, 0)} 個(ファイル {stats['files']:,} 個)を探しましたが、"
+           f"「{path.name}」と同じとみなせる名前はありませんでした(全角・半角・大文字小文字・空白は問わずに比べています)。")
+    if stats["denied"]:
+        msg += f" 読めなかったフォルダが {stats['denied']} 個あります({stats['error']})。"
+    if stats["truncated"]:
+        msg += f" ファイルが多すぎるので {MAX_WALK_FILES:,} 個で打ち切りました。"
+    return msg
 
 
 def find_file(path: "Path") -> Optional["Path"]:

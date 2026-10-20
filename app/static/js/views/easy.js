@@ -138,12 +138,16 @@ function columnRow(c) {
   kind.appendChild(pick);
   // クリック(0.12.0・0.13.0): 値を押したときにすること。開くときは「場所」({値} にマスの値が入る。空なら値そのもの)
   const clickTd = document.createElement("td");
+  clickTd.className = "click";
   const clickPick = document.createElement("div"); clickPick.className = "pick";
   const click = document.createElement("select"); click.className = "input"; click.dataset.f = "click";
   click.setAttribute("aria-label", `${c.name} を押したとき`);
   for (const [v, label] of st.clicks || []) click.appendChild(option(v, label, v === (c.click || "")));
-  const place = document.createElement("input"); place.className = "input"; place.dataset.f = "place";
-  place.type = "text"; place.value = c.place || ""; place.style.width = "22em";
+  // 長いパス(\\server\…\{作業NO}_{作業名})も全部見えるよう、折り返す欄にする(0.25.0)。改行は入れさせない
+  const place = document.createElement("textarea"); place.className = "input"; place.dataset.f = "place";
+  place.rows = 2; place.value = c.place || ""; place.spellcheck = false;
+  place.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+  place.addEventListener("input", () => { if (/[\r\n]/.test(place.value)) place.value = place.value.replace(/[\r\n]+/g, ""); });
   place.placeholder = "場所: 空 = 値そのもの / 例 図面\\{値}.pdf ・ 手順書\\{作業NO}_{作業名}";
   place.title = "開くもの(Excel・Word・PDF・URL)は、値か この場所 から決まります。{値} にマスの値、"
     + "{列名} に同じ行のその列の値が入ります。拡張子を書かなければ、フォルダの中から 全角・半角・大文字小文字を問わず "

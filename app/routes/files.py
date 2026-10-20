@@ -88,17 +88,21 @@ def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str
         return "", None, (f"ファイルが見つかりません: {value}", 404)
     found = simple_table.find_files(target)
     if pick:
-        chosen = next((f for f in found if _rel(f, target.parent) == pick), None)
+        # 選べるのは、サーバが探し直した候補(同じ名前)か、似た名前の候補だけ
+        pool = found or simple_table.near_files(target)
+        chosen = next((f for f in pool if _rel(f, target.parent) == pick), None)
         if chosen is None:
             return "", None, ("選んだファイルが見つかりません(動かされたかもしれません。もう一度押してください)。", 404)
         return "file", chosen, None
     if len(found) > 1:
-        return "choose", (target, found), None
+        return "choose", (target, found, ""), None
     if not found:
-        searched = target.suffix.lower() not in simple_table.OPEN_KINDS
-        return "", None, (f"ファイルが見つかりません: {target}"
-                          + ("(このフォルダとサブフォルダの Excel・Word・PDF などを、全角・半角・大文字小文字を問わず"
-                             "探しました)" if searched else ""), 404)
+        why = simple_table.explain_missing(target)
+        log.info("ファイルが見つかりません: %s / %s", target, why)
+        near = simple_table.near_files(target)
+        if near:                                         # 似た名前があれば、選ばせる(勝手には開かない)
+            return "choose", (target, near, "同じ名前のファイルはありませんでした。似た名前のファイルがあります。" + why), None
+        return "", None, (f"ファイルが見つかりません: {target.name}。{why}", 404)
     return "file", found[0], None
 
 
@@ -116,8 +120,8 @@ def _choices(target, found) -> list[dict]:
     return out
 
 
-def _choose_page(target, found) -> Response:
-    """同じ名前がいくつものフォルダにあるとき、プレビューの窓で選ばせる(新しい順)。"""
+def _choose_page(target, found, note: str = "") -> Response:
+    """同じ名前がいくつものフォルダにあるとき(または似た名前しか無いとき)、プレビューの窓で選ばせる(新しい順)。"""
     from html import escape
     from urllib.parse import urlencode
     args = {k: v for k, v in request.args.items() if k not in ("pick", "go", "sheet")}
@@ -131,8 +135,9 @@ def _choose_page(target, found) -> Response:
             "ul{list-style:none;padding:0;margin:12px 0} li{margin:0 0 8px}"
             "a{display:inline-block;padding:6px 10px;border:1px solid #9bb3bf;border-radius:6px;text-decoration:none;color:#0e6b84}"
             "small{margin-left:10px;color:#6b7c86}</style>"
-            f"<p>「{escape(target.name)}」と同じ名前のファイルが <b>{len(found)} か所</b>にあります。見るものを選んでください"
-            "(新しい順)。</p>"
+            + (f"<p>{escape(note)}</p><p>見るものを選んでください(新しい順)。</p>" if note else
+               f"<p>「{escape(target.name)}」と同じ名前のファイルが <b>{len(found)} か所</b>にあります。見るものを選んでください"
+               "(新しい順)。</p>") +
             f"<ul>{rows}</ul></html>")
     return Response(body, content_type="text/html; charset=utf-8")
 
@@ -285,9 +290,10 @@ def open_file():
         message, status = refuse
         return jsonify({"error": {"code": "open", "message": message}}), status
     if kind == "choose":                                  # 同じ名前がいくつものフォルダに → 画面で選ばせる
-        base, found = target
+        base, found, note = target
         return jsonify({"ok": False, "kind": "choose", "choices": _choices(base, found),
-                        "message": f"「{base.name}」と同じ名前のファイルが {len(found)} か所にあります。開くものを選んでください。"})
+                        "message": (note + " 開くものを選んでください。") if note else
+                        f"「{base.name}」と同じ名前のファイルが {len(found)} か所にあります。開くものを選んでください。"})
     if kind == "url":
         return jsonify({"ok": True, "kind": "url", "url": target})
     what = simple_table.open_kind(target)

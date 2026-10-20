@@ -715,6 +715,12 @@
   .easytable td.name small { display:block; color:var(--faint); font-family:var(--mono); font-size:var(--fs-2xs); }
   .easytable .pick { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   .easytable .pick .input { min-width:0; }
+  /* 0.25.0: クリックの列は広く。場所(パス)は欄いっぱいで、長いパスも見えるように */
+  .easytable td.click { width:52%; min-width:30em; }
+  .easytable td.click .pick { flex-direction:column; align-items:stretch; }
+  .easytable td.click [data-f="place"] { width:100% !important; font-family:var(--mono); font-size:var(--fs-sm);
+                                         resize:vertical; min-height:3.2em; line-height:1.45; white-space:pre-wrap;
+                                         overflow-wrap:anywhere; }
   .easytable tr.is-changed td { background:var(--accent-soft); }
   .easytable tr.is-off td.name b { color:var(--faint); }
   .accedit { margin-top:14px; padding-top:12px; border-top:1px solid var(--hairline); display:grid; gap:8px; }

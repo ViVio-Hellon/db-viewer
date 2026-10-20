@@ -432,7 +432,7 @@ class WorkFileTest(_Case):
         # 見つからない: 理由に探し方
         r = self.preview("無いもの", self.rowid["0-1-3"])
         self.assertEqual(r.status_code, 404)
-        self.assertIn("サブフォルダ", r.get_data(as_text=True))
+        self.assertIn("その下のフォルダ", r.get_data(as_text=True))                # 何をどれだけ探したか
         # 行が分からない・行と値が合わない(ほかの行の rowid)は断る
         self.assertEqual(self.preview("ﾊﾝﾏｰの取り扱い", None).status_code, 403)
         r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-2"])
@@ -492,6 +492,35 @@ class WorkFileTest(_Case):
         (self.dir / "HVC" / "0-1-3_無いもの.pdf").write_bytes(b"%PDF-1.4 late")
         with mock.patch.object(simple_table, "INDEX_RETRY_SEC", -1):
             self.assertEqual(self.preview("無いもの", self.rowid["0-1-3"]).data, b"%PDF-1.4 late")
+
+    def test_similar_names_and_reasons(self):
+        """0.25.0: 同じ名前が無ければ、同じ作業NO の似た名前を選ばせる。無ければ何をどれだけ探したかを出す。"""
+        (self.dir / "L-1作業場").mkdir()
+        (self.dir / "L-1作業場" / "0-1-3_無いもの(改定2).pdf").write_bytes(b"%PDF-1.4 near")
+        (self.dir / "0-1-30_ほかの作業.pdf").write_bytes(b"%PDF-1.4 other")         # 0-1-3 と 0-1-30 は別
+        simple_table.forget_index()
+        r = self.preview("無いもの", self.rowid["0-1-3"])
+        html = r.get_data(as_text=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("似た名前", html)
+        self.assertIn("0-1-3_無いもの(改定2).pdf", html)
+        self.assertNotIn("0-1-30", html)
+        q = {"table": "作業", "column": "作業名", "value": "無いもの", "rowid": self.rowid["0-1-3"],
+             "pick": "L-1作業場/0-1-3_無いもの(改定2).pdf"}
+        self.assertEqual(self.c.get("/api/file/preview", query_string=q, headers=self.h).data, b"%PDF-1.4 near")
+        # ほかの作業NO のファイルは似た名前に出さない(0-1-4 は 0-1-1 と作業名が同じでも)
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-4"])
+        self.assertEqual(r.status_code, 404)
+        text = r.get_data(as_text=True)
+        self.assertIn("その下のフォルダ 1 個", text)
+        # 探すフォルダに届かない
+        st = self.ok("/api/easy/state", table="作業")
+        place = str(self.tmp / "届かない") + "/{作業NO}_{作業名}"
+        rows = [dict(c, **({"作業名": {"click": "preview", "place": place}}.get(c["name"], {}))) for c in st["columns"]]
+        self.ok("/api/easy/columns", table="作業", rows=rows)
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 404)
+        self.assertIn("探すフォルダに届きません", r.get_data(as_text=True))
 
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")
