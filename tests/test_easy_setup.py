@@ -561,6 +561,12 @@ class WorkFileTest(_Case):
         self.assertEqual((j["ok"], j["tried"], j["hit"]), (True, 4, 2))                       # 0-1-1 と 0-1-2
         self.assertEqual(j["example"]["found"][0]["name"], "0-1-1_ハンマーの取り扱い.xlsx")
         self.assertIn("その下のフォルダ", j["missing"]["why"])
+        # 本当に探したか: 集めたファイル名と、近い順(0.28.0)
+        l = j["listing"]
+        self.assertEqual((l["reached"], l["collected"]), (True, 4))
+        self.assertTrue(l["for"].startswith("0-1-3_"))
+        self.assertEqual(len(l["closest"]), 4)
+        self.assertTrue(all(0 <= c["score"] <= 100 for c in l["closest"]))
         j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=str(self.dir) + "/*")
         self.assertEqual(j["ok"], False)
         self.assertIn("* だけでは", j["message"])
@@ -614,6 +620,8 @@ class WorkFileTest(_Case):
         r = self.post("/api/file/check", table="作業", column="作業名", value="ﾊﾝﾏｰの取り扱い", rowid=self.rowid["0-1-1"])
         self.assertEqual(r.status_code, 404)
         self.assertIn("探すフォルダに届きません", r.get_json()["error"]["message"])
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=r"\\NGY-232010\共有\無い所\{作業NO}_{作業名}")
+        self.assertEqual((j["listing"]["reached"], j["listing"]["collected"]), (False, 0))   # 入れなければ集めていない
 
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")

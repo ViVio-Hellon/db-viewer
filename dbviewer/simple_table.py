@@ -612,6 +612,43 @@ def near_files(path: "Path") -> list["Path"]:
     return sorted(hits.values(), key=lambda f: -mtime(f))[:MAX_NEAR]
 
 
+def closest_names(path: "Path", limit: int = 15) -> dict[str, Any]:
+    """集めたファイル名を、探す名前に近い順に(0.28.0。「試す」で、本当に探したかを見せる)。
+
+    答え: reached(フォルダに入れたか)・folder・collected(集めた数)・dirs(見たフォルダ数)・
+    closest = [{name, folder(探し始めからの場所), score(似ている度合い 0〜100), match(当たり)}]"""
+    import difflib
+    from . import local_paths
+    folder, name = local_paths.split(Path(path))
+    out: dict[str, Any] = {"reached": False, "folder": str(folder), "collected": 0, "dirs": 0, "closest": []}
+    if not local_paths.reachable(folder):
+        return out
+    items, stats, _age = _entries_stats(folder)
+    out.update(reached=True, collected=len(items), dirs=stats["dirs"])
+    test, has_ext = name_matcher(name)
+    want = name_key(name.replace(WILD, "") if has_ext else _P_stem(name).replace(WILD, ""))
+    scored = []
+    for p, full, stem in items:
+        hit = test(full, stem)
+        ratio = 1.0 if hit else difflib.SequenceMatcher(None, want, full if has_ext else stem, autojunk=False).ratio()
+        scored.append((ratio, hit, p))
+    scored.sort(key=lambda t: (-t[0], str(t[2])))
+    for ratio, hit, p in scored[:limit]:
+        try:
+            rel = p.parent.relative_to(folder).as_posix()
+        except ValueError:
+            rel = str(p.parent)
+        out["closest"].append({"name": p.name, "folder": "" if rel == "." else rel,
+                               "score": round(ratio * 100), "match": hit})
+    return out
+
+
+def _P_stem(name: str) -> str:
+    """拡張子を除いた名前(開ける形式の拡張子だけ外す)。"""
+    p = Path(name.replace(WILD, "x"))
+    return name[: -len(p.suffix)] if p.suffix.lower() in OPEN_KINDS else name
+
+
 def explain_missing(path: "Path") -> str:
     """見つからなかった理由(フォルダに届かない・何を探したか・読めなかったフォルダ・打ち切り)。"""
     from pathlib import Path as _P

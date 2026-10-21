@@ -223,6 +223,11 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
         item["why"] = simple_table.explain_missing(path)
         item["near"] = [{"name": f.name, "folder": _rel(f.parent, path.parent)} for f in simple_table.near_files(path)]
         out["missing"] = item
+    # 本当に探したか: 集めたファイル名の数と、探す名前に近い順(見つからない例があればその名前で。0.28.0)
+    pivot = (misses or hits)[0][1]
+    if pivot is not None:
+        out["listing"] = simple_table.closest_names(pivot)
+        out["listing"]["for"] = local_paths.split(pivot)[1]
     return out
 
 

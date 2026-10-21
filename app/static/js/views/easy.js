@@ -194,6 +194,34 @@ function insertAt(area, text) {
   area.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function listingBox(l) {
+  const box = document.createElement("details");
+  box.className = "placehelp__list";
+  const sum = document.createElement("summary");
+  if (!l.reached) {
+    sum.textContent = `フォルダに入れなかったので、ファイル名を 1 つも集めていません(探していません): ${l.folder}`;
+    box.appendChild(sum);
+    return box;
+  }
+  sum.textContent = `集めたファイル名 ${l.collected.toLocaleString()} 個(見たフォルダ ${l.dirs} 個)── 「${l.for}」に近い順`;
+  box.appendChild(sum);
+  const ol = document.createElement("ol");
+  for (const c of l.closest) {
+    const li = document.createElement("li");
+    li.textContent = `${c.match ? "当たり" : `${c.score}%`}  ${c.folder ? `${c.folder} / ` : ""}${c.name}`;
+    if (c.match) li.className = "is-hit";
+    ol.appendChild(li);
+  }
+  if (!l.closest.length) {
+    const li = document.createElement("li");
+    li.textContent = "(開ける形式のファイルが 1 つもありません)";
+    ol.appendChild(li);
+  }
+  box.appendChild(ol);
+  box.open = true;
+  return box;
+}
+
 function placeHelp(c, place) {
   const box = document.createElement("div");
   box.className = "placehelp";
@@ -251,6 +279,8 @@ function placeHelp(c, place) {
       }
       result.textContent = lines.join("\n");
       result.className = `placehelp__result ${!r.ok ? "is-ng" : r.hit === r.tried ? "is-ok" : "is-warn"}`;
+      // 0.28.0: 本当に探したか。集めたファイル名の数と、探す名前に近い順
+      if (r.listing) result.appendChild(listingBox(r.listing));
       if (r.suggest && st.can_write) {                    // 書いた場所に届かず、この PC の同じフォルダで見つかった
         const fix = document.createElement("button");
         fix.type = "button"; fix.className = "btn btn--commit"; fix.style.marginTop = "4px";
