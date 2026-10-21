@@ -572,6 +572,62 @@
         </div>
       </section>
 
+      <section class="tabpanel tabpanel--scroll" id="panel-dist" role="tabpanel" aria-labelledby="tab-dist" hidden>
+        {# 配布設定(0.30.0。`dbviewer/distribution.py`、python-web-tools と同じ作り)。1 台で決めた設定を、
+           ツールのフォルダごと配った先の PC でそのまま使う。書き出す・読み込み直す・消すは管理者パスワード #}
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">配</i>
+            <h3>いま置いてある配布設定</h3>
+            <span class="st st--warn" id="distState">…</span>
+          </header>
+          <div class="pad">
+            <p class="why" id="distMeta"></p>
+            <div class="tablewrap" id="distBundleWrap" hidden>
+              <table class="table">
+                <thead><tr><th class="t">項目</th><th class="t">値</th></tr></thead>
+                <tbody id="distBundle"></tbody>
+              </table>
+            </div>
+            <p class="why">置き場所: <code id="distPath"></code>
+              ── <b>配った先に関わるものはすべてこのフォルダ</b>に入ります(設定.json・設定ファイル.json・はじめに読む.txt)。
+              <span id="distApplied"></span></p>
+          </div>
+        </section>
+
+        <section class="card">
+          <header>
+            <i class="ib ib--sm" aria-hidden="true">出</i>
+            <h3>この PC の設定を配布設定にする</h3>
+          </header>
+          <div class="pad">
+            <p class="why">
+              いまこの PC に入っている値をそのまま書き出します(前に書き出した中身は置き換えます)。
+              配った先は<b>起動したときに読み込みます</b>。無い項目・空の項目は埋め、<b>書き出し直した配布設定</b>なら、
+              前の配布のまま変えていない項目も新しい値に入れ替えます。<b>その PC で変えた設定は上書きしません</b>。
+            </p>
+            <fieldset class="distchecks" id="distItems"><legend>設定(この PC のいまの値)</legend></fieldset>
+            <fieldset class="distchecks" id="distContents"><legend>設定ファイル</legend></fieldset>
+            <div class="field distpass">
+              <label for="distPassword">管理者パスワード</label>
+              <input class="input" id="distPassword" type="password" autocomplete="off" style="max-width:16em">
+            </div>
+            <p class="status status--ng" id="distWhy" hidden></p>
+            <div class="btn-row">
+              <button class="btn btn--commit" type="button" id="distExport">配布設定を書き出す</button>
+              <button class="btn" type="button" id="distReapply">配布設定を読み込み直す</button>
+              <button class="btn btn--danger" type="button" id="distRemove">配布設定を消す</button>
+            </div>
+            <p class="why">
+              <b>設定ファイル</b>を共有フォルダに置いているなら「設定ファイルの場所」だけで足ります(みんな同じファイルを見ます)。
+              <b>この PC の中に置いているときは、配った先からは見えない</b>ので「設定ファイルの中身」を入れてください。
+              配った先は、その PC の設定ファイルがまだ無ければ、その中身で作ります。
+              「読み込み直す」は、その PC にすでにある設定も上書きします(共有フォルダの設定ファイルは上書きしません)。
+              配るときは <code>scripts\make_dist.bat</code> で配布用フォルダを作ってください(このフォルダも入ります)。
+            </p>
+          </div>
+        </section>
+      </section>
       <section class="tabpanel tabpanel--scroll" id="panel-terminal" role="tabpanel" aria-labelledby="tab-terminal" hidden>
         <section class="card">
           <header>
@@ -751,6 +807,14 @@
   .placehelp__list summary { cursor:pointer; font-weight:600; }
   .placehelp__list ol { margin:4px 0 0; padding-left:1.6em; font-family:var(--mono); }
   .placehelp__list li.is-hit { color:var(--ok); font-weight:600; }
+  .distchecks { border:1px solid var(--hairline); border-radius:8px; padding:8px 12px; margin:8px 0; display:grid; gap:6px; }
+  .distchecks legend { padding:0 4px; color:var(--muted); font-size:var(--fs-xs); }
+  .distchecks label { display:grid; grid-template-columns:auto minmax(10em, 18em) 1fr; gap:8px; align-items:baseline; }
+  .distchecks .v { font-family:var(--mono); font-size:var(--fs-xs); color:var(--muted); overflow-wrap:anywhere; }
+  .distchecks .here { color:var(--state-warn); font-size:var(--fs-xs); }
+  .distchecks label.is-unset { opacity:.6; }
+  .distpass { margin-top:8px; }
+  @media (max-width: 720px) { .distchecks label { grid-template-columns:auto 1fr; } .distchecks .v { grid-column:2; } }
   .placehelp__list ul { margin:4px 0 0; padding-left:1.2em; display:grid; gap:6px; }
   .placehelp__why { margin:4px 0; color:var(--ink); }
   .placehelp__place { font-family:var(--mono); word-break:break-all; color:var(--muted); }
@@ -834,7 +898,9 @@
 <script type="module">
   import { start } from "{{ url_for('static', filename='js/views/settings.js') }}";
   import { start as startEasy } from "{{ url_for('static', filename='js/views/easy.js') }}";
+  import { start as startDist } from "{{ url_for('static', filename='js/views/dist.js') }}";
   start({{ state | tojson }});
   startEasy();
+  startDist();
 </script>
 {% endblock %}

@@ -20,6 +20,10 @@ r"""配布用フォルダを作る(python-web-tools の scripts\make_dist.py と
     python scripts\make_dist.py                     # ツールの隣に「DBビューア_VERx.y.z」
     python scripts\make_dist.py --out D:\配布\今回   # 置き場所を指定
     python scripts\make_dist.py --zip               # zip も作る
+    python scripts\make_dist.py --no-settings       # 配布設定を入れない
+
+配った先で同じ設定(設定ファイル・開く DB・置き場所・管理者パスワード)を使いたいときは、先に
+設定 →「配布設定」で書き出しておく(ツールの直下の `配布設定\`。配った先が起動時に読み込む。0.30.0)。
 """
 from __future__ import annotations
 
@@ -64,6 +68,10 @@ EXCLUDE_NAMES: tuple[str, ...] = (
     "*.sqlite3", "*.sqlite3-journal", "*.db", "*.accdb", "*.laccdb", "Access.log",
 )
 
+# 配布設定のフォルダ(`dbviewer/distribution.py` の置き場所と同じ)。
+# **INCLUDE には入れない** ── 入れるかどうかは --no-settings で決める
+SETTINGS = Path("配布設定")
+
 # できたフォルダに**入っていてはいけない**もの(最後に確かめる)
 FORBIDDEN: tuple[str, ...] = ("data", "logs", "tests", ".git", "src-tauri")
 
@@ -91,6 +99,28 @@ def _inside(path: Path, parent: Path) -> bool:
     return True
 
 
+def _settings_src() -> Path:
+    """書き出した配布設定の場所(アプリが書くところ。`DBVIEWER_DISTRIBUTION_DIR` で変えていればそこ)。"""
+    sys.path.insert(0, str(ROOT))
+    from dbviewer import distribution
+    return Path(distribution.DIR)
+
+
+def _settings_lines(folder: Path) -> list[str]:
+    """配布設定の中身を、メモと画面に出す形で(管理者パスワードの値は出さない)。"""
+    sys.path.insert(0, str(ROOT))
+    from dbviewer import distribution
+    bundle = distribution.read(folder)
+    if bundle is None:
+        return ["  (中身がありません・読めません)"]
+    lines = [f"  {distribution.ITEM_LABELS.get(k, k)}: {distribution.show(k, v)}" for k, v in bundle.settings.items()]
+    if bundle.contents is not None:
+        lines.append(f"  {distribution.CONTENTS_LABEL}: {distribution.CONTENTS_NAME}")
+    if bundle.created_at:
+        lines.append(f"  (作成 {bundle.created_at} / {bundle.created_on})")
+    return lines
+
+
 def find_exe() -> Path | None:
     for name in EXE_CANDIDATES:
         path = ROOT / name
@@ -100,7 +130,7 @@ def find_exe() -> Path | None:
 
 
 def build(out: Path, *, force: bool = False, make_zip: bool = False,
-          exe: Path | None = None) -> tuple[Path, list[str]]:
+          exe: Path | None = None, with_settings: bool = True) -> tuple[Path, list[str]]:
     """配布用フォルダを作る。戻り値は (できたフォルダ, 画面に出す行)。断るときは `SystemExit`。"""
     out = out.resolve()
     if _inside(out, ROOT):
@@ -138,6 +168,17 @@ def build(out: Path, *, force: bool = False, make_zip: bool = False,
         lines.append("デスクトップ版(exe)は入っていません。GitHub Actions の「デスクトップ版(Windows)」で"
                      "作った DBViewer.exe を、ツールのフォルダの直下(Start.vbs と同じ場所)に置いてから"
                      "作り直してください(無くてもブラウザ版の Start.vbs で動きます)。")
+
+    # 配布設定: 入れる/入れないを**はっきり決める**(--no-settings)
+    settings_src = _settings_src()
+    if with_settings and settings_src.is_dir():
+        shutil.copytree(settings_src, out / SETTINGS, ignore=_ignore)
+        lines.append(f"{SETTINGS} フォルダを入れました(配った先が起動時に読み込みます):")
+        lines += _settings_lines(out / SETTINGS)
+    elif with_settings:
+        lines.append("配布設定は入っていません(設定 →「配布設定」で書き出すと、配った先が同じ設定で始められます)。")
+    else:
+        lines.append("配布設定は入れていません(--no-settings)。")
 
     # 入っていてはいけないものが無いか、最後に確かめる
     leaked = [p for p in FORBIDDEN if (out / p).exists()]
@@ -180,6 +221,10 @@ def _memo(lines: list[str]) -> str:
         "     exe が無いとき・動かないときは Start.vbs(ブラウザ版)で起動できます",
         "  5. ブラウザ版とデスクトップ版は同時に動きません。後から開いたほうが理由を出して止まります",
         "",
+        "配布設定(このフォルダに「配布設定」があれば)",
+        "  起動したときに読み込みます(設定ファイル・開く DB・置き場所・管理者パスワードなど)。",
+        "  その PC で変えた設定は上書きしません。揃えたいときは 設定 →「配布設定」→「読み込み直す」",
+        "",
         "以前の版から入れ替えるとき",
         "  設定(接続先・記録の置き場所など)は PC ごとのローカル領域(%LOCALAPPDATA%\\DBViewer)に",
         "  あるので、新しいフォルダで起動すればそのまま使えます。古い版のツールは先に閉じる(終了ボタン)",
@@ -200,12 +245,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="作る場所に中身があれば消して作り直す")
     parser.add_argument("--zip", action="store_true", help="zip も作る")
     parser.add_argument("--exe", help="入れるデスクトップ版の exe(既定: 直下の DBViewer.exe など)")
+    parser.add_argument("--no-settings", action="store_true", help="配布設定(ツール直下の 配布設定)を入れない")
     args = parser.parse_args(argv)
 
     out = Path(args.out) if args.out else default_out()
     try:
         _out, lines = build(out, force=args.force, make_zip=args.zip,
-                            exe=Path(args.exe) if args.exe else None)
+                            exe=Path(args.exe) if args.exe else None, with_settings=not args.no_settings)
     except SystemExit as exc:
         print(exc, file=sys.stderr)
         return 1

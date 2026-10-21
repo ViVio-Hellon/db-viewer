@@ -54,8 +54,10 @@ if not os.environ.get("DBVIEWER_LOG_DIR"):
 #
 # ローカル領域(`%LOCALAPPDATA%`)にはロックファイルと長時間処理の記録が
 # 入る。本番の領域を汚さないよう、こちらも逃がしておく。
+# 配布設定(0.30.0)の既定はツールの直下(`<リポジトリ>/配布設定`)。試験の書き出しで作らない
 for _var, _name in (("DBVIEWER_CONFIG_PATH", "user_config.json"),
-                    ("DBVIEWER_LOCAL_DIR", "")):
+                    ("DBVIEWER_LOCAL_DIR", ""),
+                    ("DBVIEWER_DISTRIBUTION_DIR", "配布設定")):
     if os.environ.get(_var):
         continue                         # 明示指定があれば尊重する(調査用)
     _dir = tempfile.mkdtemp(prefix="dbviewer_test_")

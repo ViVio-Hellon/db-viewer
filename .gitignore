@@ -11,3 +11,6 @@ src-tauri/target/
 src-tauri/gen/
 # 配るときに直下へ置く exe(GitHub Actions の成果物)。リポジトリには入れない
 /DBViewer.exe
+
+# 配布設定(0.30.0)。その場所の設定・管理者パスワード(撹拌した値)が入るのでリポジトリには入れない
+/配布設定/

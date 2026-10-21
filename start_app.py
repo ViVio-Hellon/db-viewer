@@ -501,6 +501,12 @@ def _initialize(srv, *, watch_idle: bool = True) -> None:
 
     try:
         srv.mark_stage("アプリを準備中")
+        # 配布設定(ツール直下の `配布設定\`)があれば、**接続先を見るより先に**読む(0.30.0)
+        # ── 設定ファイル・開く DB の場所が入っているので、読む前に見ると既定の場所を見る
+        from dbviewer import distribution
+        loaded = distribution.apply_on_start()
+        if loaded.applied:
+            log().info("配布設定を読み込みました: %s", ", ".join(loaded.applied))
         # 接続先の自己診断。**結果はログに残す。** 読めなくても起動は止めない
         # (設定画面の「いまの状態」が同じ内容を画面にも出す)
         info = shared_db.probe()

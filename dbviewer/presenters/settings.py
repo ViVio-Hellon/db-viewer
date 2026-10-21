@@ -45,6 +45,7 @@ TABS: tuple[tuple[str, str], ...] = (
     ("behavior", "動作"),
     ("access", "Access 取り込み"),
     ("log", "ログ"),
+    ("dist", "配布設定"),
     ("terminal", "この端末"),
 )
 TAB_KEYS = frozenset(k for k, _ in TABS)

@@ -228,3 +228,46 @@ def fs_list():
     view = fs_browse.browse(request.args.get("path", ""),
                             access=request.args.get("access") == "1")
     return jsonify(fs_browse.to_dict(view))
+
+
+# ------------------------------------------------------------------
+# 配布設定(0.30.0。`dbviewer/distribution.py`)。書き出す・読み込み直す・消すは管理者パスワード
+# ------------------------------------------------------------------
+def _dist_reply(result):
+    from dbviewer import distribution
+    trace.event("distribution", result.message, level="INFO" if result.ok else "WARN")
+    if not result.ok:
+        status = {distribution.REFUSE_NEED_PASSWORD: 403, distribution.REFUSE_FAILED: 500}.get(result.reason, 400)
+        return jsonify({"error": {"code": result.reason, "message": result.message}}), status
+    return jsonify({"dist": distribution.summary(), "message": result.message})
+
+
+@bp.get("/api/dist/state")
+def dist_state():
+    from dbviewer import distribution
+    return jsonify({"dist": distribution.summary()})
+
+
+@bp.post("/api/dist/export")
+def dist_export():
+    """この PC のいまの設定を、配布設定として書き出す。"""
+    from dbviewer import distribution
+    body = request.get_json(silent=True) or {}
+    items = body.get("items")
+    if not isinstance(items, list) or not all(isinstance(x, str) for x in items):
+        return jsonify({"error": {"code": "bad_input", "message": "入れる項目の形が違います。"}}), 400
+    return _dist_reply(distribution.export(str(body.get("password", "")), items, bool(body.get("contents"))))
+
+
+@bp.post("/api/dist/reapply")
+def dist_reapply():
+    from dbviewer import distribution
+    body = request.get_json(silent=True) or {}
+    return _dist_reply(distribution.reapply(str(body.get("password", ""))))
+
+
+@bp.post("/api/dist/remove")
+def dist_remove():
+    from dbviewer import distribution
+    body = request.get_json(silent=True) or {}
+    return _dist_reply(distribution.remove(str(body.get("password", ""))))

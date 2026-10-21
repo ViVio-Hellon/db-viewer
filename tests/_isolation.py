@@ -79,6 +79,12 @@ def ensure_isolated() -> list[str]:
     # 記録の置き場所を設定で変えても、既定(戻り先)は一時フォルダ
     config.DEFAULT_LOG_DIR = config.LOG_DIR
 
+    # 配布設定(0.30.0): 既定はリポジトリ直下。試験で書き出すと作業ツリーにできてしまう
+    from dbviewer import distribution
+    if _under(distribution.DIR, repo):
+        distribution.DIR = _escape("dist") / "配布設定"
+        moved.append("distribution.DIR")
+
     # Access.log: 本体と同じフォルダ(試験ではリポジトリ直下)に書いてしまうので止める
     from dbviewer import user_settings
     user_settings.save(config.KEY_ACCESS_LOG, False)

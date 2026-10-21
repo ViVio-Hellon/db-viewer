@@ -42,6 +42,8 @@ cd src-tauri && cargo test --release           # 外枠(Rust)の試験
 ブラウザ版とデスクトップ版は同時に動きません(後から開いたほうが理由を出して止まる)。
 配り方: GitHub Actions の成果物 `DBViewer.exe` を直下に置いて `scripts\make_dist.bat` → 配布フォルダを配る →
 配った先で `scripts\make_shortcuts.vbs` を押す([docs/08](docs/08_デスクトップ版.md))。
+同じ設定(設定ファイル・開く DB・置き場所・管理者パスワード)で始めさせたいときは、先に 設定 →「配布設定」で書き出す
+(配った先が起動時に読み込む。その PC で変えた設定は上書きしない。0.30.0)。
 
 初回は 設定 → Access 取り込み で `.accdb` を `.sqlite3` にします（Windows の cscript + ACE）。
 その後に Access で足した表は「表を持ってくる…」で表ごとに足せます（本体を丸ごと差し替えない）。
