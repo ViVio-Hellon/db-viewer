@@ -187,7 +187,7 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
     if not rows:
         return {"ok": False, "message": f"「{column}」に値の入った行がありません。"}
     from . import local_paths
-    hits, misses, tried, moved = [], [], 0, ""
+    hits, misses, tried, moved, moved_note = [], [], 0, "", ""
     for row in rows:
         value = simple_table.text_of(row.get(column)).strip()
         kind, target = simple_table.click_target(setting, value, row)
@@ -199,9 +199,9 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
         tried += 1
         path = simple_table.file_target(target, base)
         if path is not None:
-            path, note = local_paths.reroute(path)            # 届かない \\PC名\… を この PC の同じフォルダに
+            path, note = local_paths.reroute(path)            # PC 名の書き間違い・名前の全角半角・この PC の同じフォルダ
             if note and not moved:
-                moved = str(path.parent)
+                moved, moved_note = str(local_paths.split(path)[0]), note
         found = simple_table.find_files(path) if path is not None else []
         item = {"value": value, "target": str(path),
                 "found": [{"name": f.name, "folder": _rel(f.parent, path.parent)} for f in found]}
@@ -211,11 +211,13 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
     out: dict[str, Any] = {"ok": True, "kind": "file", "tried": tried, "hit": len(hits),
                            "message": f"先頭の {tried} 行で試しました: {len(hits)} 行で見つかりました。"}
     if moved:
-        # 書いた場所に届かず、この PC の同じフォルダで探した → 場所をそちらに直す案を出す
-        name = re.split(r"[\\\\/]", place)[-1]
-        sep = "\\" if "\\" in moved else "/"
-        out["suggest"] = moved.rstrip("\\/") + sep + name
-        out["message"] += f" 書いた場所に届かないので、この PC の {moved} で探しました。場所をそちらに直してください。"
+        # 書いた場所のままでは届かず、読み替えて探した → 場所をそちらに直す案を出す
+        segs = re.split(r"[\\\\/]", place)
+        out["message"] += f" {moved_note}。"
+        if not any("{" in seg for seg in segs[:-1]):       # フォルダに {列} があると 1 行分に決まってしまうので出さない
+            sep = "\\" if "\\" in moved else "/"
+            out["suggest"] = moved.rstrip("\\/") + sep + segs[-1]
+            out["message"] += "場所をそちらに直してください。"
     if hits:
         out["example"] = hits[0][0]
     if misses:
@@ -228,6 +230,11 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
     if pivot is not None:
         out["listing"] = simple_table.closest_names(pivot)
         out["listing"]["for"] = local_paths.split(pivot)[1]
+        if not out["listing"]["reached"]:
+            # 届かない: どこまで辿れて、そこに何があるか(書いた場所と、読み替えの候補それぞれ。0.29.0)
+            folder = local_paths.split(pivot)[0]
+            out["listing"]["why"] = local_paths.unreachable_text(folder)
+            out["listing"]["tried"] = local_paths.diagnose(folder)
     return out
 
 

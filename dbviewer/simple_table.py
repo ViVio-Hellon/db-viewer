@@ -651,20 +651,14 @@ def _P_stem(name: str) -> str:
 
 def explain_missing(path: "Path") -> str:
     """見つからなかった理由(フォルダに届かない・何を探したか・読めなかったフォルダ・打ち切り)。"""
-    from pathlib import Path as _P
-    path = _P(path)
-    folder = path.parent
-    try:
-        folder.stat()
-        if not folder.is_dir():
-            return f"探すフォルダがありません(ファイルです): {folder}"
-    except OSError as exc:
-        return (f"探すフォルダに届きません: {folder}({exc})。場所の決まりのフォルダ名と、"
-                "その PC・共有フォルダにつながるか(エクスプローラで開けるか)を確かめてください。")
+    from . import local_paths
+    folder, name = local_paths.split(Path(path))
+    if not local_paths.reachable(folder):
+        return f"探すフォルダに届きません: {folder}。{local_paths.unreachable_text(folder)}"
     _items, stats, _age = _entries_stats(folder)
-    how = "に当てはまる名前" if WILD in path.name else "と同じとみなせる名前"
+    how = "に当てはまる名前" if WILD in name else "と同じとみなせる名前"
     msg = (f"{folder} と、その下のフォルダ {max(stats['dirs'] - 1, 0)} 個(ファイル {stats['files']:,} 個)を探しましたが、"
-           f"「{path.name}」{how}はありませんでした(全角・半角・大文字小文字・空白は問わずに比べています。"
+           f"「{name}」{how}はありませんでした(全角・半角・大文字小文字・空白は問わずに比べています。"
            f"名前の付け方が違うときは、場所の決まりに * を使うと幅を持たせられます)。")
     if stats["denied"]:
         msg += f" 読めなかったフォルダが {stats['denied']} 個あります({stats['error']})。"

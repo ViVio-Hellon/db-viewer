@@ -623,6 +623,81 @@ class WorkFileTest(_Case):
         j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=r"\\NGY-232010\共有\無い所\{作業NO}_{作業名}")
         self.assertEqual((j["listing"]["reached"], j["listing"]["collected"]), (False, 0))   # 入れなければ集めていない
 
+    def test_folder_name_width_differs(self):
+        """0.29.0: フォルダ名の全角・半角が違っても辿る(「(最新・移動禁止)」と「（最新・移動禁止）」は同じ)。"""
+        from dbviewer import local_paths
+        real = self.tmp / "作業標準（最新・移動禁止）" / "★見直し・改定済み" / "L-1作業場"
+        real.mkdir(parents=True)
+        (real / "0-1-1_ハンマーの取り扱い.pdf").write_bytes(b"%PDF-1.4 zen")
+        local_paths.forget()
+        place = str(self.tmp / "作業標準(最新・移動禁止)" / "★見直し・改定済み") + "/{作業NO}_{作業名}"
+        self.assertEqual(self.set_place(place).status_code, 200)
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-1"])
+        self.assertEqual((r.status_code, r.data), (200, b"%PDF-1.4 zen"))
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=place)
+        self.assertEqual(j["hit"], 1)
+        self.assertIn("全角・半角", j["message"])
+        self.assertIn("作業標準（最新・移動禁止）", j["suggest"])                     # 本当の名前に直す案
+        self.assertTrue(j["suggest"].endswith("{作業NO}_{作業名}"))
+
+    def test_pc_name_missing_head(self):
+        """0.29.0: PC 名の頭が抜けた書き間違い(NGY-232010 → NLM-NGY-232010)を、この PC の名前の形から補う。"""
+        from dbviewer import local_paths
+        self.assertEqual(local_paths.host_guesses("NGY-232010", "NLM-NGY-240638"), ["NLM-NGY-232010"])
+        self.assertEqual(local_paths.host_guesses("nlm-ngy-232010", "NGY-240638"), ["NGY-232010"])
+        self.assertEqual(local_paths.host_guesses("PC01", "NLM-NGY-240638"), [])
+        self.assertEqual(local_paths.host_guesses("NLM-NGY-232010", "NLM-NGY-240638"), [])  # 形が同じなら何もしない
+        p = mock.patch.object(local_paths, "this_pc", return_value="NLM-NGY-240638")
+        p.start()
+        self.addCleanup(p.stop)
+        place = r"\\NGY-232010\Users\xfa-ngykonpo\Desktop\作業標準(最新・移動禁止)\★見直し・改定済み\{作業NO}_{作業名}"
+        alts = [str(a) for a in local_paths.alternatives(local_paths.split(Path(place))[0])]
+        self.assertEqual(alts[0], r"\\NLM-NGY-232010\Users\xfa-ngykonpo\Desktop\作業標準(最新・移動禁止)\★見直し・改定済み")
+        # NLM-NGY-232010 には届く(と見立てる) → そこで探す
+        there = self.tmp / "NLM-NGY-232010"
+        there.mkdir()
+        (there / "0-1-1_ハンマーの取り扱い.pdf").write_bytes(b"%PDF-1.4 nlm")
+        real = local_paths.resolve_dir
+        q = mock.patch.object(local_paths, "resolve_dir",
+                              side_effect=lambda f: there if str(f).startswith("\\\\NLM-NGY-232010\\") else real(f))
+        q.start()
+        self.addCleanup(q.stop)
+        local_paths.forget()
+        self.assertEqual(self.set_place(place).status_code, 200)
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-1"])
+        self.assertEqual((r.status_code, r.data), (200, b"%PDF-1.4 nlm"))
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=place)
+        self.assertEqual(j["hit"], 1)
+        self.assertIn("PC 名を「NLM-NGY-232010」として探しました", j["message"])
+        self.assertIn("suggest", j)
+        q.stop()
+        # 届かなければ: PC 名とこの PC の名前を出して、書き間違いを確かめさせる
+        local_paths.forget()
+        r = self.post("/api/file/check", table="作業", column="作業名", value="ﾊﾝﾏｰの取り扱い", rowid=self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 404)
+        msg = r.get_json()["error"]["message"]
+        self.assertIn("PC「NGY-232010」", msg)
+        self.assertIn("NLM-NGY-240638", msg)
+
+    def test_diagnose_shows_how_far(self):
+        """0.29.0: 届かないとき、どこまで辿れて、そこにどんなフォルダがあるかを出す。"""
+        from dbviewer import local_paths
+        (self.tmp / "作業標準" / "★見直し・改定済み").mkdir(parents=True)
+        (self.tmp / "作業標準" / "旧版").mkdir()
+        local_paths.forget()
+        want = self.tmp / "作業標準" / "見直し・改定済み"
+        rows = local_paths.diagnose(want)
+        self.assertEqual(rows[0]["reached"], str(self.tmp / "作業標準"))
+        self.assertEqual(rows[0]["missing"], "見直し・改定済み")
+        self.assertEqual(rows[0]["children"][0], "★見直し・改定済み")               # 近い順
+        self.assertIn("までは有りますが", local_paths.unreachable_text(want))
+        place = str(want) + "/{作業NO}_{作業名}"
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=place)
+        l = j["listing"]
+        self.assertEqual(l["reached"], False)
+        self.assertIn("見直し・改定済み", l["why"])
+        self.assertIn("★見直し・改定済み", l["tried"][0]["children"])
+
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")
         rows = [dict(c, **({"作業名": {"click": "preview", "place": "x/{作業番号}_{値}"}}.get(c["name"], {})))

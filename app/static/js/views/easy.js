@@ -199,8 +199,38 @@ function listingBox(l) {
   box.className = "placehelp__list";
   const sum = document.createElement("summary");
   if (!l.reached) {
-    sum.textContent = `フォルダに入れなかったので、ファイル名を 1 つも集めていません(探していません): ${l.folder}`;
+    sum.textContent = `フォルダに届かないので、ファイル名を 1 つも集められていません: ${l.folder}`;
     box.appendChild(sum);
+    const first = (l.tried || [])[0];
+    if (l.why && !(first && first.reached)) {          // 途中まで辿れたときは、下の一覧と同じことなので出さない
+      const p = document.createElement("p");
+      p.className = "placehelp__why";
+      p.textContent = l.why;
+      box.appendChild(p);
+    }
+    // どこまで辿れて、そこに何があるか(書いた場所と、読み替えの候補。0.29.0)
+    const ul = document.createElement("ul");
+    for (const t of l.tried || []) {
+      const li = document.createElement("li");
+      const place = document.createElement("div");
+      place.className = "placehelp__place";
+      place.textContent = t.place;
+      li.appendChild(place);
+      const say = document.createElement("div");
+      if (t.found) say.textContent = `→ 有ります: ${t.found}`;
+      else if (t.reached) say.textContent = `→ 「${t.reached}」までは有ります。その中に「${t.missing}」がありません。`;
+      else say.textContent = `→ いちばん上の「${t.missing}」に届きません(PC 名・共有名・ドライブを確かめてください)。`;
+      li.appendChild(say);
+      if (t.children && t.children.length) {
+        const kids = document.createElement("div");
+        kids.className = "placehelp__kids";
+        kids.textContent = `そこにあるフォルダ(近い順): ${t.children.join(" / ")}`;
+        li.appendChild(kids);
+      }
+      ul.appendChild(li);
+    }
+    if (ul.children.length) box.appendChild(ul);
+    box.open = true;
     return box;
   }
   sum.textContent = `集めたファイル名 ${l.collected.toLocaleString()} 個(見たフォルダ ${l.dirs} 個)── 「${l.for}」に近い順`;

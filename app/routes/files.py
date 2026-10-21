@@ -87,7 +87,7 @@ def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str
     if target is None:
         return "", None, (f"ファイルがありません: {value}", 404)
     from dbviewer import local_paths
-    target, note = local_paths.reroute(target)             # 届かない \\PC名\… を この PC の同じフォルダに(0.27.0)
+    target, note = local_paths.reroute(target)             # PC 名の書き間違い・名前の全角半角・この PC の同じフォルダ
     if note:
         log.info("%s", note)
     found = simple_table.find_files(target)
@@ -106,8 +106,8 @@ def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str
         log.info("ファイルがありません: %s / %s", target, why)
         folder = local_paths.split(target)[0]
         if not local_paths.reachable(folder):
-            return "", None, (f"探すフォルダに届きません: {folder}"
-                              "(かんたん設定の「場所」を「▸ フォルダを選ぶ…」で選び直し、「試す」で確かめてください)", 404)
+            return "", None, (f"探すフォルダに届きません。{local_paths.unreachable_text(folder)}"
+                              "かんたん設定の「場所」を直して「試す」で確かめてください。", 404)
         near = simple_table.near_files(target)
         if near:                                         # 似た名前があれば、選ばせる(勝手には開かない)
             return "choose", (target, near, f"「{target.name}」はありません。似た名前のファイルがあります。"), None
