@@ -213,6 +213,9 @@ class ContentsTest(_Case):
         self.pc("配られた PC")
         shared = self.tmp / "共有" / "DBビューア設定.sqlite3"
         shared.parent.mkdir()
+        # 試験の一時フォルダは Windows では利用者のフォルダの下(= この PC の中)なので、共有と見立てる
+        here = distribution.is_here
+        self.patch(distribution, "is_here", lambda p: "共有" not in str(p) and here(p))
         user_settings.save(config.KEY_SETTINGS_FILE, str(shared))
         settings_file.ensure(shared)
         r = distribution.reapply("nisk")                                           # 読み込み直しでも
