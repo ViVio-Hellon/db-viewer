@@ -13,6 +13,7 @@ VBA 版は 全般設定・ID・<メイン>_設定 を Access で開いて決ま�
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -185,7 +186,8 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
     rows = [dict(zip(names, r)) for r in cur.fetchall()]
     if not rows:
         return {"ok": False, "message": f"「{column}」に値の入った行がありません。"}
-    hits, misses, tried = [], [], 0
+    from . import local_paths
+    hits, misses, tried, moved = [], [], 0, ""
     for row in rows:
         value = simple_table.text_of(row.get(column)).strip()
         kind, target = simple_table.click_target(setting, value, row)
@@ -196,6 +198,10 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
             continue
         tried += 1
         path = simple_table.file_target(target, base)
+        if path is not None:
+            path, note = local_paths.reroute(path)            # 届かない \\PC名\… を この PC の同じフォルダに
+            if note and not moved:
+                moved = str(path.parent)
         found = simple_table.find_files(path) if path is not None else []
         item = {"value": value, "target": str(path),
                 "found": [{"name": f.name, "folder": _rel(f.parent, path.parent)} for f in found]}
@@ -204,6 +210,12 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
         return {"ok": False, "message": "開ける値の行がありません(URL でもファイルの場所でもない)。"}
     out: dict[str, Any] = {"ok": True, "kind": "file", "tried": tried, "hit": len(hits),
                            "message": f"先頭の {tried} 行で試しました: {len(hits)} 行で見つかりました。"}
+    if moved:
+        # 書いた場所に届かず、この PC の同じフォルダで探した → 場所をそちらに直す案を出す
+        name = re.split(r"[\\\\/]", place)[-1]
+        sep = "\\" if "\\" in moved else "/"
+        out["suggest"] = moved.rstrip("\\/") + sep + name
+        out["message"] += f" 書いた場所に届かないので、この PC の {moved} で探しました。場所をそちらに直してください。"
     if hits:
         out["example"] = hits[0][0]
     if misses:

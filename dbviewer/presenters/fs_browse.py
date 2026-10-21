@@ -156,6 +156,15 @@ def _roots() -> list[Entry]:
     import sys
 
     roots: list[Entry] = []
+    # この人のデスクトップ(0.27.0)。リダイレクトされていても本当の場所を出す
+    from .. import local_paths
+    desk = local_paths.desktop_dir()
+    if desk is not None:
+        try:
+            if desk.is_dir():
+                roots.append(Entry(name="デスクトップ", path=str(desk), is_dir=True))
+        except OSError:
+            pass
     if sys.platform.startswith("win"):
         for letter in string.ascii_uppercase:
             drive = Path(f"{letter}:\\")

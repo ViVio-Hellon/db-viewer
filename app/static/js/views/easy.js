@@ -251,6 +251,20 @@ function placeHelp(c, place) {
       }
       result.textContent = lines.join("\n");
       result.className = `placehelp__result ${!r.ok ? "is-ng" : r.hit === r.tried ? "is-ok" : "is-warn"}`;
+      if (r.suggest && st.can_write) {                    // 書いた場所に届かず、この PC の同じフォルダで見つかった
+        const fix = document.createElement("button");
+        fix.type = "button"; fix.className = "btn btn--commit"; fix.style.marginTop = "4px";
+        fix.textContent = "場所をこのフォルダに直す";
+        fix.title = r.suggest;
+        fix.addEventListener("click", () => {
+          place.value = r.suggest;
+          place.dispatchEvent(new Event("input", { bubbles: true }));
+          place.dispatchEvent(new Event("change", { bubbles: true }));
+          toast("場所を直しました。「列の設定を保存」を押すと効きます。", "info");
+        });
+        result.appendChild(document.createElement("br"));
+        result.appendChild(fix);
+      }
     } catch (err) {
       result.textContent = err.message;
       result.className = "placehelp__result is-ng";

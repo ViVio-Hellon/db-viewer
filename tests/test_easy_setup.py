@@ -432,7 +432,7 @@ class WorkFileTest(_Case):
         # 見つからない: 理由に探し方
         r = self.preview("無いもの", self.rowid["0-1-3"])
         self.assertEqual(r.status_code, 404)
-        self.assertIn("その下のフォルダ", r.get_data(as_text=True))                # 何をどれだけ探したか
+        self.assertIn("ファイルがありません: 0-1-3_無いもの", r.get_data(as_text=True))   # 押したときは短く
         # 行が分からない・行と値が合わない(ほかの行の rowid)は断る
         self.assertEqual(self.preview("ﾊﾝﾏｰの取り扱い", None).status_code, 403)
         r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-2"])
@@ -512,7 +512,8 @@ class WorkFileTest(_Case):
         r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-4"])
         self.assertEqual(r.status_code, 404)
         text = r.get_data(as_text=True)
-        self.assertIn("その下のフォルダ 1 個", text)
+        self.assertIn("ファイルがありません", text)
+        self.assertIn("その下のフォルダ 1 個", simple_table.explain_missing(self.dir / "0-1-4_ﾊﾝﾏｰの取り扱い"))
         # 探すフォルダに届かない
         st = self.ok("/api/easy/state", table="作業")
         place = str(self.tmp / "届かない") + "/{作業NO}_{作業名}"
@@ -567,6 +568,52 @@ class WorkFileTest(_Case):
         self.assertIn("{作業番号} という列", j["message"])
         st = self.ok("/api/easy/state", table="作業")
         self.assertEqual(st["sample"]["作業NO"], "0-1-1")                                     # 例に使う行
+
+    def test_check_before_opening(self):
+        """0.27.0: 押す前に探す。無ければ窓を開かずに短く「ありません」。いくつもあれば選ぶ候補。"""
+        def check(value, no, **kw):
+            return self.post("/api/file/check", table="作業", column="作業名", value=value, rowid=self.rowid[no], **kw)
+        j = check("ﾊﾝﾏｰの取り扱い", "0-1-1").get_json()
+        self.assertEqual((j["kind"], j["name"]), ("file", "0-1-1_ハンマーの取り扱い.xlsx"))
+        r = check("無いもの", "0-1-3")
+        self.assertEqual((r.status_code, r.get_json()["error"]["message"]), (404, "ファイルがありません: 0-1-3_無いもの"))
+        (self.dir / "HVC").mkdir()
+        (self.dir / "HVC" / "0-1-1_ハンマーの取り扱い.pdf").write_bytes(b"%PDF-1.4 h")
+        simple_table.forget_index()
+        j = check("ﾊﾝﾏｰの取り扱い", "0-1-1").get_json()
+        self.assertEqual((j["kind"], len(j["choices"])), ("choose", 2))
+        # 選んだものを pick で渡せば、その 1 つ
+        j = check("ﾊﾝﾏｰの取り扱い", "0-1-1", pick="HVC/0-1-1_ハンマーの取り扱い.pdf").get_json()
+        self.assertEqual(j["name"], "0-1-1_ハンマーの取り扱い.pdf")
+
+    def test_unreachable_pc_uses_same_folder_here(self):
+        """0.27.0: PC名 の共有(Users ・ Desktop …)に届かなくても、この PC のデスクトップに同じフォルダがあればそこで探す。"""
+        from dbviewer import local_paths
+        desk = self.tmp / "Desktop"
+        (desk / "作業標準(最新・移動禁止)" / "★見直し・改定済み" / "L-1作業場").mkdir(parents=True)
+        (desk / "作業標準(最新・移動禁止)" / "★見直し・改定済み" / "L-1作業場" / "0-1-1_ハンマーの取り扱い.pdf").write_bytes(
+            b"%PDF-1.4 desk")
+        p = mock.patch.object(local_paths, "desktop_dir", return_value=desk)
+        p.start()
+        self.addCleanup(p.stop)
+        local_paths.forget()
+        place = r"\\NGY-232010\Users\xfa-ngykonpo\Desktop\作業標準(最新・移動禁止)\★見直し・改定済み\{作業NO}_{作業名}"
+        self.assertEqual(self.set_place(place).status_code, 200)
+        r = self.preview("ﾊﾝﾏｰの取り扱い", self.rowid["0-1-1"])
+        self.assertEqual((r.status_code, r.data), (200, b"%PDF-1.4 desk"))
+        # 試す: この PC の同じフォルダで探したこと・場所の直し方を出す
+        j = self.ok("/api/easy/try-place", table="作業", column="作業名", place=place)
+        self.assertEqual(j["hit"], 1)
+        self.assertIn("届かない", j["message"])
+        self.assertTrue(j["suggest"].endswith("{作業NO}_{作業名}"))
+        self.assertIn("★見直し・改定済み", j["suggest"])
+        # この PC にも無ければ「届きません」と短く
+        r = self.post("/api/file/check", table="作業", column="作業名", value="ﾊﾝﾏｰの取り扱い", rowid=self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.set_place(r"\\NGY-232010\共有\無い所\{作業NO}_{作業名}").status_code, 200)
+        r = self.post("/api/file/check", table="作業", column="作業名", value="ﾊﾝﾏｰの取り扱い", rowid=self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 404)
+        self.assertIn("探すフォルダに届きません", r.get_json()["error"]["message"])
 
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")

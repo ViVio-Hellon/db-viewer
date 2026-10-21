@@ -114,9 +114,24 @@ export async function runAction(spec, value, row = null) {
   if (!t.kind) { toast("この値は開けません(URL でもファイルの場所でもありません)。", "warn"); return; }
   const rowid = row && row.rowid !== undefined && row.rowid !== null ? String(row.rowid) : "";
   if (spec.click === "preview") {
+    // 0.27.0: 窓を開く前に探す。無ければ窓を開かず「ありません」と知らせる。いくつもあればここで選ぶ
+    let pick = "";
+    if (t.kind === "file" || rowMarks(spec.place).length) {
+      try {
+        const c = await api.post("/api/file/check", { table: spec.table || "", column: spec.column || "",
+                                                       value: text.trim(), rowid, need: "preview" });
+        if (c.kind === "choose") {
+          const i = await chooseBox(c.message, c.choices.map((x) => ({
+            label: `${x.folder} / ${x.name}`, sub: [x.mtime, x.what].filter(Boolean).join(" ・ ") })));
+          if (i === null) return;
+          pick = c.choices[i].pick;
+        }
+      } catch (err) { toast(err.message, "warn"); return; }
+    }
     // サーバが中身を見せる(URL は窓の中の枠に)。その列に入っている値だけ
     const q = new URLSearchParams({ table: spec.table || "", column: spec.column || "", value: text.trim() });
     if (rowid) q.set("rowid", rowid);
+    if (pick) q.set("pick", pick);
     if (!openWindow(tokenUrl(`/api/file/preview?${q}`), `${spec.column || ""} — ${text.trim()}`)) {
       toast("別の窓を開けませんでした。ポップアップの許可を確認してください。", "warn");
     }

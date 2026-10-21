@@ -85,7 +85,11 @@ def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str
     if kind == "url":
         return kind, target, None
     if target is None:
-        return "", None, (f"ファイルが見つかりません: {value}", 404)
+        return "", None, (f"ファイルがありません: {value}", 404)
+    from dbviewer import local_paths
+    target, note = local_paths.reroute(target)             # 届かない \\PC名\… を この PC の同じフォルダに(0.27.0)
+    if note:
+        log.info("%s", note)
     found = simple_table.find_files(target)
     if pick:
         # 選べるのは、サーバが探し直した候補(同じ名前)か、似た名前の候補だけ
@@ -97,12 +101,17 @@ def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str
     if len(found) > 1:
         return "choose", (target, found, ""), None
     if not found:
+        # 押したときの知らせは短く(0.27.0)。詳しい理由はログと、かんたん設定の「試す」に出す
         why = simple_table.explain_missing(target)
-        log.info("ファイルが見つかりません: %s / %s", target, why)
+        log.info("ファイルがありません: %s / %s", target, why)
+        folder = local_paths.split(target)[0]
+        if not local_paths.reachable(folder):
+            return "", None, (f"探すフォルダに届きません: {folder}"
+                              "(かんたん設定の「場所」を「▸ フォルダを選ぶ…」で選び直し、「試す」で確かめてください)", 404)
         near = simple_table.near_files(target)
         if near:                                         # 似た名前があれば、選ばせる(勝手には開かない)
-            return "choose", (target, near, "同じ名前のファイルはありませんでした。似た名前のファイルがあります。" + why), None
-        return "", None, (f"ファイルが見つかりません: {target.name}。{why}", 404)
+            return "choose", (target, near, f"「{target.name}」はありません。似た名前のファイルがあります。"), None
+        return "", None, (f"ファイルがありません: {target.name}", 404)
     return "file", found[0], None
 
 
@@ -277,6 +286,30 @@ def launch(path) -> None:
         raise OSError("この PC には開くアプリがありません")
     subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True)
+
+
+@bp.post("/api/file/check")
+def check():
+    """押す前に探す(0.27.0)。プレビューの窓を開く前に、無ければ「ありません」と知らせるため。
+
+    答え: kind = file(1 つ)/ url / choose(いくつも・似た名前。choices から選ぶ)。無ければ 404 と短い理由。"""
+    body = request.get_json(silent=True) or {}
+    table, column = str(body.get("table") or ""), str(body.get("column") or "")
+    value = "" if body.get("value") is None else str(body.get("value"))
+    need = simple_table.CLICK_OPEN if body.get("need") == "open" else simple_table.CLICK_PREVIEW
+    kind, target, refuse = _where(table, column, value, need, body.get("rowid"), str(body.get("pick") or ""))
+    if refuse:
+        message, status = refuse
+        trace.event("file.missing", message, level="INFO", data={"table": table, "column": column, "value": value})
+        return jsonify({"error": {"code": "missing", "message": message}}), status
+    if kind == "choose":
+        base, found, note = target
+        return jsonify({"ok": True, "kind": "choose", "choices": _choices(base, found),
+                        "message": (note + " 見るものを選んでください。") if note else
+                        f"「{base.name}」と同じ名前のファイルが {len(found)} か所にあります。見るものを選んでください。"})
+    if kind == "url":
+        return jsonify({"ok": True, "kind": "url", "url": target})
+    return jsonify({"ok": True, "kind": "file", "name": target.name})
 
 
 @bp.post("/api/file/open")
