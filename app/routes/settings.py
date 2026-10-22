@@ -90,12 +90,44 @@ def db_forget():
     s = auth.ensure()
     if not s.can_edit:
         return jsonify({"error": {"code": "level", "message": "接続先を外すのは 編集可 の人だけです。"}}), 403
-    if shared_db.is_set() and settings_file.same_file(path, shared_db.configured()):
-        return jsonify({"error": {"code": "current", "message": "いま開いている DB は外せません。"}}), 400
+    current = shared_db.is_set() and settings_file.same_file(path, shared_db.configured())
     if not settings_file.remove_db(path):
         return jsonify({"error": {"code": "gone", "message": "その接続先はもうありません。"}}), 404
-    trace.event("db.forget", "接続先から外した", data={"path": path, "by": s.user_id})
-    return jsonify(db_files.choices(can_add=s.can_edit))
+    if current:
+        # いま開いている DB を外した → この PC の選択も外す(0.31.0。外したのに開いたまま、にしない)
+        _clear_selection()
+    trace.event("db.forget", "接続先から外した", data={"path": path, "by": s.user_id, "current": current})
+    out = db_files.choices(can_add=s.can_edit)
+    out["cleared"] = current
+    if current:
+        out["message_done"] = "いま開いていた DB を接続先から外し、選択も外しました(ファイルは消していません)。"
+    return jsonify(out)
+
+
+def _clear_selection() -> None:
+    from dbviewer import config, user_settings
+    # 空の文字で覚える(無い = まだ選んでいない、だと接続先のいちばん上を自動で選んでしまう)
+    user_settings.save(config.KEY_DB_PATH, "")
+
+
+@bp.post("/api/settings/db-clear")
+def db_clear():
+    """見る DB の選択を外す(0.31.0)。この PC だけの設定なので誰でも。接続先の一覧はそのまま。"""
+    from dbviewer import db_files, shared_db
+    was = shared_db.configured()
+    _clear_selection()
+    trace.event("db.clear", "見る DB の選択を外した", data={"path": was})
+    out = db_files.choices(can_add=_can_edit())
+    out["message_done"] = "見る DB の選択を外しました(接続先の一覧はそのまま)。" if was else "もともと選んでいません。"
+    return jsonify(out)
+
+
+def _can_edit() -> bool:
+    from dbviewer import auth
+    try:
+        return bool(auth.ensure().can_edit)
+    except Exception:                                   # noqa: BLE001 - 分からなければ足す欄を出さないだけ
+        return False
 
 
 @bp.post("/api/settings/open-db")

@@ -282,10 +282,12 @@
               <label for="dbSelect">見る DB</label>
               <span class="pathrow">
                 <select class="input" id="dbSelect"></select>
+                <button class="btn" type="button" id="dbClear" title="この PC で見る DB を決めていない状態に戻す(接続先の一覧はそのまま)">選択を外す</button>
               </span>
               <small class="why real" id="dbPath" {% if not view.db_path %}hidden{% endif %}>→ {{ view.db_path }}</small>
             </div>
             <p class="why">選ぶとすぐその DB に切り替わります(上の帯の DB の名前を押しても同じ一覧が出ます)。
+              「選択を外す」で、この PC で見る DB を決めていない状態に戻せます(一覧はそのまま)。
               一覧は設定ファイルの「接続先」です(かんたん設定 → 設定ファイル)。</p>
             <div id="dbAddBox">
               <h4 class="accedit__title">接続先を足す <small class="why" style="margin:0">編集可 の人だけ。足すとすぐ開きます</small></h4>
@@ -310,7 +312,8 @@
             <span class="eyebrow" id="dbListWhere"></span>
           </header>
           <div class="pad">
-            <p class="why" style="margin-top:0">押すとその DB に切り替わります。× は一覧から外すだけで、ファイルは消しません(編集可 の人だけ)。</p>
+            <p class="why" style="margin-top:0">押すとその DB に切り替わります。× は一覧から外すだけで、ファイルは消しません(編集可 の人だけ)。
+              いま開いている DB を外すと、見る DB の選択も外れます。</p>
             <div class="dbmenu dbmenu--inline" id="dbRecent"></div>
           </div>
         </section>

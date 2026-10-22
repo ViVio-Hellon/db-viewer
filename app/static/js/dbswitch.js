@@ -4,11 +4,13 @@
   - **接続先**(設定ファイルの一覧)を並べる。押せばすぐその DB に切り替える
     (開ける .sqlite3 かはサーバが確かめる。だめなら理由を出して今のまま)
   - 編集可 の人には、**いまの DB と同じフォルダの .sqlite3**(一覧に無いもの)も出す。押すと足して開く
-  - × で接続先から外す(編集可 の人だけ。ファイルは消さない)
+  - × で接続先から外す(編集可 の人だけ。ファイルは消さない)。いま開いている DB も外せる(選択も外れる。0.31.0)
+  - 「選択を外す」で、この PC で見る DB を決めていない状態に戻す(0.31.0。一覧はそのまま)
   上の帯の「DB」のメニューと、設定 → 接続先 のコンボボックス・一覧(`renderList`)で同じものを出す。
 */
 import { api } from "./api.js";
 import { toast, toastError } from "./toast.js";
+import { confirmBox } from "./askbox.js";
 
 const NOTE_KEY = "dbviewer.dbswitch.note";
 
@@ -18,6 +20,28 @@ export async function openDb(path) {
   try { sessionStorage.setItem(NOTE_KEY, res.message || ""); } catch (_) { /* 出せないだけ */ }
   location.reload();
   return res;
+}
+
+function reloadWith(note) {
+  try { sessionStorage.setItem(NOTE_KEY, note || ""); } catch (_) { /* 出せないだけ */ }
+  location.reload();
+}
+
+/** 接続先から外す。いま開いている DB なら確かめてから外し、選択も外れるので画面を読み直す。
+    外したあとの一覧を返す(読み直すときと、やめたときは null)。 */
+async function forgetDb(button) {
+  const current = button.dataset.forgetCurrent === "1";
+  if (current && !(await confirmBox("いま開いている DB を接続先から外します。見る DB の選択も外れます"
+      + "(ファイルは消しません)。よろしいですか？", { ok: "外す", danger: true }))) return null;
+  const res = await api.post("/api/settings/db-forget", { path: button.dataset.forget });
+  if (res.cleared) { reloadWith(res.message_done); return null; }
+  return res;
+}
+
+/** 見る DB の選択を外す(この PC だけ。接続先の一覧はそのまま)。 */
+export async function clearDb() {
+  const res = await api.post("/api/settings/db-clear", {});
+  reloadWith(res.message_done);
 }
 
 /** 読み直したあとに、切り替えた知らせを出す(app.js が起動時に呼ぶ)。 */
@@ -47,11 +71,13 @@ function row(item, { removable = false } = {}) {
                node("small", "", item.exists ? `${item.folder}${item.mtime ? " ・ " + item.mtime : ""}`
                                              : `見つかりません: ${item.folder}`));
   wrap.appendChild(pick);
-  if (removable && !item.current) {
+  if (removable) {
     const x = node("button", "dbmenu__x", "×");
     x.type = "button";
     x.dataset.forget = item.path;
-    x.title = "接続先から外す(ファイルは消しません)";
+    if (item.current) x.dataset.forgetCurrent = "1";
+    x.title = item.current ? "接続先から外し、見る DB の選択も外す(ファイルは消しません)"
+      : "接続先から外す(ファイルは消しません)";
     x.setAttribute("aria-label", `${item.name} を接続先から外す`);
     wrap.appendChild(x);
   }
@@ -113,7 +139,7 @@ export function wire() {
     event.stopPropagation();
     const forget = event.target.closest("[data-forget]");
     if (forget) {
-      try { render(menu, await api.post("/api/settings/db-forget", { path: forget.dataset.forget })); }
+      try { const res = await forgetDb(forget); if (res) render(menu, res); }
       catch (err) { toastError(err); }
       return;
     }
@@ -133,7 +159,7 @@ export function wire() {
 }
 
 /** 設定 → 接続先: コンボボックス・一覧(開く・外す)・足す欄(足せる人だけ)。 */
-export async function renderList(list, { select = null, addBox = null, where = null } = {}) {
+export async function renderList(list, { select = null, addBox = null, where = null, clear = null } = {}) {
   if (!list) return;
   const draw = (data) => {
     list.replaceChildren(...(data.dbs.length ? data.dbs.map((r) => row(r, { removable: data.can_add }))
@@ -153,13 +179,14 @@ export async function renderList(list, { select = null, addBox = null, where = n
       }
       select.replaceChildren(...opts);
     }
+    if (clear) clear.disabled = !data.current;
   };
   if (list.dataset.wired !== "1") {
     list.dataset.wired = "1";
     list.addEventListener("click", async (event) => {
       const forget = event.target.closest("[data-forget]");
       if (forget) {
-        try { draw(await api.post("/api/settings/db-forget", { path: forget.dataset.forget })); }
+        try { const res = await forgetDb(forget); if (res) draw(res); }
         catch (err) { toastError(err); }
         return;
       }
@@ -167,6 +194,11 @@ export async function renderList(list, { select = null, addBox = null, where = n
       if (!pick || pick.dataset.current) return;
       try { await openDb(pick.dataset.open); } catch (err) { toastError(err); }
     });
+    if (clear) {
+      clear.addEventListener("click", async () => {
+        try { await clearDb(); } catch (err) { toastError(err); }
+      });
+    }
     if (select) {
       select.addEventListener("change", async () => {
         if (!select.value) return;

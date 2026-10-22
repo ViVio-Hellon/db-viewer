@@ -228,11 +228,11 @@ class OperationTest(unittest.TestCase):
         # 画面: 帯のボタン・接続先のコンボボックス
         self.assertIn('id="dbMenu"', self.c.get("/list").get_data(as_text=True))
         self.assertIn('id="dbSelect"', self.c.get("/settings?tab=source").get_data(as_text=True))
-        # 外す(ファイルは消さない)。いま開いているものは外せない
+        # 外す(ファイルは消さない)。いま開いているものを外すのは test_clear_selection(0.31.0)
         r = self.c.post("/api/settings/db-forget", json={"path": str(b)}, headers=self.h)
         self.assertEqual([x["file"] for x in r.get_json()["dbs"]], [self.path.name, "部品.sqlite3"])
+        self.assertFalse(r.get_json()["cleared"])
         self.assertTrue(b.is_file())
-        self.assertEqual(self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h).status_code, 400)
         # 閲覧のみ: 一覧から選ぶだけ(足す・外すはできない。同じフォルダの候補も出さない)
         with closing(settings_file.connect()) as c:
             c.execute("INSERT INTO アクセス権限 (ログインID, PC名, 権限, 有効) VALUES ('だれか', '', '編集可', 1)")
@@ -246,6 +246,52 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("接続先に無い DB", r.get_json()["error"]["message"])
         self.assertEqual(self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h).status_code, 403)
+
+    def test_clear_selection(self):
+        """0.31.0: 見る DB の選択を外せる(誰でも。一覧はそのまま)。いま開いている DB も接続先から外せる(選択も外れる)。"""
+        import shutil
+        from dbviewer import settings_file
+        self.use_own_settings_file()
+        self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
+        a = Path(self.tmp.name) / "A" / "部品.sqlite3"
+        a.parent.mkdir()
+        shutil.copy(self.path, a)
+
+        def choices():
+            return self.c.get("/api/settings/db-choices", headers=self.h).get_json()
+        self.assertEqual(self.c.post("/api/settings/open-db", json={"path": str(a)}, headers=self.h).status_code, 200)
+        self.assertEqual(choices()["current"], str(a))
+        # 選択を外す: 一覧はそのまま・接続先のいちばん上を勝手に選び直さない
+        r = self.c.post("/api/settings/db-clear", json={}, headers=self.h).get_json()
+        self.assertIn("選択を外しました", r["message_done"])
+        self.assertEqual(r["current"], "")
+        self.assertEqual([x["file"] for x in r["dbs"]], [self.path.name, "部品.sqlite3"])
+        self.assertFalse(shared_db.is_set())
+        self.assertEqual(choices()["current"], "")
+        self.assertEqual(self.c.get("/settings?tab=source").status_code, 200)       # 決めていなくても開ける
+        self.assertIn('id="dbClear"', self.c.get("/settings?tab=source").get_data(as_text=True))
+        r = self.c.post("/api/list/data", json={}, headers=self.h)
+        self.assertIn("決めていません", r.get_json()["error"]["message"])            # 一覧は理由を出す
+        # 選び直せる
+        self.assertEqual(self.c.post("/api/settings/open-db", json={"path": str(a)}, headers=self.h).status_code, 200)
+        # いま開いている DB を接続先から外す → 選択も外れる(ファイルは消さない)
+        r = self.c.post("/api/settings/db-forget", json={"path": str(a)}, headers=self.h).get_json()
+        self.assertTrue(r["cleared"])
+        self.assertEqual([x["file"] for x in r["dbs"]], [self.path.name])
+        self.assertEqual(r["current"], "")
+        self.assertTrue(a.is_file())
+        self.assertFalse(shared_db.is_set())
+        # 閲覧のみ でも選択は外せる(この PC だけの設定)。接続先から外すのはできない
+        self.assertEqual(self.c.post("/api/settings/open-db", json={"path": str(self.path)}, headers=self.h).status_code, 200)
+        with closing(settings_file.connect()) as c:
+            c.execute("INSERT INTO アクセス権限 (ログインID, PC名, 権限, 有効) VALUES ('だれか', '', '編集可', 1)")
+            c.commit()
+        auth.end()
+        self.assertEqual(self.c.post("/api/settings/db-forget", json={"path": str(self.path)}, headers=self.h).status_code, 403)
+        r = self.c.post("/api/settings/db-clear", json={}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.get_json()["can_add"])
+        self.assertFalse(shared_db.is_set())
 
     def test_old_settings_move_to_one_path(self):
         """0.18.0 までの 5 つの設定しか無い PC は、指していたファイルを 1 回だけ DB ファイルに移す。"""

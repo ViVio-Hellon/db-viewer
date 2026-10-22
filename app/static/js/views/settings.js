@@ -97,7 +97,7 @@ function render(state) {
   el.accdbTarget.value = state.accdb_target || "";
   showTargetDefault();
   loadDbFiles();
-  dbswitch.renderList(el.dbRecent, { select: el.dbSelect, addBox: el.dbAddBox, where: el.dbListWhere });
+  dbswitch.renderList(el.dbRecent, { select: el.dbSelect, addBox: el.dbAddBox, where: el.dbListWhere, clear: el.dbClear });
   logTab.render(state.log);
   if (el.settingsTabs) tabs.setBadges(el.settingsTabs, state.tab_badges);
 }
@@ -553,7 +553,7 @@ function startBring() {
 }
 
 export function start(state) {
-  for (const id of ["statusGrid", "dbPathText", "dbPath", "dbRecent", "dbSelect", "dbAddBox", "dbListWhere",
+  for (const id of ["statusGrid", "dbPathText", "dbPath", "dbRecent", "dbSelect", "dbClear", "dbAddBox", "dbListWhere",
                     "refDir", "refDirReal", "exportDir", "exportDirReal", "exportDirState", "refDirState", "exportEncoding",
                     "saveExport", "openExport", "saveRef",
                     "accessLog", "reloginMinutes", "accdbSource", "accdbTarget", "accdbTargetDefault", "openConverted",
