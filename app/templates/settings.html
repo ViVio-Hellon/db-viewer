@@ -306,15 +306,31 @@
           </div>
         </section>
         <section class="card" style="margin-top:12px">
+          {# 接続先の登録(0.32.0)。設定ファイルの「接続先」表をそのまま見て、足す・直す・消す。
+             直せるのは 編集可 の人か、管理者パスワードで鍵を開けたとき(アクセス権限と同じ鍵) #}
           <header>
             <i class="ib ib--sm" aria-hidden="true">覧</i>
-            <h3>接続先の一覧</h3>
+            <h3>接続先の登録</h3>
             <span class="eyebrow" id="dbListWhere"></span>
           </header>
           <div class="pad">
-            <p class="why" style="margin-top:0">押すとその DB に切り替わります。× は一覧から外すだけで、ファイルは消しません(編集可 の人だけ)。
-              いま開いている DB を外すと、見る DB の選択も外れます。</p>
-            <div class="dbmenu dbmenu--inline" id="dbRecent"></div>
+            <p class="why" style="margin-top:0">設定ファイルの「接続先」表そのものです。ここで直した一覧が、上の「見る DB」と帯の DB のメニューに出ます。
+              <b>消す</b>は一覧から消すだけで、DB ファイルは消しません。いま開いている DB を消すと、見る DB の選択も外れます。</p>
+            <div class="dbreg__lock" id="dbregLock" hidden>
+              <span class="why" id="dbregLockWhy"></span>
+              <span class="pathrow">
+                <input class="input" id="dbregPass" type="password" autocomplete="off" placeholder="管理者パスワード" style="max-width:14em">
+                <button class="btn" type="button" id="dbregUnlock">鍵を開ける</button>
+              </span>
+            </div>
+            <div class="tablewrap">
+              <table class="table dbreg">
+                <thead><tr><th class="t">番</th><th class="t">名前</th><th class="t">パス</th><th class="t">備考</th><th class="t">状態</th><th class="t"></th></tr></thead>
+                <tbody id="dbregRows"></tbody>
+                <tfoot id="dbregNew"></tfoot>
+              </table>
+            </div>
+            <p class="status status--ng" id="dbregWhy" hidden></p>
           </div>
         </section>
         <section class="card" style="margin-top:12px">
@@ -810,6 +826,15 @@
   .placehelp__list summary { cursor:pointer; font-weight:600; }
   .placehelp__list ol { margin:4px 0 0; padding-left:1.6em; font-family:var(--mono); }
   .placehelp__list li.is-hit { color:var(--ok); font-weight:600; }
+  .dbreg td { vertical-align:middle; }
+  .dbreg input.input { width:100%; min-width:6em; }
+  .dbreg td.path { min-width:22em; }
+  .dbreg td.state { white-space:nowrap; font-size:var(--fs-xs); }
+  .dbreg td.state.is-missing { color:var(--state-warn); }
+  .dbreg td.state.is-current { color:var(--state-ok); font-weight:600; }
+  .dbreg td.act { white-space:nowrap; }
+  .dbreg tr.is-dirty td { background:var(--warn-bg); }
+  .dbreg__lock { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0 10px; }
   .distchecks { border:1px solid var(--hairline); border-radius:8px; padding:8px 12px; margin:8px 0; display:grid; gap:6px; }
   .distchecks legend { padding:0 4px; color:var(--muted); font-size:var(--fs-xs); }
   .distchecks label { display:grid; grid-template-columns:auto minmax(10em, 18em) 1fr; gap:8px; align-items:baseline; }
@@ -902,8 +927,10 @@
   import { start } from "{{ url_for('static', filename='js/views/settings.js') }}";
   import { start as startEasy } from "{{ url_for('static', filename='js/views/easy.js') }}";
   import { start as startDist } from "{{ url_for('static', filename='js/views/dist.js') }}";
+  import { start as startDbReg } from "{{ url_for('static', filename='js/views/dbreg.js') }}";
   start({{ state | tojson }});
   startEasy();
   startDist();
+  startDbReg();
 </script>
 {% endblock %}

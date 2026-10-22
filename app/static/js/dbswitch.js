@@ -160,10 +160,11 @@ export function wire() {
 
 /** 設定 → 接続先: コンボボックス・一覧(開く・外す)・足す欄(足せる人だけ)。 */
 export async function renderList(list, { select = null, addBox = null, where = null, clear = null } = {}) {
-  if (!list) return;
   const draw = (data) => {
-    list.replaceChildren(...(data.dbs.length ? data.dbs.map((r) => row(r, { removable: data.can_add }))
-      : [node("div", "dbmenu__note", "接続先がまだありません。上の「接続先を足す」で足してください。")]));
+    if (list) {
+      list.replaceChildren(...(data.dbs.length ? data.dbs.map((r) => row(r, { removable: data.can_add }))
+        : [node("div", "dbmenu__note", "接続先がまだありません。上の「接続先を足す」で足してください。")]));
+    }
     if (where) where.textContent = `${data.dbs.length} 件 ・ ${data.settings_file}`;
     if (addBox) addBox.hidden = !data.can_add;
     if (select) {
@@ -181,9 +182,10 @@ export async function renderList(list, { select = null, addBox = null, where = n
     }
     if (clear) clear.disabled = !data.current;
   };
-  if (list.dataset.wired !== "1") {
-    list.dataset.wired = "1";
-    list.addEventListener("click", async (event) => {
+  const anchor = list || select;
+  if (anchor && anchor.dataset.wired !== "1") {
+    anchor.dataset.wired = "1";
+    if (list) list.addEventListener("click", async (event) => {
       const forget = event.target.closest("[data-forget]");
       if (forget) {
         try { const res = await forgetDb(forget); if (res) draw(res); }

@@ -88,8 +88,8 @@ def db_forget():
     from dbviewer import auth, db_files, settings_file, shared_db
     path = str((request.get_json(silent=True) or {}).get("path", ""))
     s = auth.ensure()
-    if not s.can_edit:
-        return jsonify({"error": {"code": "level", "message": "接続先を外すのは 編集可 の人だけです。"}}), 403
+    if not _may_edit_dbs():
+        return jsonify({"error": {"code": "level", "message": MSG_DB_LOCKED}}), 403
     current = shared_db.is_set() and settings_file.same_file(path, shared_db.configured())
     if not settings_file.remove_db(path):
         return jsonify({"error": {"code": "gone", "message": "その接続先はもうありません。"}}), 404
@@ -97,7 +97,7 @@ def db_forget():
         # いま開いている DB を外した → この PC の選択も外す(0.31.0。外したのに開いたまま、にしない)
         _clear_selection()
     trace.event("db.forget", "接続先から外した", data={"path": path, "by": s.user_id, "current": current})
-    out = db_files.choices(can_add=s.can_edit)
+    out = db_files.choices(can_add=_can_edit())
     out["cleared"] = current
     if current:
         out["message_done"] = "いま開いていた DB を接続先から外し、選択も外しました(ファイルは消していません)。"
@@ -303,3 +303,103 @@ def dist_remove():
     from dbviewer import distribution
     body = request.get_json(silent=True) or {}
     return _dist_reply(distribution.remove(str(body.get("password", ""))))
+
+
+# ------------------------------------------------------------------
+# 接続先の登録(0.32.0)── 設定ファイルの「接続先」表をそのまま見て、足す・直す・消す
+# ------------------------------------------------------------------
+MSG_DB_LOCKED = ("接続先を直すのは 編集可 の人か、管理者パスワードで鍵を開けたときだけです"
+                 "(かんたん設定 →「アクセス権限」の鍵と同じ)。")
+
+
+def _may_edit_dbs() -> bool:
+    from dbviewer import admin_password, auth
+    try:
+        if auth.ensure().can_edit:
+            return True
+    except Exception:                                   # noqa: BLE001 - 分からなければ鍵で判断
+        pass
+    return admin_password.session.is_open()
+
+
+def _db_table() -> dict:
+    from dbviewer import admin_password, config, db_files, settings_file, shared_db
+    now = shared_db.configured()
+    rows = []
+    for r in settings_file.db_rows():
+        text = str(r["パス"] or "").strip()
+        p = config.resolve_dir(text) if text else None
+        try:
+            exists = bool(p and p.is_file())
+        except OSError:
+            exists = False
+        rows.append({**r, "exists": exists, "current": bool(now and text) and settings_file.same_file(text, now)})
+    return {"rows": rows, "file": str(settings_file.path()), "can_change": _may_edit_dbs(),
+            "admin": admin_password.session.peek(), "current": now}
+
+
+@bp.get("/api/settings/dbs")
+def dbs_table():
+    try:
+        return jsonify(_db_table())
+    except Exception as exc:                             # noqa: BLE001 - 届かない・壊れている
+        return jsonify({"error": {"code": "unreadable", "message": f"設定ファイルの接続先を読めません: {exc}"}}), 409
+
+
+@bp.post("/api/settings/dbs/save")
+def dbs_save():
+    """接続先の行を足す・直す(編集可 か 管理者パスワードの鍵)。"""
+    from dbviewer import settings_file, shared_db
+    if not _may_edit_dbs():
+        return jsonify({"error": {"code": "locked", "message": MSG_DB_LOCKED}}), 403
+    body = request.get_json(silent=True) or {}
+    row = body.get("row") if isinstance(body.get("row"), dict) else {}
+    seen = body.get("seen") if isinstance(body.get("seen"), dict) else None
+    was_current = bool(seen) and shared_db.is_set() and settings_file.same_file(str(seen.get("パス") or ""),
+                                                                                 shared_db.configured())
+    try:
+        ok, message, no = settings_file.save_db_row(row, seen)
+    except Exception as exc:                             # noqa: BLE001 - ほかの PC が使っている など
+        ok, message, no = False, f"書けませんでした(ほかの PC が使っているかもしれません): {exc}", 0
+    trace.event("dbs.save", message, level="INFO" if ok else "WARN",
+                data={"no": no, "row": {k: row.get(k) for k in settings_file.DB_COLUMNS}})
+    if not ok:
+        return jsonify({"error": {"code": "refused", "message": message}}), 422
+    if was_current and not settings_file.same_file(str(row.get("パス") or ""), shared_db.configured()):
+        # いま開いている DB のパスを直した → この PC の選択も新しいパスに(古いパスを見たまま、にしない)
+        from dbviewer import config, user_settings
+        user_settings.save(config.KEY_DB_PATH, str(row.get("パス") or "").strip().strip('"'))
+        message += " いま開いている DB だったので、この PC の選択も新しいパスにしました。"
+    out = _db_table()
+    out["message"] = message
+    out["reload"] = was_current
+    return jsonify(out)
+
+
+@bp.post("/api/settings/dbs/delete")
+def dbs_delete():
+    """接続先の行を消す(ファイルは消さない)。いま開いている DB なら選択も外す。"""
+    from dbviewer import settings_file, shared_db
+    if not _may_edit_dbs():
+        return jsonify({"error": {"code": "locked", "message": MSG_DB_LOCKED}}), 403
+    body = request.get_json(silent=True) or {}
+    no = str(body.get("no") or "")
+    if not no.isdigit():
+        return jsonify({"error": {"code": "bad_input", "message": "消す行が分かりません。"}}), 400
+    seen = body.get("seen") if isinstance(body.get("seen"), dict) else None
+    try:
+        ok, message, gone = settings_file.delete_db_row(int(no), seen)
+    except Exception as exc:                             # noqa: BLE001
+        ok, message, gone = False, f"消せませんでした(ほかの PC が使っているかもしれません): {exc}", None
+    trace.event("dbs.delete", message, level="INFO" if ok else "WARN", data={"no": int(no), "row": gone or seen})
+    if not ok:
+        return jsonify({"error": {"code": "refused", "message": message}}), 409
+    current = bool(gone) and shared_db.is_set() and settings_file.same_file(str(gone.get("パス") or ""),
+                                                                             shared_db.configured())
+    if current:
+        _clear_selection()
+        message += " いま開いていた DB だったので、見る DB の選択も外しました。"
+    out = _db_table()
+    out["message"] = message
+    out["reload"] = current
+    return jsonify(out)

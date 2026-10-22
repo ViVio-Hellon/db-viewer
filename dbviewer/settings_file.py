@@ -269,6 +269,96 @@ def remove_db(text: str) -> bool:
 
 
 # ------------------------------------------------------------------
+# 接続先の表を直接直す(0.32.0。設定 → 接続先 の「接続先の登録」)
+# ------------------------------------------------------------------
+DB_COLUMNS = ("管理番号", "名前", "パス", "備考")
+MSG_DB_CHANGED = "ほかの PC がこの行を直しました。読み直してからもう一度してください。"
+
+
+def db_rows() -> list[dict[str, Any]]:
+    """接続先の表の全部の行(パスが空の行も。直す画面に出す)。"""
+    with closing(connect()) as conn:
+        rows = conn.execute(f'SELECT "管理番号", "名前", "パス", "備考" FROM "{T_DBS}" ORDER BY "管理番号"').fetchall()
+    return [{k: r[k] for k in DB_COLUMNS} for r in rows]
+
+
+def _db_clean(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    name = str(row.get("名前") or "").strip()
+    text = str(row.get("パス") or "").strip().strip('"')
+    note = str(row.get("備考") or "").strip()
+    if not text:
+        return {}, "パスを入れてください(DB ファイルのフルパス)。"
+    for label, v, limit in (("名前", name, 200), ("パス", text, 1000), ("備考", note, 500)):
+        if len(v) > limit or any(ord(ch) < 32 for ch in v):
+            return {}, f"「{label}」が長すぎるか、使えない文字があります。"
+    if not name:
+        name = Path(text.replace("\\", "/")).name
+    return {"名前": name, "パス": text, "備考": note}, ""
+
+
+def _same_seen(now: dict[str, Any], seen: Optional[dict[str, Any]]) -> bool:
+    if seen is None:
+        return True
+    norm = lambda v: "" if v is None else str(v)
+    return all(norm(now.get(k)) == norm(seen.get(k)) for k in DB_COLUMNS if k in seen)
+
+
+def save_db_row(row: dict[str, Any], seen: Optional[dict[str, Any]] = None) -> tuple[bool, str, int]:
+    """管理番号が無ければ足す、あれば直す → (できたか, 知らせ, 管理番号)。同じファイルの行は 2 つ作らない。"""
+    values, problem = _db_clean(row)
+    if problem:
+        return False, problem, 0
+    raw = row.get("管理番号")
+    no = int(raw) if str(raw or "").strip().isdigit() else 0
+    with closing(connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for other in conn.execute(f'SELECT "管理番号", "パス" FROM "{T_DBS}"').fetchall():
+                if other["管理番号"] != no and str(other["パス"] or "").strip() and same_file(other["パス"], values["パス"]):
+                    conn.execute("ROLLBACK")
+                    return False, f"同じファイルはもう {other['管理番号']} 番にあります。", 0
+            if no:
+                now = conn.execute(f'SELECT * FROM "{T_DBS}" WHERE "管理番号" = ?', (no,)).fetchone()
+                if now is None:
+                    conn.execute("ROLLBACK")
+                    return False, "その行はもうありません(ほかの PC が消しました)。", no
+                if not _same_seen(dict(now), seen):
+                    conn.execute("ROLLBACK")
+                    return False, MSG_DB_CHANGED, no
+                conn.execute(f'UPDATE "{T_DBS}" SET "名前" = ?, "パス" = ?, "備考" = ? WHERE "管理番号" = ?',
+                             (values["名前"], values["パス"], values["備考"], no))
+                msg = f"{no} 番を直しました。"
+            else:
+                cur = conn.execute(f'INSERT INTO "{T_DBS}" ("名前", "パス", "備考") VALUES (?, ?, ?)',
+                                   (values["名前"], values["パス"], values["備考"]))
+                no = int(cur.lastrowid or 0)
+                msg = f"{no} 番に足しました。"
+            conn.execute("COMMIT")
+        except sqlite3.Error:
+            conn.execute("ROLLBACK")
+            raise
+    log.info("接続先の表: %s %s", msg, values["パス"])
+    return True, msg, no
+
+
+def delete_db_row(no: int, seen: Optional[dict[str, Any]] = None) -> tuple[bool, str, Optional[dict[str, Any]]]:
+    """1 行消す(ファイルは消さない)→ (できたか, 知らせ, 消した行)。"""
+    with closing(connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        now = conn.execute(f'SELECT * FROM "{T_DBS}" WHERE "管理番号" = ?', (no,)).fetchone()
+        if now is None:
+            conn.execute("ROLLBACK")
+            return False, "その行はもうありません(ほかの PC が消しました)。", None
+        if not _same_seen(dict(now), seen):
+            conn.execute("ROLLBACK")
+            return False, MSG_DB_CHANGED, None
+        conn.execute(f'DELETE FROM "{T_DBS}" WHERE "管理番号" = ?', (no,))
+        conn.execute("COMMIT")
+    log.info("接続先の表: %s 番を消しました: %s", no, now["パス"])
+    return True, f"{no} 番を消しました(ファイルは消していません)。", dict(now)
+
+
+# ------------------------------------------------------------------
 # かんたん設定(DB ごと・表ごとに JSON 1 つ)
 # ------------------------------------------------------------------
 def easy_read(db: Path, table: str) -> Optional[str]:

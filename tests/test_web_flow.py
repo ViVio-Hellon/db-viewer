@@ -293,6 +293,71 @@ class OperationTest(unittest.TestCase):
         self.assertFalse(r.get_json()["can_add"])
         self.assertFalse(shared_db.is_set())
 
+    def test_db_register_table(self):
+        """0.32.0: 設定ファイルの「接続先」表をそのまま見て、足す・直す・消す(編集可 か 管理者パスワードの鍵)。"""
+        import shutil
+        from dbviewer import admin_password, settings_file
+        self.use_own_settings_file()
+        self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
+        self.addCleanup(admin_password.session.lock)
+        a = Path(self.tmp.name) / "A" / "部品.sqlite3"
+        a.parent.mkdir()
+        shutil.copy(self.path, a)
+
+        def table():
+            return self.c.get("/api/settings/dbs", headers=self.h).get_json()
+
+        def save(**row):
+            return self.c.post("/api/settings/dbs/save", json={"row": row, "seen": row.pop("seen", None)}, headers=self.h)
+        t = table()
+        self.assertTrue(t["can_change"])
+        self.assertEqual([(r["パス"], r["current"], r["exists"]) for r in t["rows"]], [(str(self.path), True, True)])
+        self.assertIn('id="dbregRows"', self.c.get("/settings?tab=source").get_data(as_text=True))
+        # 足す(名前が空ならファイル名)・同じファイルは 2 つ作らない・パスが空は断る
+        r = save(名前="", パス=str(a), 備考="試験")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertIn("2 番に足しました", r.get_json()["message"])
+        self.assertEqual(r.get_json()["rows"][1]["名前"], "部品.sqlite3")
+        self.assertEqual(save(パス=str(a)).status_code, 422)
+        self.assertEqual(save(パス=" ").status_code, 422)
+        save(パス=r"\\どこにも無い\x.sqlite3")
+        rows = table()["rows"]
+        self.assertEqual([r["exists"] for r in rows], [True, True, False])
+        # 直す(見ていた値と違えば断る)
+        seen = {k: rows[1][k] for k in settings_file.DB_COLUMNS}
+        r = save(管理番号=2, 名前="部品台帳(試験)", パス=str(a), 備考="直した", seen=seen)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(save(管理番号=2, 名前="x", パス=str(a), 備考="", seen=seen).status_code, 422)   # 古い値で
+        self.assertEqual([d["name"] for d in self.c.get("/api/settings/db-choices", headers=self.h).get_json()["dbs"]][1],
+                         "部品台帳(試験)")
+        # 消す(ファイルは消さない)
+        r = self.c.post("/api/settings/dbs/delete", json={"no": 3}, headers=self.h)
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.get_json()["reload"])
+        self.assertEqual(len(r.get_json()["rows"]), 2)
+        self.assertEqual(self.c.post("/api/settings/dbs/delete", json={"no": 3}, headers=self.h).status_code, 409)
+        # いま開いている DB を消す → 選択も外れる・読み直す
+        r = self.c.post("/api/settings/dbs/delete", json={"no": 1}, headers=self.h).get_json()
+        self.assertTrue(r["reload"])
+        self.assertIn("選択も外しました", r["message"])
+        self.assertTrue(self.path.is_file())
+        self.assertFalse(shared_db.is_set())
+        # 閲覧のみ: 見られるが直せない。管理者パスワードで鍵を開ければ直せる
+        self.assertEqual(self.c.post("/api/settings/open-db", json={"path": str(a)}, headers=self.h).status_code, 200)
+        with closing(settings_file.connect()) as c:
+            c.execute("INSERT INTO アクセス権限 (ログインID, PC名, 権限, 有効) VALUES ('だれか', '', '編集可', 1)")
+            c.commit()
+        auth.end()
+        admin_password.session.lock()
+        t = table()
+        self.assertFalse(t["can_change"])
+        self.assertEqual(len(t["rows"]), 1)
+        self.assertEqual(save(パス=str(self.path)).status_code, 403)
+        self.assertEqual(self.c.post("/api/settings/dbs/delete", json={"no": 2}, headers=self.h).status_code, 403)
+        self.assertEqual(self.c.post("/api/easy/access/unlock", json={"password": "nisk"}, headers=self.h).status_code, 200)
+        self.assertTrue(table()["can_change"])
+        self.assertEqual(save(パス=str(self.path)).status_code, 200)
+
     def test_old_settings_move_to_one_path(self):
         """0.18.0 までの 5 つの設定しか無い PC は、指していたファイルを 1 回だけ DB ファイルに移す。"""
         user_settings.delete(config.KEY_DB_PATH)
