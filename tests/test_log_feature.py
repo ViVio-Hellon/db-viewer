@@ -42,7 +42,7 @@ class WhySheetTest(_LogDirCase):
             "by": "taro"})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual((r.get_json()["status_label"], r.get_json()["open_errors"]), ("対策中", 2))
-        self.assertTrue(list(self.dir.glob("なぜなぜ_*.jsonl")))              # ログの出力先に残る
+        self.assertTrue(list(self.dir.glob("*なぜなぜ_*.jsonl")))              # ログの出力先に残る
         r = self.c.post("/api/log/sheet", headers=self.h, json={"rid": "aaaa1111", "status": "done",
                                                                "whys": ["LOT 列が無い"], "measure": "列を戻した"})
         self.assertEqual(r.get_json()["open_errors"], 1)                     # 対策済で数が減る
@@ -125,8 +125,8 @@ class CaptureAndRetryTest(_LogDirCase):
         blocker.unlink()                                                     # つながった
         trace._retry["at"] = time.monotonic() - trace.RETRY_SECONDS - 1
         trace.event("試験", "つながったあと")
-        self.assertEqual(config.LOG_DIR, wanted)
-        self.assertTrue(list(wanted.glob("記録_*.jsonl")))
+        self.assertEqual(config.LOG_DIR, wanted / "dbviewer")                 # ツール名のフォルダの中(0.33.0)
+        self.assertTrue(list((wanted / "dbviewer").glob("dbviewer_記録_*.jsonl")))
         # 読むときは両方(書けなかったあいだのぶんも並ぶ)
         msgs = [r.get("msg") for r in trace.read(1, limit=50)]
         self.assertIn("届かないあいだ", msgs)

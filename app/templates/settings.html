@@ -571,7 +571,9 @@
           <div class="pad">
             <p class="why">操作・断り・エラーを 1 行ずつ残します(パスワードは「***」にします)。
               <b>共有フォルダにすると、どの PC で起きたことも 1 か所で引けます</b>。ファイル名に PC 名が入るので、同じファイルを取り合いません。
-              空ならこの PC の中({{ view.log.dir_default }})。</p>
+              空ならこの PC の中({{ view.log.dir_default }})。
+              <b>置き場所の中に <code>dbviewer</code> フォルダを作り、その中に <code>dbviewer_</code> で始まる名前で書きます</b>
+              (ほかのツールと同じ所にしても混ざりません)。</p>
             <div class="paths">
               {{ pathrow("logDir", "出力先(掃き出し先)", view.log.dir, view.log.dir_real) }}
             </div>

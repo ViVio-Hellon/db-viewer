@@ -74,7 +74,7 @@ def ensure_isolated() -> list[str]:
     for name in ("LOG_DIR",):
         current = getattr(config, name)
         if _under(current, repo) or not _under(current, Path(tempfile.gettempdir())):
-            setattr(config, name, _escape(name.lower()))
+            setattr(config, name, config.tool_log_dir(_escape(name.lower())))     # 0.33.0: ツール名のフォルダ
             moved.append(name)
     # 記録の置き場所を設定で変えても、既定(戻り先)は一時フォルダ
     config.DEFAULT_LOG_DIR = config.LOG_DIR

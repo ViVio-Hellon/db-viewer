@@ -21,7 +21,7 @@ log = get_logger("import_diag")
 
 def path_for(day: Optional[date] = None) -> Path:
     from .trace import pc_name
-    return config.LOG_DIR / f"取り込み診断_{pc_name()}_{(day or date.today()):%Y%m%d}.log"
+    return config.LOG_DIR / f"{config.TOOL_LOG_NAME}_取り込み診断_{pc_name()}_{(day or date.today()):%Y%m%d}.log"
 
 
 def latest_path() -> Optional[Path]:
@@ -30,7 +30,7 @@ def latest_path() -> Optional[Path]:
     if today.exists():
         return today
     try:
-        found = sorted(today.parent.glob("取り込み診断*.log"),
+        found = sorted(today.parent.glob("*取り込み診断*.log"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         return None

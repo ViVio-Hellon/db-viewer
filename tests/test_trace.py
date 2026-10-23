@@ -31,7 +31,7 @@ class _LogDirCase(unittest.TestCase):
 
     def lines(self) -> list[dict]:
         out = []
-        for p in sorted(self.dir.glob("記録_*.jsonl")):
+        for p in sorted(self.dir.glob("*記録_*.jsonl")):
             out += [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
         return out
 
@@ -113,15 +113,46 @@ class TraceTest(_LogDirCase):
     def test_cleanup_only_own_old(self):
         me = trace.pc_name()
         old = date.today() - timedelta(days=40)
-        names = [f"記録_{me}_{old:%Y%m%d}.jsonl", f"記録_{me}_{date.today():%Y%m%d}.jsonl",
-                 f"記録_ほかのPC_{old:%Y%m%d}.jsonl", f"dbviewer_{me}_{old:%Y%m%d}.log",
-                 f"dbviewer_{old:%Y%m%d}.log", f"取り込み診断_{me}_{old:%Y%m%d}.log", "メモ.txt"]
+        names = [f"dbviewer_記録_{me}_{old:%Y%m%d}.jsonl", f"dbviewer_記録_{me}_{date.today():%Y%m%d}.jsonl",
+                 f"dbviewer_記録_ほかのPC_{old:%Y%m%d}.jsonl", f"dbviewer_{me}_{old:%Y%m%d}.log",
+                 f"dbviewer_{old:%Y%m%d}.log", f"dbviewer_取り込み診断_{me}_{old:%Y%m%d}.log", "メモ.txt",
+                 f"記録_{me}_{old:%Y%m%d}.jsonl", f"取り込み診断_{me}_{old:%Y%m%d}.log"]      # 0.32.0 までの名前も
         for n in names:
             (self.dir / n).write_text("x", encoding="utf-8")
-        self.assertEqual(trace.cleanup(30), 4)
+        self.assertEqual(trace.cleanup(30), 6)
         left = sorted(p.name for p in self.dir.iterdir())
         self.assertEqual(left, sorted([names[1], names[2], "メモ.txt"]))
         self.assertEqual(trace.cleanup(0), 0)                 # 0 = 消さない
+
+
+class ToolFolderTest(_LogDirCase):
+    """0.33.0: ログはツール名のフォルダに、ツール名で始まる名前で。ほかのツールと混ざらない。"""
+
+    def test_names_and_old_files(self):
+        local = Path(self.tmp.name) / "ローカル"
+        config.DEFAULT_LOG_DIR = config.tool_log_dir(local)
+        self.assertEqual(config.DEFAULT_LOG_DIR, local / "dbviewer")
+        self.assertEqual(config.tool_log_dir(local / "dbviewer"), local / "dbviewer")   # 二重にしない
+        self.assertEqual(logging_utils.resolve_log_dir(r"\\srv\共有\ログ").name, "dbviewer")
+        shared = Path(self.tmp.name) / "共有"
+        user_settings.save(config.KEY_LOG_DIR, str(shared))
+        self.assertEqual(logging_utils.apply_settings()["problem"], "")
+        self.assertEqual(config.LOG_DIR, shared / "dbviewer")
+        rec = trace.event("試験", "新しい")
+        self.assertEqual(rec["app"], "dbviewer")                                    # 中身にもツール名
+        self.assertTrue(trace.file_for().name.startswith("dbviewer_記録_"))
+        me, today = trace.pc_name(), date.today()
+        line = lambda msg: json.dumps({"ts": "2026-10-22T10:00:00", "ev": "試験", "lv": "INFO", "msg": msg,
+                                       "pc": me}, ensure_ascii=False) + "\n"
+        # この PC の既定の場所(ローカル領域)の 0.32.0 までのファイルは読む
+        local.mkdir(parents=True, exist_ok=True)
+        (local / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(line("前の版・この PC"), encoding="utf-8")
+        # 共有フォルダの直下の古い名前は読まない(ほかのツールも 記録_… で書いている)
+        (shared / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(line("ほかのツール"), encoding="utf-8")
+        msgs = [r.get("msg") for r in trace.read(1, limit=50)]
+        self.assertIn("新しい", msgs)
+        self.assertIn("前の版・この PC", msgs)
+        self.assertNotIn("ほかのツール", msgs)
 
 
 class LogViewTest(_LogDirCase):
@@ -275,7 +306,7 @@ class SecretsTest(_LogDirCase):
         r = self.c.post("/api/list/row-add", headers=self.h,
                         json={"table": "社員", "values": {"名前": "試験", "PASS": "himitsu-PW"}})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        text = "".join(p.read_text(encoding="utf-8") for p in self.dir.glob("記録_*.jsonl"))
+        text = "".join(p.read_text(encoding="utf-8") for p in self.dir.glob("*記録_*.jsonl"))
         self.assertNotIn("himitsu-PW", text)
         self.assertIn("試験", text)                                           # ほかの列は残す
 
@@ -283,12 +314,13 @@ class SecretsTest(_LogDirCase):
 
 class LogDirSettingTest(_LogDirCase):
     def test_move_and_refuse(self):
-        new = Path(self.tmp.name) / "共有" / "記録"
-        r = settings_presenter.save({"log_dir": str(new)})
+        shared = Path(self.tmp.name) / "共有" / "記録"
+        new = shared / "dbviewer"                                    # 置き場所の中のツール名のフォルダ(0.33.0)
+        r = settings_presenter.save({"log_dir": str(shared)})
         self.assertTrue(r.ok, r.message)
         self.assertEqual(config.LOG_DIR, new)
         # 移る前の場所にも「どこへ移したか」が残る
-        old_lines = [json.loads(x) for p in self.dir.glob("記録_*.jsonl")
+        old_lines = [json.loads(x) for p in self.dir.glob("*記録_*.jsonl")
                      for x in p.read_text(encoding="utf-8").splitlines()]
         self.assertTrue(any(x["ev"] == "log.moved" and x["data"]["to"] == str(new) for x in old_lines))
         trace.event("screen")
@@ -297,6 +329,8 @@ class LogDirSettingTest(_LogDirCase):
         # 開発者向けのログも新しい場所へ
         logging_utils.get_logger("試験").info("ここに書く")
         self.assertTrue(list(new.glob("dbviewer_*.log")))
+        self.assertTrue(list(new.glob("dbviewer_記録_*.jsonl")))               # ファイル名もツール名で始まる
+        self.assertFalse([p for p in shared.iterdir() if p.is_file()])        # 置き場所の直下には書かない
 
         blocker = Path(self.tmp.name) / "ふさがり"
         blocker.write_text("x", encoding="utf-8")
@@ -304,7 +338,7 @@ class LogDirSettingTest(_LogDirCase):
         self.assertFalse(r.ok)
         self.assertEqual(r.field, "log_dir")
         self.assertEqual(config.LOG_DIR, new)                  # 変えない
-        self.assertEqual(user_settings.get(config.KEY_LOG_DIR), str(new))
+        self.assertEqual(user_settings.get(config.KEY_LOG_DIR), str(shared))   # 設定は入れた置き場所のまま
 
         # 空 = 既定へ戻す
         self.assertTrue(settings_presenter.save({"log_dir": ""}).ok)

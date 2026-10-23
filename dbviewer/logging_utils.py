@@ -5,7 +5,8 @@ VBA版はFileSystemObjectで手動追記し、さらに端末のライン名を
 Python版ではファイル配置の複雑さの割に価値が薄いため、標準の
 `logging` モジュールに置き換える。
 
-- 出力先: config.LOG_DIR 配下に `dbviewer_<PC名>_YYYYMMDD.log`(PC 名を入れるのは、
+- 出力先: 置き場所の中のツール名のフォルダ(config.LOG_DIR = `<置き場所>\\dbviewer`。0.33.0)に
+  `dbviewer_<PC名>_YYYYMMDD.log`(PC 名を入れるのは、
   設定で共有フォルダを記録の置き場所にしたとき、PC ごとにファイルを分けるため)
 - 置き場所は設定「ログ」で変えられる(`set_log_dir` / `apply_settings`)
 - 操作の記録(なぜなぜ分析用)は別のファイル(`trace.py`)
@@ -26,7 +27,7 @@ _configured = False
 def log_path_for(day: date) -> "Path":
     """その日のログファイル。**名前の作り方はここ1か所**。"""
     from .trace import pc_name
-    return config.LOG_DIR / f"dbviewer_{pc_name()}_{day:%Y%m%d}.log"
+    return config.LOG_DIR / f"{config.TOOL_LOG_NAME}_{pc_name()}_{day:%Y%m%d}.log"
 
 
 class DailyFileHandler(logging.FileHandler):
@@ -126,9 +127,10 @@ def set_log_dir(folder: "Path") -> str:
 
 
 def resolve_log_dir(text: str) -> "Path":
-    """設定の文字 → 置き場所。空なら既定(この PC のローカル領域)、相対はアプリのフォルダ基準。"""
+    """設定の文字 → 書くフォルダ(その中のツール名のフォルダ。0.33.0)。空なら既定(この PC のローカル領域)、
+    相対はアプリのフォルダ基準。"""
     text = (text or "").strip()
-    return config.resolve_dir(text) if text else config.DEFAULT_LOG_DIR
+    return config.tool_log_dir(config.resolve_dir(text)) if text else config.DEFAULT_LOG_DIR
 
 
 def apply_settings() -> dict:

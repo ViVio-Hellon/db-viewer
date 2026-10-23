@@ -278,7 +278,7 @@ class AccessEditApiTest(unittest.TestCase):
         self.c.post("/api/easy/access/unlock", password="nisk")
         self.c.post("/api/easy/access/unlock", password="間違いの鍵")
         self.c.post("/api/easy/access/password", current="nisk", new="zq8k", confirm="zq8k")
-        text = "".join(p.read_text(encoding="utf-8") for p in logdir.glob("記録_*.jsonl"))
+        text = "".join(p.read_text(encoding="utf-8") for p in logdir.glob("*記録_*.jsonl"))
         self.assertIn("access.unlock", text)
         for secret in ("nisk", "間違いの鍵", "zq8k"):
             self.assertNotIn(secret, text)

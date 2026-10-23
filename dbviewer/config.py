@@ -24,8 +24,22 @@ from . import app_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# ログの置き場所(利用者ごとのローカル領域)
-LOG_DIR = Path(os.environ.get("DBVIEWER_LOG_DIR", str(app_config.local_dir("logs"))))
+# ログはいつも**ツール名のフォルダ**の中に、**ツール名で始まる名前**で書く(0.33.0)。
+# 共有フォルダを置き場所にすると、ほかのツール(rneconverter・日報…)も同じ所に書くので、
+# フォルダを見ても・ファイルだけ取り出しても、どのツールのものか分かるようにする:
+#     <置き場所>\dbviewer\dbviewer_<PC名>_YYYYMMDD.log
+#     <置き場所>\dbviewer\dbviewer_記録_<PC名>_YYYYMMDD.jsonl …
+TOOL_LOG_NAME = "dbviewer"
+
+
+def tool_log_dir(base) -> Path:
+    """置き場所 → その中のツール名のフォルダ(置き場所がもうツール名のフォルダならそのまま)。"""
+    base = Path(base)
+    return base if base.name.casefold() == TOOL_LOG_NAME else base / TOOL_LOG_NAME
+
+
+# ログの置き場所(利用者ごとのローカル領域の中のツール名のフォルダ)
+LOG_DIR = tool_log_dir(os.environ.get("DBVIEWER_LOG_DIR", str(app_config.local_dir("logs"))))
 # 既定の置き場所(設定「記録の置き場所」が空のとき・書けないとき)
 DEFAULT_LOG_DIR = LOG_DIR
 

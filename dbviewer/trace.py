@@ -5,7 +5,7 @@
 何が返り・その前に何があったか」を後から組み立てられなかった。断り(422/409)は
 1 行も残らず、思わぬエラーは Flask の中に消えていた。
 
-【何を残すか】1 行 = 1 つの出来事(JSON)。ファイルは `記録_<PC名>_YYYYMMDD.jsonl`。
+【何を残すか】1 行 = 1 つの出来事(JSON)。ファイルは `dbviewer\\dbviewer_記録_<PC名>_YYYYMMDD.jsonl`(0.33.0 から。ツール名のフォルダ・ツール名で始まる名前)。
 共有フォルダに置いても PC ごとにファイルが分かれる(同じファイルを取り合わない)。
 
     t     時刻(ミリ秒まで)        lv    INFO / WARN / ERROR
@@ -49,7 +49,8 @@ from typing import Any, Iterable, Optional
 from . import config
 
 _lock = threading.Lock()
-PREFIX = "記録_"
+PREFIX = f"{config.TOOL_LOG_NAME}_記録_"        # 0.33.0 からツール名で始める
+LEGACY_PREFIX = "記録_"                          # 0.32.0 まで(この PC の既定の場所にあるものだけ読む)
 SUFFIX = ".jsonl"
 SECRET = re.compile(r"pass|token|secret", re.IGNORECASE)
 # 文の中の URL に付いた起動トークン(JavaScript のスタックに画面の URL が出る)
@@ -70,11 +71,22 @@ def file_for(day: Optional[date] = None, pc: Optional[str] = None) -> Path:
 
 
 def read_dirs() -> list[Path]:
-    """読む場所: いまの出力先と、この PC の既定の場所(書けなかったあいだのぶん)。"""
+    """読む場所: いまの出力先と、この PC の既定の場所(書けなかったあいだのぶん)と、0.32.0 までの
+    この PC の既定の場所(ツール名のフォルダの 1 つ上。ローカル領域なので DBビューアのものだけ)。
+
+    共有フォルダの直下にある 0.32.0 までのファイルは読まない ── ほかのツールも同じ名前(記録_…)で
+    書いているので、混ざってしまう。"""
     dirs = [config.LOG_DIR]
-    if config.DEFAULT_LOG_DIR != config.LOG_DIR and config.DEFAULT_LOG_DIR.is_dir():
-        dirs.append(config.DEFAULT_LOG_DIR)
+    for d in (config.DEFAULT_LOG_DIR, legacy_dir()):
+        if d is not None and d not in dirs and d.is_dir():
+            dirs.append(d)
     return dirs
+
+
+def legacy_dir() -> Optional[Path]:
+    """0.32.0 までの、この PC の既定の置き場所(ツール名のフォルダの 1 つ上)。"""
+    d = config.DEFAULT_LOG_DIR
+    return d.parent if d.name.casefold() == config.TOOL_LOG_NAME else None
 
 
 RETRY_SECONDS = 300
@@ -193,6 +205,7 @@ def event(ev: str, msg: str = "", *, level: str = "INFO", data: Any = None,
         rec.update(_context())
         rec.update({k: v for k, v in fields.items() if v is not None})
         rec["pc"] = pc_name()
+        rec["app"] = config.TOOL_LOG_NAME                 # 中身からもどのツールの記録か分かるように(0.33.0)
         rec["ver"] = _version()
         if msg:
             rec["msg"] = summarize(str(msg))
@@ -216,7 +229,7 @@ def event(ev: str, msg: str = "", *, level: str = "INFO", data: Any = None,
 # ------------------------------------------------------------------
 # 読む(設定「ログ」の画面)
 # ------------------------------------------------------------------
-_NAME = re.compile(rf"^{PREFIX}(?P<pc>.+)_(?P<day>\d{{8}}){re.escape(SUFFIX)}$")
+_NAME = re.compile(rf"^(?:{re.escape(PREFIX)}|{re.escape(LEGACY_PREFIX)})(?P<pc>.+)_(?P<day>\d{{8}}){re.escape(SUFFIX)}$")
 
 
 def pc_of(path: Path) -> str:
@@ -311,13 +324,19 @@ def cleanup(keep_days: int) -> int:
         return 0
     limit = (date.today() - timedelta(days=keep_days)).strftime("%Y%m%d")
     me = pc_name()
-    pats = [re.compile(rf"^{PREFIX}{re.escape(me)}_(\d{{8}}){re.escape(SUFFIX)}$"),
-            re.compile(rf"^dbviewer_{re.escape(me)}_(\d{{8}})\.log$"),
-            re.compile(r"^dbviewer_(\d{8})\.log$"),
-            re.compile(rf"^取り込み診断_{re.escape(me)}_(\d{{8}})\.log$")]
+    tool = re.escape(config.TOOL_LOG_NAME)
+    pats = [re.compile(rf"^(?:{re.escape(PREFIX)}|{re.escape(LEGACY_PREFIX)}){re.escape(me)}_(\d{{8}}){re.escape(SUFFIX)}$"),
+            re.compile(rf"^{tool}_{re.escape(me)}_(\d{{8}})\.log$"),
+            re.compile(rf"^{tool}_(\d{{8}})\.log$"),
+            re.compile(rf"^(?:{tool}_)?取り込み診断_{re.escape(me)}_(\d{{8}})\.log$")]
     gone = 0
-    try:
-        for p in config.LOG_DIR.iterdir():
+    # いまの置き場所と、この PC の既定の場所(0.32.0 までのぶんも。共有フォルダの直下は触らない)
+    for folder in read_dirs():
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            continue
+        for p in entries:
             for pat in pats:
                 m = pat.match(p.name)
                 if m and m.group(1) < limit:
@@ -327,8 +346,6 @@ def cleanup(keep_days: int) -> int:
                     except OSError:
                         pass
                     break
-    except OSError:
-        return gone
     return gone
 
 

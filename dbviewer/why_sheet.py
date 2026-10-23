@@ -24,7 +24,8 @@ from typing import Any, Iterable, Optional
 
 from . import config, trace
 
-PREFIX = "なぜなぜ_"
+PREFIX = f"{config.TOOL_LOG_NAME}_なぜなぜ_"     # 0.33.0 からツール名で始める
+LEGACY_PREFIX = "なぜなぜ_"                     # 0.32.0 まで(この PC の既定の場所にあるものだけ読む)
 SUFFIX = ".jsonl"
 EXPORT_DIR = "書き出し"
 WHY_COUNT = 5
@@ -45,7 +46,8 @@ def _files() -> list[Path]:
     out = []
     for folder in trace.read_dirs():
         try:
-            out += [p for p in folder.iterdir() if p.name.startswith(PREFIX) and p.name.endswith(SUFFIX)]
+            out += [p for p in folder.iterdir()
+                    if p.name.startswith((PREFIX, LEGACY_PREFIX)) and p.name.endswith(SUFFIX)]
         except OSError:
             continue
     return out
