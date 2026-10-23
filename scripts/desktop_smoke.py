@@ -3,7 +3,8 @@
 
 python-web-tools の scripts/desktop_smoke.py と同じ作り。確かめること:
     1. 窓の画面(WebView)が Python から届く
-       ── 操作の記録(`記録_<PC>_日付.jsonl`)に「画面を開いた」(ev=screen)が出る
+       ── 操作の記録(`dbviewer\\dbviewer_記録_<PC>_日付.jsonl`。0.33.0 からツール名のフォルダ)に
+          「画面を開いた」(ev=screen)が出る
           (WebView → 外枠(Rust)→ Python → 外枠 → WebView が1周した証拠)
     2. **どのプロセスもポートで待ち受けていない**(exe・Python・WebView の子プロセス)
     3. exe を止めると Python も終わる(取り残さない)
@@ -160,15 +161,21 @@ def second_launch_exits(exe: str, env: dict, first: subprocess.Popen) -> bool:
     return True
 
 
+def log_files(work: Path, pattern: str) -> list[Path]:
+    """ログの置き場所の中のツール名のフォルダ(0.33.0)と、置き場所そのもの(0.32.0 まで)から探す。"""
+    base = work / "logs"
+    return sorted([*(base / "dbviewer").glob(pattern), *base.glob(pattern)])
+
+
 def latest_log(work: Path) -> str:
-    logs = sorted((work / "logs").glob("dbviewer_*.log"))
+    logs = log_files(work, "dbviewer_*.log")
     return logs[-1].read_text(encoding="utf-8", errors="replace") if logs else ""
 
 
 def screens(work: Path) -> list[str]:
     """操作の記録に残った「画面を開いた」の行き先。"""
     out = []
-    for path in sorted((work / "logs").glob("記録_*.jsonl")):
+    for path in log_files(work, "*記録_*.jsonl"):
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 rec = json.loads(line)
@@ -228,7 +235,7 @@ def main() -> int:
         print(f"[OK] 画面が Python から届きました({time.monotonic() - started:.1f}秒): {seen}")
     elif ok:
         print("[NG] 時間内に画面が届きませんでした。ログの末尾:")
-        logs = sorted((work / "logs").glob("*.log"))
+        logs = log_files(work, "*.log")
         for log in logs:
             print(f"--- {log.name}")
             print("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]))
