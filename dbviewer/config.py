@@ -33,9 +33,9 @@ TOOL_LOG_NAME = "dbviewer"
 
 
 def tool_log_dir(base) -> Path:
-    """置き場所 → その中のツール名のフォルダ(置き場所がもうツール名のフォルダならそのまま)。"""
-    base = Path(base)
-    return base if base.name.casefold() == TOOL_LOG_NAME else base / TOOL_LOG_NAME
+    """置き場所 → その中のツール名のフォルダ。**置き場所の直下には置かない**(0.34.0。日報複合ツールの決まり:
+    `<ログの出力パス>\\<ツールID>\\`。置き場所の名前が dbviewer でも、その中にもう 1 つ作る)。"""
+    return Path(base) / TOOL_LOG_NAME
 
 
 # ログの置き場所(利用者ごとのローカル領域の中のツール名のフォルダ)

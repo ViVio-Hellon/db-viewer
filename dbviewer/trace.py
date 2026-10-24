@@ -50,7 +50,7 @@ from . import config
 
 _lock = threading.Lock()
 PREFIX = f"{config.TOOL_LOG_NAME}_記録_"        # 0.33.0 からツール名で始める
-LEGACY_PREFIX = "記録_"                          # 0.32.0 まで(この PC の既定の場所にあるものだけ読む)
+LEGACY_PREFIX = "記録_"                          # 0.32.0 まで(前の場所の自分の行だけ読む)
 SUFFIX = ".jsonl"
 SECRET = re.compile(r"pass|token|secret", re.IGNORECASE)
 # 文の中の URL に付いた起動トークン(JavaScript のスタックに画面の URL が出る)
@@ -71,22 +71,38 @@ def file_for(day: Optional[date] = None, pc: Optional[str] = None) -> Path:
 
 
 def read_dirs() -> list[Path]:
-    """読む場所: いまの出力先と、この PC の既定の場所(書けなかったあいだのぶん)と、0.32.0 までの
-    この PC の既定の場所(ツール名のフォルダの 1 つ上。ローカル領域なので DBビューアのものだけ)。
+    """読む場所: いまの出力先(ツール名のフォルダ)・この PC の既定の場所(書けなかったあいだのぶん)と、
+    **前の場所**(0.32.0 まで書いていた、それぞれの 1 つ上 = 置き場所の直下)。
 
-    共有フォルダの直下にある 0.32.0 までのファイルは読まない ── ほかのツールも同じ名前(記録_…)で
-    書いているので、混ざってしまう。"""
+    前の場所はほかのツールと同じ所なので、**自分の名前のファイルの、自分の行だけ**を読む(`_ours`)。
+    ほかのツールのフォルダ(nippou\\ など)の中は見ない。"""
     dirs = [config.LOG_DIR]
-    for d in (config.DEFAULT_LOG_DIR, legacy_dir()):
-        if d is not None and d not in dirs and d.is_dir():
+    for d in (config.DEFAULT_LOG_DIR, *legacy_dirs()):
+        if d not in dirs and d.is_dir():
             dirs.append(d)
     return dirs
 
 
-def legacy_dir() -> Optional[Path]:
-    """0.32.0 までの、この PC の既定の置き場所(ツール名のフォルダの 1 つ上)。"""
-    d = config.DEFAULT_LOG_DIR
-    return d.parent if d.name.casefold() == config.TOOL_LOG_NAME else None
+def legacy_dirs() -> list[Path]:
+    """前の場所(0.32.0 まで): いまの出力先・既定の場所・設定の置き場所の、ツール名のフォルダの 1 つ上。"""
+    out: list[Path] = []
+    cands = [config.LOG_DIR, config.DEFAULT_LOG_DIR]
+    try:
+        from . import logging_utils, user_settings
+        text = str(user_settings.get(config.KEY_LOG_DIR, "") or "").strip()
+        if text:
+            cands.append(logging_utils.resolve_log_dir(text))
+    except Exception:                                       # noqa: BLE001 - 読めなければいまの場所だけ
+        pass
+    for d in cands:
+        if d.name == config.TOOL_LOG_NAME and d.parent not in out:
+            out.append(d.parent)
+    return out
+
+
+def _ours(rec: Any) -> bool:
+    """自分(DBビューア)の記録の行か。前の場所のファイルには、ほかのツールの行が混ざることがある。"""
+    return isinstance(rec, dict) and "ev" in rec and rec.get("app") in (None, config.TOOL_LOG_NAME)
 
 
 RETRY_SECONDS = 300
@@ -266,7 +282,7 @@ def _lines(paths: Iterable[Path]) -> list[dict[str, Any]]:
                         rec = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(rec, dict):
+                    if _ours(rec):
                         out.append(rec)
         except OSError:
             continue
@@ -330,16 +346,22 @@ def cleanup(keep_days: int) -> int:
             re.compile(rf"^{tool}_(\d{{8}})\.log$"),
             re.compile(rf"^(?:{tool}_)?取り込み診断_{re.escape(me)}_(\d{{8}})\.log$")]
     gone = 0
-    # いまの置き場所と、この PC の既定の場所(0.32.0 までのぶんも。共有フォルダの直下は触らない)
+    # いまの置き場所・既定の場所・前の場所(直下)の、**この PC の・自分の名前の**ものだけ。
+    # 前の場所の 記録_… は、中の行が全部自分のものと分かったときだけ消す(ほかのツールの行が混ざっていれば残す)
+    legacy = set(legacy_dirs())
     for folder in read_dirs():
         try:
             entries = list(folder.iterdir())
         except OSError:
             continue
         for p in entries:
+            if not p.is_file():
+                continue                                       # ほかのツールのフォルダ(nippou\ など)は見ない
             for pat in pats:
                 m = pat.match(p.name)
                 if m and m.group(1) < limit:
+                    if folder in legacy and p.name.startswith(LEGACY_PREFIX) and not _all_ours(p):
+                        break
                     try:
                         p.unlink()
                         gone += 1
@@ -347,6 +369,24 @@ def cleanup(keep_days: int) -> int:
                         pass
                     break
     return gone
+
+
+def _all_ours(path: Path) -> bool:
+    """ファイルの行が全部自分のものか(読めなければ「分からない」= 消さない)。"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    if not _ours(json.loads(line)):
+                        return False
+                except ValueError:
+                    return False
+    except OSError:
+        return False
+    return True
 
 
 # ------------------------------------------------------------------

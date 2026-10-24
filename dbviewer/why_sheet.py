@@ -177,10 +177,11 @@ def export_csv(rows: list[dict[str, Any]], *, now: Optional[datetime] = None) ->
     folder = config.LOG_DIR / EXPORT_DIR
     folder.mkdir(parents=True, exist_ok=True)
     stamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
-    path = folder / f"エラー一覧_{stamp}.csv"
+    name = f"{config.TOOL_LOG_NAME}_エラー一覧_{trace.pc_name()}_{stamp}"     # ツール名で始め、PC 名を入れる(0.34.0)
+    path = folder / f"{name}.csv"
     n = 2
     while path.exists():
-        path = folder / f"エラー一覧_{stamp}_{n}.csv"
+        path = folder / f"{name}_{n}.csv"
         n += 1
     with open(path, "w", encoding="cp932", errors="replace", newline="") as f:
         w = csv.writer(f, lineterminator="\r\n")

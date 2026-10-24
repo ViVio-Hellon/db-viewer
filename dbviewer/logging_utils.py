@@ -75,17 +75,21 @@ def configure_logging() -> None:
     if _configured:
         return
 
-    config.ensure_dirs()
-
     root = logging.getLogger("dbviewer")
     root.setLevel(logging.DEBUG)
 
     formatter = logging.Formatter("%(asctime)s | %(name)s | %(levelname)s | %(message)s",
                                    datefmt="%Y/%m/%d %H:%M:%S")
 
-    file_handler = DailyFileHandler(date.today(), encoding="utf-8")
-    file_handler.setFormatter(formatter)
-    root.addHandler(file_handler)
+    # **ログが書けないことで止めない**(0.34.0。日報複合ツールの決まり)。フォルダを作れない・開けないときは
+    # ファイルに書かずに動く(あとで設定「ログ」の置き場所に書ければ、そちらに書く)
+    try:
+        config.ensure_dirs()
+        file_handler = DailyFileHandler(date.today(), encoding="utf-8", delay=True)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except OSError:
+        pass
 
     # コンソールが無いときは付けない。
     # **`pythonw.exe` では `sys.stderr` が `None`** になる(Start.vbs は

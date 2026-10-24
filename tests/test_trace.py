@@ -126,14 +126,14 @@ class TraceTest(_LogDirCase):
 
 
 class ToolFolderTest(_LogDirCase):
-    """0.33.0: ログはツール名のフォルダに、ツール名で始まる名前で。ほかのツールと混ざらない。"""
+    """0.33.0 / 0.34.0: ログは <置き場所>\\dbviewer\\dbviewer_… に(日報複合ツールの決まり)。前の場所の自分のログも読む。"""
 
     def test_names_and_old_files(self):
-        local = Path(self.tmp.name) / "ローカル"
+        from dbviewer import why_sheet
+        local = Path(self.tmp.name) / "ローカル" / "logs"
         config.DEFAULT_LOG_DIR = config.tool_log_dir(local)
         self.assertEqual(config.DEFAULT_LOG_DIR, local / "dbviewer")
-        self.assertEqual(config.tool_log_dir(local / "dbviewer"), local / "dbviewer")   # 二重にしない
-        self.assertEqual(logging_utils.resolve_log_dir(r"\\srv\共有\ログ").name, "dbviewer")
+        self.assertEqual(config.tool_log_dir(local / "dbviewer"), local / "dbviewer" / "dbviewer")  # 直下に置かない
         shared = Path(self.tmp.name) / "共有"
         user_settings.save(config.KEY_LOG_DIR, str(shared))
         self.assertEqual(logging_utils.apply_settings()["problem"], "")
@@ -142,17 +142,62 @@ class ToolFolderTest(_LogDirCase):
         self.assertEqual(rec["app"], "dbviewer")                                    # 中身にもツール名
         self.assertTrue(trace.file_for().name.startswith("dbviewer_記録_"))
         me, today = trace.pc_name(), date.today()
-        line = lambda msg: json.dumps({"ts": "2026-10-22T10:00:00", "ev": "試験", "lv": "INFO", "msg": msg,
-                                       "pc": me}, ensure_ascii=False) + "\n"
-        # この PC の既定の場所(ローカル領域)の 0.32.0 までのファイルは読む
+        ours = lambda msg, t="2026-10-22T10:00:00": json.dumps(
+            {"t": t, "ev": "試験", "lv": "INFO", "msg": msg, "pc": me}, ensure_ascii=False) + "\n"
+        other = json.dumps({"at": "2026-10-22T10:00:01", "kind": "E", "message": "日報の出来事"},
+                           ensure_ascii=False) + "\n"
+        # 前の場所(置き場所の直下)の自分のログは読む。ほかのツールの行が混ざっていても、自分の行だけ
+        (shared / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(ours("前の場所の自分") + other, encoding="utf-8")
         local.mkdir(parents=True, exist_ok=True)
-        (local / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(line("前の版・この PC"), encoding="utf-8")
-        # 共有フォルダの直下の古い名前は読まない(ほかのツールも 記録_… で書いている)
-        (shared / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(line("ほかのツール"), encoding="utf-8")
+        (local / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(ours("ローカルの前の場所"), encoding="utf-8")
+        # ほかのツールのフォルダの中は読まない
+        (shared / "nippou").mkdir()
+        (shared / "nippou" / f"記録_{me}_{today:%Y%m%d}.jsonl").write_text(ours("日報のフォルダ"), encoding="utf-8")
         msgs = [r.get("msg") for r in trace.read(1, limit=50)]
-        self.assertIn("新しい", msgs)
-        self.assertIn("前の版・この PC", msgs)
-        self.assertNotIn("ほかのツール", msgs)
+        for want in ("新しい", "前の場所の自分", "ローカルの前の場所"):
+            self.assertIn(want, msgs)
+        self.assertNotIn("日報の出来事", msgs)
+        self.assertNotIn("日報のフォルダ", msgs)
+        # なぜなぜ: 日報も前の版は同じ「なぜなぜ_<PC>.jsonl」に書いていた → 自分の行(rid)だけ
+        (shared / f"なぜなぜ_{me}.jsonl").write_text(
+            json.dumps({"t": "2026-10-22T11:00:00", "rid": "abc12345", "status": "open", "whys": ["x"]}) + "\n"
+            + json.dumps({"id": "E-1", "at": "2026-10-22T11:00:00", "terminal": me, "why": "日報"}) + "\n",
+            encoding="utf-8")
+        self.assertEqual(list(why_sheet.all_sheets()), ["abc12345"])
+        # 書き出しもツール名で始め、PC 名を入れる
+        out = why_sheet.export_csv([])
+        self.assertEqual(out.parent, shared / "dbviewer" / "書き出し")
+        self.assertTrue(out.name.startswith(f"dbviewer_エラー一覧_{me}_"), out.name)
+
+    def test_cleanup_old_place_only_own_and_unmixed(self):
+        local = Path(self.tmp.name) / "ローカル" / "logs"
+        config.DEFAULT_LOG_DIR = config.tool_log_dir(local)
+        shared = Path(self.tmp.name) / "共有"
+        user_settings.save(config.KEY_LOG_DIR, str(shared))
+        logging_utils.apply_settings()
+        me = trace.pc_name()
+        old = date.today() - timedelta(days=40)
+        mine = json.dumps({"t": "x", "ev": "screen", "lv": "INFO"}) + "\n"
+        files = {
+            f"記録_{me}_{old:%Y%m%d}.jsonl": mine,                                         # 自分だけ → 消す
+            f"記録_ほかのPC_{old:%Y%m%d}.jsonl": mine,                                      # ほかの PC → 残す
+            f"dbviewer_{me}_{old:%Y%m%d}.log": "x",                                          # 自分の名前 → 消す
+            f"rneconverter_{me}_{old:%Y%m%d}.log": "x",                                      # ほかのツール → 残す
+        }
+        mixed = shared / "混ざり"
+        for n, body in files.items():
+            (shared / n).write_text(body, encoding="utf-8")
+        mixed.mkdir()
+        (shared / "nippou").mkdir()
+        (shared / "nippou" / f"記録_{me}_{old:%Y%m%d}.jsonl").write_text(mine, encoding="utf-8")
+        # ほかのツールの行が混ざった古い 記録_ は残す(もう 1 つの PC 名で作る: 同じ名前は 1 つしか置けないので)
+        trace_name = f"記録_{me}_{(old - timedelta(days=1)):%Y%m%d}.jsonl"
+        (shared / trace_name).write_text(mine + json.dumps({"message": "日報"}) + "\n", encoding="utf-8")
+        trace.cleanup(30)
+        left = sorted(p.name for p in shared.iterdir() if p.is_file())
+        self.assertEqual(left, sorted([f"記録_ほかのPC_{old:%Y%m%d}.jsonl", f"rneconverter_{me}_{old:%Y%m%d}.log",
+                                       trace_name]))
+        self.assertTrue((shared / "nippou" / f"記録_{me}_{old:%Y%m%d}.jsonl").exists())   # ほかのツールのフォルダ
 
 
 class LogViewTest(_LogDirCase):
