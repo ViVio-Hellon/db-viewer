@@ -358,8 +358,15 @@ def _hold_after_failure(srv, thread, *, watch_screen: bool = True) -> None:
       - 画面を閉じた … 問い合わせが `FAILED_IDLE_SEC` 秒来なければ自分で終わる
     デスクトップ版(`watch_screen=False`)は窓を閉じると外枠が終わらせる。
     """
+    from dbviewer.idle_exit import SLEEP_GAP_SEC, tick_gap
+    last_wall, last_mono = time.time(), time.monotonic()
     while thread.is_alive() and not srv.stop_requested:
         thread.join(timeout=1.0)
+        now_wall, now_mono = time.time(), time.monotonic()
+        if tick_gap(now_mono - last_mono, now_wall - last_wall) > 1.0 + SLEEP_GAP_SEC:
+            # スリープから戻った(または時計がずれた)。画面が戻るのを待ち直す(0.35.0)
+            srv.boot.last_seen = now_mono
+        last_wall, last_mono = now_wall, now_mono
         if watch_screen and srv.boot.idle_seconds() > FAILED_IDLE_SEC:
             log().warning("起動に失敗したまま画面が %.0f秒 来ないので終了します", FAILED_IDLE_SEC)
             srv.stop()

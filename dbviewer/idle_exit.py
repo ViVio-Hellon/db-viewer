@@ -78,8 +78,9 @@ class IdleWatch:
     PCがスリープしているあいだは、画面もこのプロセスも止まります。
     Windows では `time.monotonic()` がスリープ中も進むので、戻った瞬間に
     「90秒 心拍が無い」が成り立ち、画面の最初の心拍より先に落ちていました。
-    見張りの間隔が壁時計で大きく空いたら**スリープから戻った**とみなし、
-    そこから `idle_sec` は待ちます。
+    見張りの間隔が大きく空いたら**スリープから戻った**とみなし、
+    そこから `idle_sec` は待ちます。間隔は **monotonic と壁時計の両方**で測ります
+    (0.35.0。壁時計だけだと、戻った直後の時刻のずれ・巻き戻りで気づけない。`tick_gap`)。
     """
 
     def __init__(self, stop: Callable[[], None],
@@ -177,11 +178,11 @@ class IdleWatch:
         self._done.set()
 
     def _loop(self) -> None:
-        last_wall = time.time()
+        last_wall, last_mono = time.time(), time.monotonic()
         while not self._done.wait(self.tick_sec):
-            now_wall = time.time()
-            self.check_sleep(now_wall - last_wall)
-            last_wall = now_wall
+            now_wall, now_mono = time.time(), time.monotonic()
+            self.check_sleep(tick_gap(now_mono - last_mono, now_wall - last_wall))
+            last_wall, last_mono = now_wall, now_mono
             why = self.overdue()
             if why is None:
                 continue
@@ -239,6 +240,16 @@ class IdleWatch:
         if closed:
             return "画面が閉じられました"
         return f"{self.idle_sec:.0f}秒 心拍がありません"
+
+
+def tick_gap(mono_sec: float, wall_sec: float) -> float:
+    """見張りの 1 周のあいだに止まっていた長さ(0.35.0)。
+
+    **心拍を数える時計(monotonic)でも測る。** 以前は壁時計(PC の時刻)だけで測っていたので、
+    スリープから戻った直後に PC の時刻の直しが遅れる・時刻が巻き戻ると、スリープに気づかないまま
+    monotonic だけが 1 時間進み、「90秒 心拍が無い」で**使っている最中に終了**していた(ほかのツールで起きた)。
+    壁時計が大きく動いた(進んだ・戻った)ときも、止まっていたものとみなす(待ち直すだけなので安全側)。"""
+    return max(mono_sec, abs(wall_sec))
 
 
 # ------------------------------------------------------------------

@@ -90,7 +90,19 @@ function alive(body) {
                    `focus`・`online` でも「戻りました」
 */
 let lastTick = Date.now();
+let lastPerf = performance.now();
 let lastResume = 0;
+
+/* 前の見張りから止まっていた長さ(ミリ秒)。**PC の時刻(Date.now)と経過時間(performance.now)の両方**で測る
+   (0.35.0)。スリープから戻った直後は PC の時刻の直しが遅れたり巻き戻ったりするので、片方だけだと気づけない。 */
+function sinceLastTick() {
+  const now = Date.now();
+  const perf = performance.now();
+  const gap = Math.max(perf - lastPerf, Math.abs(now - lastTick));
+  lastTick = now;
+  lastPerf = perf;
+  return gap;
+}
 
 function isVisible() {
   return document.visibilityState === "visible";
@@ -101,7 +113,7 @@ function comeBack(gapMs) {
   const now = Date.now();
   if (now - lastResume < 1000 && !gapMs) return;
   lastResume = now;
-  lastTick = now;
+  sinceLastTick();
   alive({ resumed: true, visible: isVisible(), gap_ms: gapMs || 0 });
   // **戻ってきたらすぐ確かめる。** スリープ明けで繋がっていなければ、
   // ここで分かる
@@ -117,9 +129,7 @@ function startAlive() {
   const period = window.APP.alivePollMs || 20000;
   alive({ visible: isVisible() });
   setInterval(() => {
-    const now = Date.now();
-    const gap = now - lastTick;
-    lastTick = now;
+    const gap = sinceLastTick();
     // 間隔が大きく空いた = PCが寝ていた(または固まっていた)。裏のタブは
     // 間引かれて1分ほど空くのが普通なので、それより十分長いときだけ
     if (gap > Math.max(period * 3, 120000)) {
