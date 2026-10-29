@@ -246,6 +246,19 @@ class WebTraceTest(_LogDirCase):
         r = self.c.get("/api/settings/state", headers=self.h)
         self.assertRegex(r.headers.get("X-Request-Id", ""), r"^[0-9a-f]{8}$")
 
+    def test_foreign_probe_for_unknown_path_is_quiet(self):
+        """0.36.0: ほかのツールが自分のサーバを探して /boot.js を問い合わせてくる(RNEConverter の起動画面)。
+        このツールに無い場所なので、断るだけで警告に残さない。画面そのものは今までどおり断って警告を残す。"""
+        before = len(self.lines())
+        r = self.c.get("/boot.js?t=1", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.data, b"")
+        new = self.lines()[before:]
+        self.assertFalse([x for x in new if "/boot.js" in str(x.get("path", "")) or "/boot.js" in str(x.get("msg", ""))])
+        r = self.c.get("/list", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(r.status_code, 403)
+        self.assertTrue([x for x in self.lines() if x.get("lv") == "WARN" and "/list" in str(x.get("msg", ""))])
+
     def test_start_recorded(self):
         self.assertIn("app.start", [x["ev"] for x in self.lines()])
 

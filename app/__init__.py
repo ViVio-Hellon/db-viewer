@@ -246,6 +246,12 @@ def _refuse_foreign_page():
     site = request.headers.get("Sec-Fetch-Site", "")
     if site not in ("cross-site", "same-site"):
         return None
+    if request.url_rule is None:
+        # **このツールに無い場所**(0.36.0)。ほかのツールが自分のサーバを探して、近いポートを順に
+        # 問い合わせてくる(RNEConverter の起動画面は 8741〜8750 の /boot.js を 1 秒ごとに読む。
+        # DBビューアは 8743〜)。断るだけで、警告として残さない(ログ画面の「問題」を埋めない)
+        g.recorded = True
+        return "", 404
     log.warning("ほかのページからの画面の読み込みを断りました: %s (%s)",
                 request.path, site)
     return FOREIGN_PAGE_HTML, 403, {"Content-Type": "text/html; charset=utf-8"}
