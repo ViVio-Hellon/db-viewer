@@ -76,7 +76,7 @@ _FALLBACK: dict[str, Any] = {
         # 設定ファイルのキーは `roles` のまま。既に現場に配ってある
         # `config/app.json` を書き換えずに済ませる(値の意味は変わらない)
         "roles": {
-            modes.MAIN: {"port": 8743},
+            modes.MAIN: {"port": 8790},
         },
     },
     "monitoring": {

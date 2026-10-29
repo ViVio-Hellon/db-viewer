@@ -45,7 +45,7 @@ def bind_db(case: unittest.TestCase, routes: Any,
     return conn
 
 
-def make_client(mode: str = "main", *, port: int = 8743, ready: bool = True):
+def make_client(mode: str = "main", *, port: int = 8790, ready: bool = True):
     """トークン付きで叩ける `test_client`。"""
     from app import create_app
 
