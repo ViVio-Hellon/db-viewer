@@ -232,6 +232,20 @@ def try_place():
     return jsonify(out)
 
 
+@bp.post("/api/easy/char-check")
+def char_check():
+    """見えない文字の点検(0.42.0)。見るだけなので 閲覧のみ でも使える。"""
+    from dbviewer import char_check as cc
+    conn, _setup, err = _open()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(cc.check_table(conn, str(body.get("table") or "")))
+    except ValueError as exc:
+        return _refuse("bad_input", str(exc))
+
+
 @bp.post("/api/easy/values")
 def column_values():
     """その列にいま入っている値(重ならない・並べて・500 まで)。コンボボックスの選択肢を作るとき(0.39.0)。"""

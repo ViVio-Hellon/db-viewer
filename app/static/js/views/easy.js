@@ -558,6 +558,36 @@ async function changePassword() {
   } catch (err) { toastError(err, "warn"); }
 }
 
+/* 見えない文字の点検(0.42.0) */
+async function runCharCheck() {
+  if (!st) return;
+  const sum = document.getElementById("ccSummary");
+  const wrap = document.getElementById("ccWrap");
+  const rows = document.getElementById("ccRows");
+  sum.textContent = "点検しています…";
+  try {
+    const r = await api.post("/api/easy/char-check", { table: st.table });
+    document.getElementById("ccHead").textContent = r.head || "行";
+    if (!r.total) {
+      sum.textContent = `[${r.table}] の ${r.rows.toLocaleString()} 行を見ました。見えない文字・前後の空白のある値はありません。`;
+      wrap.hidden = true;
+      return;
+    }
+    const cols = Object.entries(r.by_column).map(([c, n]) => `${c} ${n}`).join("・");
+    const kinds = Object.entries(r.by_kind).map(([k, n]) => `${k} ${n}`).join("・");
+    sum.textContent = `[${r.table}] の ${r.rows.toLocaleString()} 行を見ました。気になる値が ${r.total.toLocaleString()} 個あります`
+      + `(列ごと: ${cols} / 種類: ${kinds})。` + (r.truncated ? ` 先頭 ${r.findings.length} 個だけ出しています。` : "");
+    rows.replaceChildren(...r.findings.map((f) => {
+      const tr = document.createElement("tr");
+      for (const [text, cls] of [[f.head, "t"], [f.column, "t"], [f.shown, "t v"], [f.kinds.join(" / "), "t k"]]) {
+        const td = document.createElement("td"); td.className = cls; td.textContent = text; tr.appendChild(td);
+      }
+      return tr;
+    }));
+    wrap.hidden = false;
+  } catch (err) { sum.textContent = ""; toastError(err); }
+}
+
 export function start() {
   for (const id of ["easyProblem", "easyBody", "easyDb", "easyGoSource", "easyTable", "easyColsWhere",
                     "easyLegacy", "easyCols", "easyColsSave", "easyColsHint", "easyVbaCard", "easyVbaList",
@@ -579,6 +609,7 @@ export function start() {
     load(el.easyTable.value);
   });
   el.easyColsSave.addEventListener("click", saveColumns);
+  document.getElementById("ccRun")?.addEventListener("click", runCharCheck);
   el.sfSave.addEventListener("click", () => saveSettingsFile(el.sfText.value.trim()));
   el.sfDefault.addEventListener("click", () => saveSettingsFile(""));
   el.rightsRecheck.addEventListener("click", recheckRights);

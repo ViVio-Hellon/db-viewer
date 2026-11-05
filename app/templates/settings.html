@@ -173,6 +173,28 @@
             </div>
           </section>
 
+          <section class="card">
+            {# 見えない文字の点検(0.42.0。dbviewer/char_check.py)。見るだけで直さない #}
+            <header>
+              <i class="ib ib--sm" aria-hidden="true">点</i>
+              <h3>見えない文字の点検</h3>
+              <span class="eyebrow" id="ccWhere">上で選んでいる表</span>
+            </header>
+            <div class="pad">
+              <p class="why" style="margin-top:0">画面では同じに見えるのに、値の前後の空白・NBSP・BOM・ゼロ幅スペース・改行などが入っていると、
+                ファイル探し・絞り込み・選択肢と食い違います。表の全部の列を見て、そういう値を一覧にします(<b>見るだけで直しません</b>)。
+                ⟨NBSP⟩ のような印の所に、その文字があります。</p>
+              <div class="btn-row"><button class="btn btn--find" type="button" id="ccRun">点検する</button></div>
+              <p class="why" id="ccSummary"></p>
+              <div class="tablewrap" id="ccWrap" hidden>
+                <table class="table cctable">
+                  <thead><tr><th class="t" id="ccHead">行</th><th class="t">列</th><th class="t">値(印つき)</th><th class="t">何があるか</th></tr></thead>
+                  <tbody id="ccRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
           <section class="card" id="easyVbaCard" hidden>
             <header>
               <i class="ib ib--sm ib--warn" aria-hidden="true">旧</i>
@@ -863,6 +885,9 @@
   .easytable tr.is-open td:first-child { border-left:2px solid var(--accent); }
   .easytable tr.is-open td:last-child { border-right:2px solid var(--accent); }
   .easytable tr:focus-within td.name b { text-decoration:underline; text-decoration-thickness:2px; text-underline-offset:3px; }
+  .cctable td { vertical-align:top; }
+  .cctable td.v { font-family:var(--mono); overflow-wrap:anywhere; }
+  .cctable td.k { font-size:var(--fs-xs); color:var(--state-warn); }
   .easytable .optbox { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
   .easytable .optbox textarea { min-width:16em; font-size:var(--fs-xs); }
   .easytable .optbox .btn { align-self:flex-start; }
