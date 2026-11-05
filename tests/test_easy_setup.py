@@ -457,6 +457,34 @@ class ComboOptionsTest(_Case):
         self.assertEqual(self.save(["x" * 300]).status_code, 422)
 
 
+class CharCleanApiTest(_Case):
+    """0.43.0: 見えない文字を取り除く。編集可 だけ・書く前に DB の控え。"""
+
+    def setUp(self):
+        super().setUp()
+        self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 部品 SET 名前 = ? WHERE 品番 = 'A-1'", ("\ufeff箱\u00a0",))
+            c.commit()
+        self.login()
+
+    def test_clean_with_backup(self):
+        r = self.ok("/api/easy/char-check", table="部品")
+        self.assertEqual(r["total"], 1)
+        r = self.ok("/api/easy/char-clean", table="部品")
+        self.assertEqual(r["changed"], 1)
+        self.assertTrue(Path(r["backup"]).is_file())                                  # 控えがある
+        self.assertEqual(self.q("SELECT 名前 FROM 部品 WHERE 品番 = 'A-1'")[0][0], "箱")
+        self.assertEqual(self.ok("/api/easy/char-check", table="部品")["total"], 0)
+
+    def test_view_only_refused(self):
+        from dbviewer import auth as _auth
+        with mock.patch.object(_auth, "level", return_value=1):
+            r = self.post("/api/easy/char-clean", table="部品")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self.q("SELECT 名前 FROM 部品 WHERE 品番 = 'A-1'")[0][0], "\ufeff箱\u00a0")
+
+
 class WorkFileTest(_Case):
     """0.23.0: 場所の決まりに {作業NO}_{作業名}(同じ行のほかの列)。名前は全角・半角を問わずに探す。"""
 

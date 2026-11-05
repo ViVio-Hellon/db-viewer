@@ -35,6 +35,39 @@ class CharCheckTest(unittest.TestCase):
         self.assertEqual((r["total"], r["rows"], r["head"]), (5, 7, "管理番号"))
         self.assertEqual(r["by_column"], {"作業NO": 4, "作業名": 1})
 
+    def test_clean(self) -> None:
+        self.assertEqual(cc.clean("\ufeff0-1-2\u00a0"), "0-1-2")
+        self.assertEqual(cc.clean("0-2-\u200b2"), "0-2-2")
+        self.assertEqual(cc.clean("改行\nあり "), "改行\nあり")                 # 途中の改行は残す
+        self.assertEqual(cc.clean("'10-12-5"), "'10-12-5")                         # ' は頼まれたときだけ
+        self.assertEqual(cc.clean("'10-12-5", apostrophe=True), "10-12-5")
+
+    def test_clean_table(self) -> None:
+        backups = []
+        r = cc.clean_table(self.conn, "作業", backup=lambda: backups.append(1) or "控え.sqlite3")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["changed"], backups), (3, [1]))                         # 書く前に控え 1 回
+        vals = dict(self.conn.execute("SELECT 管理番号, 作業NO FROM 作業"))
+        self.assertEqual((vals[2], vals[3], vals[4], vals[6]), ("0-1-2", "0-1-3", "'10-12-5", "0-2-2"))
+        self.assertEqual(self.conn.execute("SELECT 作業名 FROM 作業 WHERE 管理番号 = 5").fetchone()[0], "改行\nあり")
+        self.assertEqual(cc.check_table(self.conn, "作業")["total"], 2)              # 残るのは ' と途中の改行
+        r = cc.clean_table(self.conn, "作業", apostrophe=True, backup=lambda: "控え")
+        self.assertEqual(r["changed"], 1)
+        self.assertEqual(cc.clean_table(self.conn, "作業", backup=lambda: "控え")["changed"], 0)
+
+    def test_no_backup_no_write(self) -> None:
+        r = cc.clean_table(self.conn, "作業", backup=lambda: "")
+        self.assertFalse(r["ok"])
+        self.assertEqual(self.conn.execute("SELECT 作業NO FROM 作業 WHERE 管理番号 = 2").fetchone()[0], "\ufeff0-1-2\u00a0")
+
+    def test_failure_rolls_back(self) -> None:
+        self.conn.execute("CREATE UNIQUE INDEX u ON 作業(作業NO)")
+        self.conn.execute("INSERT INTO 作業 VALUES (8, '0-1-3', 'かぶる')")             # 0-1-3 と 0-1-3␣ がそろうとかぶる
+        self.conn.commit()
+        r = cc.clean_table(self.conn, "作業", backup=lambda: "控え")
+        self.assertFalse(r["ok"])
+        self.assertEqual(self.conn.execute("SELECT 作業NO FROM 作業 WHERE 管理番号 = 2").fetchone()[0], "\ufeff0-1-2\u00a0")
+
     def test_unknown_table(self) -> None:
         with self.assertRaises(ValueError):
             cc.check_table(self.conn, "無い表")

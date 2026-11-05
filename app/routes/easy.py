@@ -246,6 +246,28 @@ def char_check():
         return _refuse("bad_input", str(exc))
 
 
+@bp.post("/api/easy/char-clean")
+def char_clean():
+    """見えない文字を取り除く(0.43.0)。列の設定を保存できる人(編集可)だけ。書く前に DB の控えを取る。"""
+    from dbviewer import char_check as cc
+    conn, _setup, err = _open()
+    if err:
+        return err
+    if auth.level() < easy_setup.WRITE_LEVEL:
+        return _refuse(easy_setup.REFUSE_LEVEL, "取り除くのは 編集可 の人だけです。", 403)
+    body = request.get_json(silent=True) or {}
+    table = str(body.get("table") or "")
+    try:
+        out = cc.clean_table(conn, table, apostrophe=bool(body.get("apostrophe")),
+                             backup=lambda: easy_setup._backup(conn, f"見えない文字を取り除く前_{table}"))
+    except ValueError as exc:
+        return _refuse("bad_input", str(exc))
+    s = auth.current()
+    trace.event("char.clean", out["message"], level="INFO" if out["ok"] else "WARN",
+                data={"table": table, "changed": out["changed"], "backup": out["backup"], "by": s.user_id if s else ""})
+    return jsonify(out), (200 if out["ok"] else 409)
+
+
 @bp.post("/api/easy/values")
 def column_values():
     """その列にいま入っている値(重ならない・並べて・500 まで)。コンボボックスの選択肢を作るとき(0.39.0)。"""

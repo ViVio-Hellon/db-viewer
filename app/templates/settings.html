@@ -184,7 +184,13 @@
               <p class="why" style="margin-top:0">画面では同じに見えるのに、値の前後の空白・NBSP・BOM・ゼロ幅スペース・改行などが入っていると、
                 ファイル探し・絞り込み・選択肢と食い違います。表の全部の列を見て、そういう値を一覧にします(<b>見るだけで直しません</b>)。
                 ⟨NBSP⟩ のような印の所に、その文字があります。</p>
-              <div class="btn-row"><button class="btn btn--find" type="button" id="ccRun">点検する</button></div>
+              <div class="btn-row">
+                <button class="btn btn--find" type="button" id="ccRun">点検する</button>
+                <button class="btn btn--danger" type="button" id="ccClean" hidden>取り除く</button>
+                <label class="checkline" id="ccAposLab" hidden><input type="checkbox" id="ccApos"> 先頭の ' も取る</label>
+              </div>
+              <p class="why" id="ccCleanWhy" hidden>取り除くのは、前後の空白類と見えない文字(途中にあるものも)です。<b>値の途中の改行は残します</b>。
+                書く前に DB の控えを取ります(控えの場所は終わったあとに出ます)。編集可 の人だけ。</p>
               <p class="why" id="ccSummary"></p>
               <div class="tablewrap" id="ccWrap" hidden>
                 <table class="table cctable">

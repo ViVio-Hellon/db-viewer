@@ -106,3 +106,60 @@ def check_table(conn: sqlite3.Connection, table: str) -> dict[str, Any]:
     return {"table": table, "head": cols[0] if cols else "", "total": total, "findings": findings,
             "truncated": total > len(findings), "by_column": by_col, "by_kind": by_kind,
             "rows": conn.execute(f"SELECT COUNT(*) FROM {q(table)}").fetchone()[0]}
+
+
+# ------------------------------------------------------------------
+# 取り除く(0.43.0)。書く前に DB の控えを取る。1 つの取引で書く(途中で失敗したら何も変えない)
+# ------------------------------------------------------------------
+def clean(text: str, *, apostrophe: bool = False) -> str:
+    """前後の空白類・見えない文字を取り、途中の見えない文字・制御文字(改行・タブ以外)も取る。
+    **途中の改行は残す**(わざと入れていることがある)。`apostrophe` なら先頭の ' も取る。"""
+    t = "".join(ch for ch in text if not _odd(ch))
+    t = t.strip()
+    if apostrophe and t.startswith("'"):
+        t = t[1:].strip()
+    return t
+
+
+def plan(conn: sqlite3.Connection, table: str, *, apostrophe: bool = False) -> list[tuple[int, str, str, str]]:
+    """直す所: (rowid, 列, いまの値, 直した値)。"""
+    cols = column_names(conn, table)
+    sel = ", ".join(q(c) for c in cols)
+    out = []
+    for row in conn.execute(f"SELECT rowid, {sel} FROM {q(table)}"):
+        for col, v in zip(cols, row[1:]):
+            if isinstance(v, str) and v:
+                new = clean(v, apostrophe=apostrophe)
+                if new != v:
+                    out.append((row[0], col, v, new))
+    return out
+
+
+def clean_table(conn: sqlite3.Connection, table: str, *, apostrophe: bool = False, backup) -> dict[str, Any]:
+    """取り除く。`backup()` は控えのファイルの場所を返す(取れなければ空 → 書かない)。"""
+    if not table_exists(conn, table):
+        raise ValueError(f"表 [{table}] がありません。")
+    todo = plan(conn, table, apostrophe=apostrophe)
+    if not todo:
+        return {"ok": True, "changed": 0, "backup": "", "message": "取り除くものはありませんでした。"}
+    saved = backup()
+    if not saved:
+        return {"ok": False, "changed": 0, "backup": "",
+                "message": "DB の控えを取れなかったので、書き換えていません。"}
+    # SAVEPOINT: 取引の外でも中でも、途中で失敗したらここで書いたぶんだけ戻せる
+    try:
+        conn.execute("SAVEPOINT char_clean")
+        for rowid, col, old, new in todo:
+            conn.execute(f"UPDATE {q(table)} SET {q(col)} = ? WHERE rowid = ? AND {q(col)} = ?",
+                         (None if new == "" else new, rowid, old))
+        conn.execute("RELEASE char_clean")
+        conn.commit()
+    except sqlite3.Error as exc:
+        conn.execute("ROLLBACK TO char_clean")
+        conn.execute("RELEASE char_clean")
+        return {"ok": False, "changed": 0, "backup": saved,
+                "message": f"書き換えられませんでした(何も変えていません): {exc}"}
+    cols = sorted({c for _r, c, _o, _n in todo})
+    return {"ok": True, "changed": len(todo), "backup": saved,
+            "message": f"[{table}] の {len(todo)} 個の値から見えない文字・前後の空白を取り除きました"
+                       f"(列: {'・'.join(cols)})。書く前の控え: {saved}"}

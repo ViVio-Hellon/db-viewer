@@ -568,6 +568,8 @@ async function runCharCheck() {
   try {
     const r = await api.post("/api/easy/char-check", { table: st.table });
     document.getElementById("ccHead").textContent = r.head || "行";
+    const canClean = r.total > 0 && st.can_write;
+    for (const id of ["ccClean", "ccAposLab", "ccCleanWhy"]) document.getElementById(id).hidden = !canClean;
     if (!r.total) {
       sum.textContent = `[${r.table}] の ${r.rows.toLocaleString()} 行を見ました。見えない文字・前後の空白のある値はありません。`;
       wrap.hidden = true;
@@ -586,6 +588,19 @@ async function runCharCheck() {
     }));
     wrap.hidden = false;
   } catch (err) { sum.textContent = ""; toastError(err); }
+}
+
+async function runCharClean() {
+  if (!st) return;
+  const apos = document.getElementById("ccApos").checked;
+  const ok = await confirmBox(`[${st.table}] の値から、前後の空白類と見えない文字${apos ? "・先頭の '" : ""}を取り除きます。`
+    + "書く前に DB の控えを取ります。値の途中の改行は残します。よろしいですか？", { ok: "取り除く", danger: true });
+  if (!ok) return;
+  try {
+    const r = await api.post("/api/easy/char-clean", { table: st.table, apostrophe: apos });
+    toast(r.message, "ok");
+    await runCharCheck();                              // 結果を見直す
+  } catch (err) { toastError(err); }
 }
 
 export function start() {
@@ -610,6 +625,7 @@ export function start() {
   });
   el.easyColsSave.addEventListener("click", saveColumns);
   document.getElementById("ccRun")?.addEventListener("click", runCharCheck);
+  document.getElementById("ccClean")?.addEventListener("click", runCharClean);
   el.sfSave.addEventListener("click", () => saveSettingsFile(el.sfText.value.trim()));
   el.sfDefault.addEventListener("click", () => saveSettingsFile(""));
   el.rightsRecheck.addEventListener("click", recheckRights);
