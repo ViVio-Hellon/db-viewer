@@ -108,6 +108,29 @@ else:                                                       # 開発・試験用
         return None
 
 
+def create_epoch(ident: Optional[Identity]) -> Optional[float]:
+    """プロセスが起動した時刻(time.time() と同じ物差し)。分からなければ None。"""
+    if ident is None or ident.create_time is None:
+        return None
+    if IS_WINDOWS:                                          # FILETIME: 1601/1/1 からの 100ns
+        return ident.create_time / 1e7 - 11644473600.0
+    try:                                                    # /proc: 起動からの tick
+        btime = next(int(line.split()[1]) for line in
+                     Path("/proc/stat").read_text(encoding="ascii").splitlines() if line.startswith("btime"))
+        return btime + ident.create_time / os.sysconf("SC_CLK_TCK")
+    except (OSError, StopIteration, ValueError):
+        return None
+
+
+def end_process(ident: Identity, *, wait_sec: float = 5.0) -> bool:
+    """PID・作成時刻が合うときだけ止める(実行ファイル名は見ない。照合は呼ぶ側)。消えれば True。"""
+    now = identity(ident.pid)
+    if now is None or ident.create_time is None or now.create_time != ident.create_time:
+        return True
+    _terminate(ident.pid)
+    return wait_gone(ident, wait_sec)
+
+
 def wait_gone(ident: Identity, timeout: float) -> bool:
     deadline = time.monotonic() + max(0.0, timeout)
     while True:

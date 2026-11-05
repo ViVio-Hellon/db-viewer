@@ -63,6 +63,9 @@ class LockInfo:
     # 逆に、悪意あるWebページはローカルのファイルを読めないため、
     # トークンによる防御(別オリジンからの操作を弾く)はそのまま効く。
     token: str = ""
+    # 書いたプロセスが**起動した時刻**(0.44.0)。PID は使い回されるので、PID と
+    # この時刻が両方合うときだけ「書いた本人が生きている」とみなす。古い版のロックには無い(0)
+    proc_started: float = 0.0
 
     @property
     def started_text(self) -> str:
@@ -147,7 +150,7 @@ def try_acquire(mode: str) -> bool:
     info = LockInfo(
         app_id=app_config.app_id(), mode=mode, pid=os.getpid(),
         port=STARTING_PORT, url="", started_at=time.time(),
-        python=sys.executable, app_root=str(app_config.APP_ROOT))
+        python=sys.executable, app_root=str(app_config.APP_ROOT), proc_started=own_start_epoch())
     try:
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
@@ -179,6 +182,65 @@ def is_process_alive(pid: int) -> bool:
     except PermissionError:
         return True              # 別ユーザーのプロセス = 生きている
     return not _is_zombie(pid)
+
+
+# 起動時刻の照合のゆとり(秒)。時刻の丸め・読み方の違いを吸収する
+OWNER_TOLERANCE_SEC = 2.0
+# 書いた本人が生きているのに応答しないとき、待つ上限(秒)。過ぎたら終わらせて起動し直す
+UNRESPONSIVE_WAIT_SEC = 5.0
+
+
+def process_start_epoch(pid: int) -> Optional[float]:
+    """そのプロセスが起動した時刻。開けない・分からなければ None。"""
+    from dbviewer.office_bridge import procs
+    try:
+        return procs.create_epoch(procs.identity(pid))
+    except Exception:                             # noqa: BLE001 - 分からないだけ
+        return None
+
+
+def own_start_epoch() -> float:
+    return process_start_epoch(os.getpid()) or 0.0
+
+
+def owner_verified(pid: int, proc_started: float) -> bool:
+    """PID と起動時刻が両方合う = 書いた本人が生きている(確か)。"""
+    if not proc_started or pid <= 0:
+        return False
+    started = process_start_epoch(pid)
+    return started is not None and abs(started - proc_started) <= OWNER_TOLERANCE_SEC
+
+
+def lock_owner_alive(pid: int, proc_started: float = 0.0, written_at: float = 0.0) -> bool:
+    """ロックを書いたプロセスがまだ居るか(0.44.0)。
+
+    PID だけで見ると、再起動・異常終了のあと**同じ番号を使い回した別のプロセス**を
+    「起動中」と取り違え、いつまでも起動も停止もできなくなる。そこで:
+      - 起動時刻が書いてあれば、PID と起動時刻が**両方**合うときだけ生きている。
+        (自分の利用者のプロセスは必ず開けるので、開けなければ別人)
+      - 古い版のロック(起動時刻なし)は、**ロックを書いた時刻より後に起動したプロセスは
+        書いた本人ではない**。起動時刻が分からなければ従来どおり「生きている」に倒す。
+    """
+    if not is_process_alive(pid):
+        return False
+    if proc_started:
+        return owner_verified(pid, proc_started)
+    started = process_start_epoch(pid)
+    if started is not None and written_at and started > written_at + OWNER_TOLERANCE_SEC:
+        return False
+    return True
+
+
+def end_owner(pid: int, proc_started: float, *, wait_sec: float = 5.0) -> bool:
+    """書いた本人(PID・起動時刻が合う)だけを終わらせる。消えたら True。無関係なものは触らない。"""
+    from dbviewer.office_bridge import procs
+    if not owner_verified(pid, proc_started):
+        return True                               # 本人はもう居ない(居るのは別のプロセス)
+    ident = procs.identity(pid)
+    if ident is None:
+        return True
+    log.warning("応答しない前の DBビューア(pid=%s)を終わらせます", pid)
+    return procs.end_process(ident, wait_sec=wait_sec)
 
 
 def _is_zombie(pid: int) -> bool:
@@ -361,15 +423,24 @@ def check_existing(mode: str) -> GuardResult:
     if info is None:
         return GuardResult(True, reason="ロックなし")
 
-    if not is_process_alive(info.pid):
-        log.info("死んだロックを掃除します (pid=%s は不在)", info.pid)
+    if not lock_owner_alive(info.pid, info.proc_started, info.started_at):
+        log.info("死んだロックを掃除します (pid=%s は不在、または番号を使い回した別のプロセス)", info.pid)
         remove_lock(mode)
-        return GuardResult(True, reason=f"ロックは残っていたがpid {info.pid} は不在")
+        return GuardResult(True, reason=f"ロックは残っていたがpid {info.pid} は書いた本人ではない")
 
     if info.port == STARTING_PORT:
         return _wait_for_starting(mode, info)
 
     health = probe_health(info.port)
+    if not is_our_app(health, mode) and owner_verified(info.pid, info.proc_started):
+        # 書いた本人は確かに居るのに応答しない(固まっている)。少し待ち、だめなら終わらせる
+        health = _wait_answer(info.port, mode)
+        if not is_our_app(health, mode):
+            gone = end_owner(info.pid, info.proc_started)
+            remove_lock(mode)
+            log.warning("前の DBビューア(pid=%s)が %.0f秒 応答しないので%sて起動し直します", info.pid,
+                        UNRESPONSIVE_WAIT_SEC, "終わらせ" if gone else "終わらせようとし")
+            return GuardResult(True, reason="前のプロセスが応答しないので終わらせました")
     if not is_our_app(health, mode):
         # プロセスは居るがアプリではない(PIDの使い回し、または
         # 起動途中で落ちた)。ロックを消して新しく起動する
@@ -387,6 +458,16 @@ def check_existing(mode: str) -> GuardResult:
              mode, info.pid, info.port, running or "(不明)")
     return GuardResult(False, url=info.url, existing=info,
                        reason="同じアプリが起動中")
+
+
+def _wait_answer(port: int, mode: str) -> Optional[dict]:
+    deadline = time.monotonic() + UNRESPONSIVE_WAIT_SEC
+    while time.monotonic() < deadline:
+        health = probe_health(port, timeout=0.5)
+        if is_our_app(health, mode):
+            return health
+        time.sleep(0.3)
+    return None
 
 
 def _wait_for_starting(mode: str, info: "LockInfo") -> GuardResult:
@@ -411,12 +492,13 @@ def _wait_for_starting(mode: str, info: "LockInfo") -> GuardResult:
             log.info("1つ目が立ち上がりました。合流します: %s", now.url)
             return GuardResult(False, url=now.url, existing=now,
                                reason="起動中だった1つ目に合流します")
-        if not is_process_alive(now.pid):
+        if not lock_owner_alive(now.pid, now.proc_started, now.started_at):
             remove_lock(mode)
             return GuardResult(True, reason="起動中のプロセスが居なくなりました")
 
     log.warning("1つ目が %.0f秒 で立ち上がりませんでした。掃除して起動します",
                 STARTING_WAIT_SEC)
+    end_owner(info.pid, info.proc_started)       # 残ると同時起動の錠を握ったままになる
     remove_lock(mode)
     return GuardResult(True, reason="起動中のまま応答がないので引き継ぎます")
 
@@ -526,6 +608,7 @@ def build_lock_info(mode: str, port: int, token: str = "") -> LockInfo:
         python=sys.executable,
         app_root=str(app_config.APP_ROOT),
         token=token,
+        proc_started=own_start_epoch(),
     )
 
 
@@ -589,7 +672,7 @@ def hold_app_lock(kind: str):
     _held_app_lock = fp
     try:
         _app_runtime(APP_OWNER).write_text(json.dumps({
-            "kind": kind, "pid": os.getpid(), "started_at": time.time(),
+            "kind": kind, "pid": os.getpid(), "started_at": time.time(), "proc_started": own_start_epoch(),
             "app_root": str(app_config.APP_ROOT)}, ensure_ascii=False), encoding="utf-8")
     except OSError as exc:
         log.warning("同時起動の持ち主を書けませんでした: %s", exc)
@@ -663,7 +746,7 @@ def write_desktop_marker(mode: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({
             "app_id": app_config.app_id(), "mode": mode, "pid": os.getpid(),
-            "exe_pid": os.getppid(), "started_at": time.time(),
+            "exe_pid": os.getppid(), "started_at": time.time(), "proc_started": own_start_epoch(),
             "app_root": str(app_config.APP_ROOT)}, ensure_ascii=False), encoding="utf-8")
     except OSError as exc:
         log.warning("デスクトップ版の印を書けませんでした (%s): %s", path, exc)
@@ -685,10 +768,14 @@ def desktop_running() -> Optional[dict]:
     try:
         raw = json.loads(desktop_marker_path().read_text(encoding="utf-8"))
         pid = int(raw.get("pid", 0))
+        proc_started = float(raw.get("proc_started") or 0)
+        written = float(raw.get("started_at") or 0)
     except (OSError, ValueError, TypeError):
         return None
-    if not is_process_alive(pid):
-        return None
+    if not lock_owner_alive(pid, proc_started, written):
+        return None                              # 居ない・番号を使い回した別のプロセス
+    if owner_verified(pid, proc_started):
+        return raw
     command = process_command_line(pid)
     if command and "bridge.py" not in command:
         return None

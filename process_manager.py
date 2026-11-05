@@ -102,12 +102,17 @@ def stop(mode: str, *, force: bool = False) -> StopResult:
     health = launch_guard.probe_health(info.port)
     if not launch_guard.is_our_app(health, mode):
         # 応答しない、または別のアプリ。ロックだけ残っている状態
-        if launch_guard.is_process_alive(info.pid):
+        # 本当にこのアプリが居るときだけ PID で止める。番号を使い回した別のプロセスは触らず、
+        # ロックだけ片付ける(0.44.0。以前はここで「確かめられない」と止まり、ロックが残った)
+        if launch_guard.lock_owner_alive(info.pid, info.proc_started, info.started_at) \
+                and _looks_like_our_process(info):
             return _stop_by_pid(mode, info, result, force=force)
         launch_guard.remove_lock(mode)
+        log.info("接続できず、ロックの pid=%s はこのアプリではありません。片付けました。Start.vbs で起動できます",
+                 info.pid)
         result.stopped = True
         result.method = "stale-lock"
-        result.message = "動いていませんでした(残っていたロックを片付けました)"
+        result.message = "動いていませんでした。片付けました。Start.vbs で起動できます"
         return result
 
     # --- 1. 正常終了を要求する ---
@@ -233,6 +238,8 @@ def _looks_like_our_process(info) -> bool:
     """
     import launch_guard
 
+    if launch_guard.owner_verified(info.pid, getattr(info, "proc_started", 0.0)):
+        return True                               # PID と起動時刻が両方合う = 書いた本人
     cmdline = launch_guard.process_command_line(info.pid)
     if not cmdline:
         log.warning("pid=%s のコマンドラインを取得できませんでした", info.pid)
