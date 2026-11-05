@@ -1156,3 +1156,8 @@ dialog::backdrop { background: var(--scrim); }
 .cell-act:hover { text-decoration-thickness: 2px; }
 tr[aria-selected="true"] .cell-act--open, tr[aria-selected="true"] .cell-act--preview { color: inherit; }
 .dt__act { margin-left: 6px; padding: 0 8px; min-height: 22px; font-size: var(--fs-xs); }
+
+/* チェック(0.38.0)。一覧は ✓、行の窓・マスの直しはチェックボックス */
+td.chk { text-align:center; color:var(--state-ok); font-weight:700; }
+.fld__check { width:auto; height:auto; transform:scale(1.4); margin:6px 8px 6px 4px; accent-color:var(--accent); }
+.fld__checklabel { color:var(--muted); font-size:var(--fs-xs); align-self:center; }

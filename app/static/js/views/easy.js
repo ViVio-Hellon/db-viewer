@@ -111,7 +111,10 @@ function columnRow(c) {
   name.className = "name";
   const b = document.createElement("b"); b.textContent = c.name;
   const small = document.createElement("small"); small.textContent = c.type || "";
-  name.append(b, small);
+  // 直したけれどまだ保存していない(0.38.0。行ぜんぶを塗ると、どの行を設定しているか分からなかった)
+  const unsaved = document.createElement("span"); unsaved.className = "unsaved"; unsaved.textContent = "未保存";
+  unsaved.hidden = true;
+  name.append(b, small, unsaved);
 
   const box = (f, on, label) => {
     const td = document.createElement("td");
@@ -132,9 +135,13 @@ function columnRow(c) {
   step.setAttribute("aria-label", `${c.name} の刻み`);
   stepLab.append(document.createTextNode("刻み "), step);
   stepLab.hidden = c.input !== "spin";
-  sel.addEventListener("change", () => { stepLab.hidden = sel.value !== "spin"; });
+  // 入力の種類ごとの使い方(0.38.0。コンボボックスの使い方が分からなかった)
+  const howto = document.createElement("small"); howto.className = "inputhow";
+  const sayHow = () => { howto.textContent = inputHow(sel.value, c); howto.hidden = !howto.textContent; };
+  sayHow();
+  sel.addEventListener("change", () => { stepLab.hidden = sel.value !== "spin"; sayHow(); });
   sel.disabled = step.disabled = !st.can_write;
-  pick.append(sel, stepLab);
+  pick.append(sel, stepLab, howto);
   kind.appendChild(pick);
   // クリック(0.12.0・0.13.0): 値を押したときにすること。開くときは「場所」({値} にマスの値が入る。空なら値そのもの)
   const clickTd = document.createElement("td");
@@ -157,7 +164,10 @@ function columnRow(c) {
   place.setAttribute("aria-label", `${c.name} の開く場所`);
   const opens = () => ["open", "preview"].includes(click.value);
   const help = placeHelp(c, place);
-  const showPlace = () => { place.hidden = help.hidden = !opens(); };
+  const showPlace = () => {
+    place.hidden = help.hidden = !opens();
+    tr.classList.toggle("is-open", opens());          // 場所の欄が開いている行は、ひとまとまりに囲む
+  };
   showPlace();
   click.addEventListener("change", showPlace);
   click.disabled = place.disabled = !st.can_write;
@@ -166,9 +176,30 @@ function columnRow(c) {
   tr.append(name, box("show", c.show, "表示"), kind, box("print", c.print, "印刷"), clickTd);
   tr.addEventListener("change", () => {
     tr.classList.add("is-changed");
+    unsaved.hidden = false;
     tr.classList.toggle("is-off", !tr.querySelector('[data-f="show"]').checked);
   });
   return tr;
+}
+
+/* 入力の種類ごとの使い方(0.38.0)。一覧のマスをダブルクリックしたとき・行の窓で、どう入れるか */
+function inputHow(kind, c) {
+  const ex = (c.examples || []).filter((v) => v !== "");
+  const more = c.kinds > ex.length ? ` ほか(全部で ${c.kinds > 500 ? "500 以上" : c.kinds} 種類)` : "";
+  switch (kind) {
+    case "combo":
+      return "一覧でマスをダブルクリック → 欄の ▾(または↓キー)で、この列にいま入っている値から選べます。"
+        + "新しい値は、そのまま打てば入ります。"
+        + (ex.length ? ` いま入っている値: ${ex.join(" / ")}${more}` : " (まだ値が入っていないので、選ぶものはありません)");
+    case "check":
+      return "一覧でマスをダブルクリックすると はい ⇔ いいえ が切り替わり、すぐ保存されます(はい は ✓)。"
+        + "書く形は列に入っている値に合わせます(-1/0・1/0・TRUE/FALSE・はい/いいえ…)。"
+        + (ex.length ? ` いま入っている値: ${ex.join(" / ")}` : "");
+    case "spin": return "数だけ。▲▼ で「刻み」ずつ増減します。";
+    case "calendar": return "日付を選ぶ欄になります(2026/10/15 の形で書きます)。";
+    case "file": return "ダブルクリックでファイルをプレビュー(場所は行の窓で直す)。";
+    default: return "";
+  }
 }
 
 /* ---------------- 場所の決まりの案内(0.26.0) ----------------

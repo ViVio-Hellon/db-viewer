@@ -34,6 +34,14 @@ export function toIsoDate(text) {
   return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
 }
 
+/* チェック(0.38.0): はい / いいえ とみなす書き方。サーバ(simple_table.check_value)と同じ */
+const CHECK_TRUE = new Set(["1", "-1", "true", "t", "yes", "y", "on", "はい", "有", "済", "✓", "✔", "○", "〇", "レ"]);
+export function isChecked(value) {
+  let t = String(value ?? "").normalize("NFKC").trim().toLowerCase();
+  if (t.endsWith(".0")) t = t.slice(0, -2);
+  return CHECK_TRUE.has(t);
+}
+
 export function makeField(spec, value, { className = "input", onPreview = null } = {}) {
   const wrap = document.createElement("span");
   wrap.className = "fld";
@@ -41,7 +49,20 @@ export function makeField(spec, value, { className = "input", onPreview = null }
   inp.className = className;
   const v = value ?? "";
   const kind = (spec && spec.input) || "text";
-  if (kind === "spin") {
+  if (kind === "check") {
+    // チェックボックス。値は "1"(はい)/ "0"(いいえ)で渡す。書く形(-1/0・TRUE/FALSE…)はサーバが列に合わせる
+    inp.type = "checkbox";
+    inp.className = `${className} fld__check`;
+    inp.checked = isChecked(v);
+    inp.value = inp.checked ? "1" : "0";
+    inp.addEventListener("change", () => { inp.value = inp.checked ? "1" : "0"; });
+    const lab = document.createElement("span");
+    lab.className = "fld__checklabel";
+    const say = () => { lab.textContent = inp.checked ? "はい" : "いいえ"; };
+    say();
+    inp.addEventListener("change", say);
+    wrap.appendChild(lab);
+  } else if (kind === "spin") {
     inp.type = "number";
     inp.step = spec.step || "1";
     inp.inputMode = "decimal";
@@ -89,5 +110,5 @@ export function inputOf(field) {
 }
 
 /** 入力の種類の呼び名(列の設定と同じ)。 */
-export const INPUT_LABEL = { text: "文字", combo: "コンボボックス", spin: "スピンボタン", calendar: "カレンダー",
+export const INPUT_LABEL = { text: "文字", combo: "コンボボックス", check: "チェック", spin: "スピンボタン", calendar: "カレンダー",
                              auto_new_user: "自動: 登録した人", auto_upd_user: "自動: 直した人", file: "ファイル" };

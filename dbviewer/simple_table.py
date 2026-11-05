@@ -46,6 +46,7 @@ SETTINGS_TABLE = config.TOOL_SETTINGS_TABLE
 INPUTS: tuple[tuple[str, str], ...] = (
     ("text", "文字"),
     ("combo", "コンボボックス(入っている値から選ぶ・打つ)"),
+    ("check", "チェック(はい / いいえ)"),
     ("spin", "スピンボタン(数)"),
     ("calendar", "カレンダー(日付)"),
     ("auto_new_user", "自動: 登録した人(足したとき)"),
@@ -323,9 +324,15 @@ def _decl(conn: sqlite3.Connection, table: str) -> dict[str, str]:
     return {r[1]: (r[2] or "").upper() for r in conn.execute(f"PRAGMA table_info({q(table)})")}
 
 
-def convert(value: Any, setting: ColumnSetting, decl: str, sep: str = "/") -> tuple[Any, str]:
-    """画面の値 → 書く値。(値, だめなら理由)。空は NULL。"""
+def convert(value: Any, setting: ColumnSetting, decl: str, sep: str = "/",
+            check: tuple[Any, Any] = (1, 0)) -> tuple[Any, str]:
+    """画面の値 → 書く値。(値, だめなら理由)。空は NULL(チェックは「いいえ」)。"""
     text = "" if value is None else str(value)
+    if setting.input == "check":
+        yes = check_value(text)
+        if yes is None:
+            return None, f"「{setting.name}」は はい / いいえ のどちらかにしてください({text})。"
+        return check[0] if yes else check[1], ""
     if text.strip() == "":
         return None, ""
     if setting.input == "spin":
@@ -351,6 +358,44 @@ def convert(value: Any, setting: ColumnSetting, decl: str, sep: str = "/") -> tu
     return text, ""
 
 
+# チェック(0.38.0)。はい / いいえ とみなす書き方(大文字小文字・全角半角は問わない)
+CHECK_TRUE = frozenset({"1", "-1", "true", "t", "yes", "y", "on", "はい", "有", "済", "✓", "✔", "○", "〇", "レ"})
+CHECK_FALSE = frozenset({"0", "false", "f", "no", "n", "off", "いいえ", "無", "未", "×", "✗", "-", ""})
+# よく使われる組(はい, いいえ)。列にすでに入っている書き方に合わせる
+CHECK_STYLES: tuple[tuple[Any, Any], ...] = ((-1, 0), (1, 0), ("TRUE", "FALSE"), ("True", "False"),
+                                              ("true", "false"), ("はい", "いいえ"), ("○", "×"), ("有", "無"))
+
+
+def check_value(v: Any) -> Optional[bool]:
+    """チェックの値 → はい(True) / いいえ(False)。分からなければ None。"""
+    import unicodedata
+    text = unicodedata.normalize("NFKC", "" if v is None else str(v)).strip().casefold()
+    if text.endswith(".0"):
+        text = text[:-2]
+    if text in CHECK_TRUE:
+        return True
+    if text in CHECK_FALSE:
+        return False
+    return None
+
+
+def check_style(conn: sqlite3.Connection, table: str, column: str, decl: str = "") -> tuple[Any, Any]:
+    """チェックの列に書く (はい, いいえ) の形。**すでに入っている書き方に合わせる**(Access の Yes/No は -1 / 0)。
+    まだ何も無ければ、数の型の列は 1 / 0、ほかは TRUE / FALSE。"""
+    try:
+        seen = {text_of(r[0]) for r in conn.execute(
+            f"SELECT DISTINCT {q(column)} FROM {q(table)} WHERE {q(column)} IS NOT NULL LIMIT 50")}
+    except sqlite3.Error:
+        seen = set()
+    for t, f in CHECK_STYLES:
+        if str(t) in seen or (str(f) in seen and not isinstance(t, int)):
+            return t, f
+    if "1" in seen or "0" in seen:
+        return 1, 0
+    numeric = any(k in decl for k in ("INT", "REAL", "NUM", "DOUB", "FLOA", "BOOL"))
+    return (1, 0) if numeric else ("TRUE", "FALSE")
+
+
 def text_of(v: Any) -> str:
     if v is None:
         return ""
@@ -368,7 +413,8 @@ def convert_row(conn: sqlite3.Connection, table: str, values: dict[str, Any]) ->
         if s is None:
             return {}, f"[{table}] に無い列です: {name}"
         sep = date_format(conn, table, name) if s.input == "calendar" else "/"
-        out[name], problem = convert(v, s, decl.get(name, ""), sep)
+        check = check_style(conn, table, name, decl.get(name, "")) if s.input == "check" else (1, 0)
+        out[name], problem = convert(v, s, decl.get(name, ""), sep, check)
         if problem:
             return {}, problem
     return out, ""

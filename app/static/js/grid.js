@@ -15,6 +15,7 @@
   かんたん設定で「クリック」を決めた列(`actions`)は、マスの値に下線が付き、
   **値を 1 回押すと** コピー・URL を開く(`cellaction.js`)。値の外を押せば今までどおり行を選ぶだけ。
 */
+import { isChecked } from "./fieldinput.js";
 import { isActive as actsOn, actionHint, runAction } from "./cellaction.js";
 
 const CHUNK = 300;                       // 一度に描く行数(下まで見たら足す)
@@ -278,6 +279,10 @@ export function createGrid(root, opts = {}) {
       if (act && actsOn(act, v, ctx)) {
         td = el("td", { class: col.kind === "num" ? "n" : "" },
                 el("span", { class: `cell-act cell-act--${act.click}`, text: v, title: actionHint(act, v, ctx) }));
+      } else if (st.checks && st.checks.has(n)) {
+        // チェックの列: はい なら ✓。並べ替え・絞り込みは元の値のまま
+        td = el("td", { class: "chk", text: isChecked(v) ? "✓" : "" });
+        td.title = `${isChecked(v) ? "はい" : "いいえ"}(${v || "空"})`;
       } else {
         td = el("td", { class: col.kind === "num" ? "n" : "", text: v });
         if (v.length > 12) td.title = v;
@@ -689,8 +694,9 @@ export function createGrid(root, opts = {}) {
 
   /* ---------------- 外から使うもの ---------------- */
   return {
-    setData({ columns, rows, keyIndex = -1, view, actions = {} }) {
+    setData({ columns, rows, keyIndex = -1, view, actions = {}, checks = [] }) {
       st.actions = actions || {};
+      st.checks = new Set(checks || []);                 // チェックの列(0.38.0)。✓ で見せる
       st.columns = columns.map((c, i) => ({ ...c, i }));
       st.byName = Object.fromEntries(st.columns.map((c) => [c.name, c]));
       st.keyIndex = keyIndex;

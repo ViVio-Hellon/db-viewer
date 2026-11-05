@@ -13,7 +13,7 @@ import { createGrid } from "../grid.js";
 import * as out from "../export_ui.js";
 import { createHelpers } from "../helpers.js";
 import { openAddColumn } from "../addcolumn.js";
-import { makeField, inputOf, previewFile } from "../fieldinput.js";
+import { makeField, inputOf, previewFile, isChecked } from "../fieldinput.js";
 import { actionButton } from "../cellaction.js";
 import { openRowForm, showProblem } from "../rowform.js";
 import { confirmBox } from "../askbox.js";
@@ -48,7 +48,9 @@ async function load(table = "") {
     el.actNew.hidden = !keyOk || !data.can.add; el.actEdit.hidden = !keyOk; el.actDelete.hidden = !keyOk || !data.can.delete;
     el.actAddCol.hidden = !data.setup.can_add_column;
     showNotices(data.setup.notices || []);
-    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view, actions: data.actions });
+    grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view, actions: data.actions,
+                   checks: Object.entries((data.edit && data.edit.columns) || {})
+                     .filter(([, s]) => s && s.input === "check").map(([n]) => n) });
   } catch (err) {
     if (err.status === 401) { location.href = "/login?next=/list"; return; }
     if (err.status === 409 || err.status === 422) problem(err.message);
@@ -281,6 +283,11 @@ function onCellEdit(row, name, td) {
 }
 
 function beginEdit(td, key, name, seen, spec, row) {
+  if (spec.input === "check") {
+    // チェック(0.38.0): ダブルクリックで はい ⇔ いいえ を切り替えて、すぐ保存
+    saveCell(key, name, isChecked(seen) ? "0" : "1", seen, row);
+    return;
+  }
   if (spec.inline === "simple") { startSimpleEdit(td, key, name, seen, spec, row); return; }
   if (spec.inline === "pick") {
     // マスタ・日付・数値などは、登録画面と同じ選ぶ窓で

@@ -854,7 +854,16 @@
   .easytable td.click [data-f="place"] { width:100% !important; font-family:var(--mono); font-size:var(--fs-sm);
                                          resize:vertical; min-height:3.2em; line-height:1.45; white-space:pre-wrap;
                                          overflow-wrap:anywhere; }
-  .easytable tr.is-changed td { background:var(--accent-soft); }
+  /* 0.38.0: 行ぜんぶを塗ると、どの行を設定しているか分からなかった。未保存は左の印と札、場所の欄が開いた行は囲む */
+  .easytable td { vertical-align:top; border-bottom:1px solid var(--hairline); }
+  .easytable tr.is-changed td:first-child { box-shadow:inset 4px 0 0 var(--state-warn); }
+  .easytable .unsaved { display:inline-block; margin-left:6px; padding:0 6px; border-radius:999px; font-size:var(--fs-xs);
+                        color:var(--state-warn); border:1px solid var(--state-warn); }
+  .easytable tr.is-open td { background:var(--accent-soft); border-top:2px solid var(--accent); border-bottom:2px solid var(--accent); }
+  .easytable tr.is-open td:first-child { border-left:2px solid var(--accent); }
+  .easytable tr.is-open td:last-child { border-right:2px solid var(--accent); }
+  .easytable tr:focus-within td.name b { text-decoration:underline; text-decoration-thickness:2px; text-underline-offset:3px; }
+  .easytable .inputhow { display:block; margin-top:4px; max-width:28em; color:var(--muted); font-size:var(--fs-xs); line-height:1.5; }
   .easytable tr.is-off td.name b { color:var(--faint); }
   .accedit { margin-top:14px; padding-top:12px; border-top:1px solid var(--hairline); display:grid; gap:8px; }
   .accedit__title { margin:0; font-size:var(--fs-sm); display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }

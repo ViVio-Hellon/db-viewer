@@ -47,6 +47,20 @@ def _decl_types(conn: sqlite3.Connection, table: str) -> dict[str, str]:
     return {r[1]: (r[2] or "") for r in conn.execute(f"PRAGMA table_info({q(table)})")}
 
 
+EXAMPLES = 5
+KINDS_MAX = 500
+
+
+def _values_of(conn: sqlite3.Connection, table: str, column: str) -> dict[str, Any]:
+    """その列にいま入っている値の例と種類の数(0.38.0。コンボボックス・チェックの案内に出す)。"""
+    try:
+        rows = conn.execute(f"SELECT DISTINCT {q(column)} FROM {q(table)} WHERE {q(column)} IS NOT NULL "
+                            f"AND CAST({q(column)} AS TEXT) <> '' ORDER BY 1 LIMIT {KINDS_MAX + 1}").fetchall()
+    except sqlite3.Error:
+        return {"examples": [], "kinds": 0}
+    return {"examples": [simple_table.text_of(r[0]) for r in rows[:EXAMPLES]], "kinds": len(rows)}
+
+
 def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str = "") -> dict[str, Any]:
     tables = []
     for name in user_tables(conn):
@@ -59,7 +73,8 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     table = table if table in names else setup.general.main_table
     types = _decl_types(conn, table)
     columns = [{"name": c.name, "type": types.get(c.name, ""), "show": c.show, "input": c.input,
-                "step": c.step, "print": c.print, "click": c.click, "place": c.place}
+                "step": c.step, "print": c.print, "click": c.click, "place": c.place,
+                **_values_of(conn, table, c.name)}
                for c in simple_table.load(conn, table)]
     vba = vba_setting_tables(conn)
     try:

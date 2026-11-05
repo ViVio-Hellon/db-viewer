@@ -370,6 +370,56 @@ def _xlsx_shared(path: Path) -> Path:
     return path
 
 
+class CheckInputTest(_Case):
+    """0.38.0: 入力に チェック(はい / いいえ)。書く形は列に入っている値に合わせる(Access の Yes/No は -1 / 0)。"""
+
+    def setUp(self):
+        super().setUp()
+        self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("ALTER TABLE 部品 ADD COLUMN 廃止 INTEGER")
+            c.execute("ALTER TABLE 部品 ADD COLUMN 確認 TEXT")
+            c.execute("UPDATE 部品 SET 廃止 = -1 WHERE 品番 = 'A-1'")
+            c.execute("UPDATE 部品 SET 廃止 = 0 WHERE 品番 <> 'A-1'")
+            c.commit()
+        self.login()
+        st = self.ok("/api/easy/state", table="部品")
+        self.assertIn(["check", "チェック(はい / いいえ)"], st["inputs"])
+        names = {c["name"]: c for c in st["columns"]}
+        self.assertEqual(names["廃止"]["examples"], ["-1", "0"])              # 使い方の案内に出す値の例
+        self.assertEqual(names["廃止"]["kinds"], 2)
+        rows = [dict(c, **({"input": "check"} if c["name"] in ("廃止", "確認") else {})) for c in st["columns"]]
+        self.ok("/api/easy/columns", table="部品", rows=rows)
+
+    def value(self, col, rowid):
+        return self.q(f"SELECT {col} FROM 部品 WHERE rowid=?", int(rowid))[0][0]
+
+    def test_follows_the_column(self):
+        d = self.ok("/api/list/data", table="部品")
+        self.assertEqual(d["edit"]["columns"]["廃止"]["input"], "check")
+        rid = self.q("SELECT rowid FROM 部品 WHERE 品番 = 'A-2'")[0][0]
+        self.ok("/api/list/row-save", table="部品", rowid=rid, values={"廃止": "1"}, seen={"廃止": "0"})
+        self.assertEqual(self.value("廃止", rid), -1)                          # 列が -1/0 なので -1
+        self.ok("/api/list/row-save", table="部品", rowid=rid, values={"廃止": "いいえ"}, seen={"廃止": "-1"})
+        self.assertEqual(self.value("廃止", rid), 0)
+        r = self.post("/api/list/row-save", table="部品", rowid=rid, values={"廃止": "たぶん"}, seen={"廃止": "0"})
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("はい / いいえ", r.get_json()["message"])
+        # まだ何も入っていない文字の列は TRUE / FALSE
+        self.ok("/api/list/row-save", table="部品", rowid=rid, values={"確認": "1"}, seen={"確認": ""})
+        self.assertEqual(self.value("確認", rid), "TRUE")
+        # 空(チェックを外した)は いいえ
+        self.ok("/api/list/row-save", table="部品", rowid=rid, values={"確認": ""}, seen={"確認": "TRUE"})
+        self.assertEqual(self.value("確認", rid), "FALSE")
+
+    def test_reading_values(self):
+        for yes in ("1", "-1", "TRUE", "True", "はい", "ＹＥＳ", "✓", "1.0"):
+            self.assertIs(simple_table.check_value(yes), True, yes)
+        for no in ("0", "FALSE", "いいえ", "", None, "no"):
+            self.assertIs(simple_table.check_value(no), False, no)
+        self.assertIsNone(simple_table.check_value("たぶん"))
+
+
 class WorkFileTest(_Case):
     """0.23.0: 場所の決まりに {作業NO}_{作業名}(同じ行のほかの列)。名前は全角・半角を問わずに探す。"""
 
