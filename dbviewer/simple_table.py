@@ -915,7 +915,35 @@ def file_target(value: str, base) -> Optional["Path"]:
     return p
 
 
-_BLANKS = " \t\r\n\u3000"
+# 値の前後から取るもの: 空白類(半角・全角・NBSP・タブ・改行…)と見えない文字(BOM・ゼロ幅)
+_INVISIBLE = "\u200b\u200c\u200d\u2060\ufeff"
+
+
+def clean_value(text: Any) -> str:
+    """押したマスの値と DB の値を比べる形(前後の空白類・見えない文字を取る。中は変えない)。"""
+    t = "" if text is None else str(text)
+    prev = None
+    while prev != t:
+        prev = t
+        t = t.strip().strip(_INVISIBLE)
+    return t
+
+
+def _log_mismatch(conn: sqlite3.Connection, table: str, column: str, value: str, rowid: Any) -> None:
+    """「表に入っていません」のとき、その行の DB の値の中身(文字の番号)を記録に残す(原因を突き止めるため)。"""
+    try:
+        from .logging_utils import get_logger
+        actual = None
+        if rowid is not None:
+            r = conn.execute(f"SELECT {q(column)}, typeof({q(column)}) FROM {q(table)} WHERE rowid = ?", (rowid,)).fetchone()
+            actual = r
+        codes = lambda t: " ".join(f"U+{ord(ch):04X}" for ch in str(t))
+        get_logger("simple_table").warning(
+            "表に入っていない値: 表=%s 列=%s 送った値=%r [%s] / その行(rowid=%s)の値=%r 型=%s [%s]",
+            table, column, value, codes(value), rowid,
+            actual[0] if actual else None, actual[1] if actual else None, codes(actual[0]) if actual and actual[0] is not None else "")
+    except Exception:                                   # noqa: BLE001 - 残せなくても断るのは同じ
+        pass
 
 
 def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base, *,
@@ -935,11 +963,28 @@ def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base,
     if need == CLICK_PREVIEW and s.input != "file" and s.click not in OPENS:
         return "", None, (f"「{column}」は開く列ではありません"
                           f"(かんたん設定のクリックを「プレビュー」か、入力を「ファイル」に)。")
-    # 前後の空白(全角・タブ・改行も)は問わない(0.40.0)。画面は前後の空白を取ってから送るので、
-    # DB の値の後ろに空白があると「表に入っていません」で断っていた(10-12-2 で起きた)
-    hit = conn.execute(f"SELECT 1 FROM {q(table)} WHERE TRIM(CAST({q(column)} AS TEXT), ?) = ? LIMIT 1",
-                       (_BLANKS, str(value).strip(_BLANKS))).fetchone()
+    # その値が表にあるか。前後の空白類と見えない文字(NBSP・BOM・ゼロ幅)は問わない(0.40.0 / 0.41.0)。
+    # 画面は前後の空白を取ってから送るので、DB の値に見えない文字が付いていると完全一致では断っていた
+    # (作業NO 0-1-2・10-12-2 などで起きた。0-1-1 は通っていた)。行が分かれば、その行の値と比べる
+    want = clean_value(value)
+    hit = None
+    try:
+        key_row = int(str(rowid)) if rowid not in (None, "") else None
+    except (TypeError, ValueError):
+        key_row = None
+    if key_row is not None:
+        got_row = conn.execute(f"SELECT {q(column)} FROM {q(table)} WHERE rowid = ?", (key_row,)).fetchone()
+        if got_row is not None and clean_value(text_of(got_row[0])) == want:
+            hit = True
     if hit is None:
+        hit = conn.execute(f"SELECT 1 FROM {q(table)} WHERE CAST({q(column)} AS TEXT) = ? LIMIT 1", (value,)).fetchone()
+    if hit is None:
+        for (v,) in conn.execute(f"SELECT DISTINCT {q(column)} FROM {q(table)} WHERE {q(column)} IS NOT NULL"):
+            if clean_value(text_of(v)) == want:
+                hit = True
+                break
+    if hit is None:
+        _log_mismatch(conn, table, column, value, key_row)
         return "", None, "その値は表に入っていません(保存してから開いてください)。"
     if s.click in OPENS:
         row = None
@@ -956,7 +1001,7 @@ def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base,
             if found is None:
                 return "", None, "その行はもうありません(一覧を読み直してください)。"
             row = dict(zip(names, found))
-            if text_of(row.get(column)).strip() != str(value).strip():
+            if clean_value(text_of(row.get(column))) != clean_value(value):
                 return "", None, "その行の値が変わっています(一覧を読み直してください)。"
         kind, target = click_target(s, value, row)
         if not kind:

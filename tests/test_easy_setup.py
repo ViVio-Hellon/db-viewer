@@ -818,9 +818,10 @@ class WorkFileTest(_Case):
         self.assertNotIn("0-1-10", json.dumps(r.get_json(), ensure_ascii=False))
 
     def test_value_with_spaces_in_db(self):
-        """0.40.0: DB の値の前後に空白(全角・改行も)があっても開ける。画面は前後の空白を取って送る(10-12-2 で起きた)。"""
+        """0.40.0 / 0.41.0: DB の値の前後に空白類・見えない文字(NBSP・BOM)があっても開ける。画面は前後の空白を取って送る。"""
         with closing(sqlite3.connect(self.path)) as c:
             c.execute("UPDATE 作業 SET 作業NO = '0-1-1 　' WHERE 作業NO = '0-1-1'")
+            c.execute("UPDATE 作業 SET 作業NO = ? WHERE 作業NO = '0-1-2'", ("\ufeff0-1-2\u00a0",))     # BOM・NBSP(Excel から写した値)
             c.commit()
         place = str(self.dir) + "/{作業NO}"
         st = self.ok("/api/easy/state", table="作業")
@@ -830,8 +831,12 @@ class WorkFileTest(_Case):
         r = self.post("/api/file/check", table="作業", column="作業NO", value="0-1-1", rowid=self.rowid["0-1-1"])
         self.assertEqual(r.status_code, 200, r.get_json())
         self.assertNotEqual(r.get_json().get("error"), "その値は表に入っていません(保存してから開いてください)。")
-        r = self.post("/api/file/check", table="作業", column="作業NO", value="9-9-9", rowid=self.rowid["0-1-1"])
+        r = self.post("/api/file/check", table="作業", column="作業NO", value="0-1-2", rowid=self.rowid["0-1-2"])
+        self.assertNotEqual(r.status_code, 403, r.get_json())                         # 見えない文字も問わない(0.41.0)
+        with self.assertLogs("dbviewer.simple_table", "WARNING") as logs:
+            r = self.post("/api/file/check", table="作業", column="作業NO", value="9-9-9", rowid=self.rowid["0-1-1"])
         self.assertEqual(r.status_code, 403)                                          # 表に無い値は今までどおり断る
+        self.assertIn("U+0030", "\n".join(logs.output))                               # 断ったら DB の値の中身を残す
 
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")
