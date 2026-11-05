@@ -817,6 +817,22 @@ class WorkFileTest(_Case):
         self.assertEqual(r.get_json()["kind"], "choose")                               # 0-1-1_ハンマー… が 2 つ
         self.assertNotIn("0-1-10", json.dumps(r.get_json(), ensure_ascii=False))
 
+    def test_value_with_spaces_in_db(self):
+        """0.40.0: DB の値の前後に空白(全角・改行も)があっても開ける。画面は前後の空白を取って送る(10-12-2 で起きた)。"""
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 作業 SET 作業NO = '0-1-1 　' WHERE 作業NO = '0-1-1'")
+            c.commit()
+        place = str(self.dir) + "/{作業NO}"
+        st = self.ok("/api/easy/state", table="作業")
+        rows = [dict(c, **({"作業NO": {"click": "preview", "place": place, "match": "text"}}.get(c["name"], {})))
+                for c in st["columns"]]
+        self.ok("/api/easy/columns", table="作業", rows=rows)
+        r = self.post("/api/file/check", table="作業", column="作業NO", value="0-1-1", rowid=self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertNotEqual(r.get_json().get("error"), "その値は表に入っていません(保存してから開いてください)。")
+        r = self.post("/api/file/check", table="作業", column="作業NO", value="9-9-9", rowid=self.rowid["0-1-1"])
+        self.assertEqual(r.status_code, 403)                                          # 表に無い値は今までどおり断る
+
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")
         rows = [dict(c, **({"作業名": {"click": "preview", "place": "x/{作業番号}_{値}"}}.get(c["name"], {})))

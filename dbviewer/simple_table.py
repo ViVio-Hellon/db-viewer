@@ -915,6 +915,9 @@ def file_target(value: str, base) -> Optional["Path"]:
     return p
 
 
+_BLANKS = " \t\r\n\u3000"
+
+
 def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base, *,
             need: str, rowid: Any = None) -> tuple[str, Any, str]:
     """押したマスの行き先 → (種類 "url"/"file", URL か Path, だめなら理由)。
@@ -932,7 +935,10 @@ def resolve(conn: sqlite3.Connection, table: str, column: str, value: str, base,
     if need == CLICK_PREVIEW and s.input != "file" and s.click not in OPENS:
         return "", None, (f"「{column}」は開く列ではありません"
                           f"(かんたん設定のクリックを「プレビュー」か、入力を「ファイル」に)。")
-    hit = conn.execute(f"SELECT 1 FROM {q(table)} WHERE CAST({q(column)} AS TEXT) = ? LIMIT 1", (value,)).fetchone()
+    # 前後の空白(全角・タブ・改行も)は問わない(0.40.0)。画面は前後の空白を取ってから送るので、
+    # DB の値の後ろに空白があると「表に入っていません」で断っていた(10-12-2 で起きた)
+    hit = conn.execute(f"SELECT 1 FROM {q(table)} WHERE TRIM(CAST({q(column)} AS TEXT), ?) = ? LIMIT 1",
+                       (_BLANKS, str(value).strip(_BLANKS))).fetchone()
     if hit is None:
         return "", None, "その値は表に入っていません(保存してから開いてください)。"
     if s.click in OPENS:
