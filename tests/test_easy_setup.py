@@ -1,6 +1,7 @@
 """どの表でも見て直す・かんたん設定(0.8.0): 設定は 見る DB と 列ごとの 表示・入力・印刷 だけ"""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -420,6 +421,42 @@ class CheckInputTest(_Case):
         self.assertIsNone(simple_table.check_value("たぶん"))
 
 
+class ComboOptionsTest(_Case):
+    """0.39.0: コンボボックスの選択肢を、かんたん設定で決める。決めたら、その中から選ぶだけ。"""
+
+    def setUp(self):
+        super().setUp()
+        self.use(plain_db(self.tmp / "部品台帳.sqlite3"))
+        self.login()
+
+    def save(self, options):
+        st = self.ok("/api/easy/state", table="部品")
+        rows = [dict(c, **({"input": "combo", "options": options} if c["name"] == "名前" else {})) for c in st["columns"]]
+        return self.post("/api/easy/columns", table="部品", rows=rows)
+
+    def test_fixed_options(self):
+        vals = self.ok("/api/easy/values", table="部品", column="名前")["values"]
+        self.assertEqual(vals, sorted(vals))
+        self.assertEqual(self.save(["箱", " 袋 ", "", "箱", "ポリ袋"]).status_code, 200)     # 空・重なり・前後の空白は除く
+        col = {c["name"]: c for c in self.ok("/api/easy/state", table="部品")["columns"]}["名前"]
+        self.assertEqual(col["options"], ["箱", "袋", "ポリ袋"])
+        spec = self.ok("/api/list/data", table="部品")["edit"]["columns"]["名前"]
+        self.assertEqual((spec["choices"], spec["fixed"]), (["箱", "袋", "ポリ袋"], True))
+        rid = self.q("SELECT rowid FROM 部品 WHERE 品番 = 'A-1'")[0][0]
+        before = self.q("SELECT 名前 FROM 部品 WHERE rowid = ?", rid)[0][0]
+        r = self.post("/api/list/row-save", table="部品", rowid=rid, values={"名前": "段ボール"}, seen={"名前": before})
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("決めた選択肢", r.get_json()["message"])
+        self.ok("/api/list/row-save", table="部品", rowid=rid, values={"名前": "ポリ袋"}, seen={"名前": before})
+        self.assertEqual(self.q("SELECT 名前 FROM 部品 WHERE rowid = ?", rid)[0][0], "ポリ袋")
+        # 空にすれば、今までどおり列に入っている値から(打ってもよい)
+        self.assertEqual(self.save([]).status_code, 200)
+        spec = self.ok("/api/list/data", table="部品")["edit"]["columns"]["名前"]
+        self.assertNotIn("fixed", spec)
+        self.assertIn("ポリ袋", spec["choices"])
+        self.assertEqual(self.save(["x" * 300]).status_code, 422)
+
+
 class WorkFileTest(_Case):
     """0.23.0: 場所の決まりに {作業NO}_{作業名}(同じ行のほかの列)。名前は全角・半角を問わずに探す。"""
 
@@ -747,6 +784,38 @@ class WorkFileTest(_Case):
         self.assertEqual(l["reached"], False)
         self.assertIn("見直し・改定済み", l["why"])
         self.assertIn("★見直し・改定済み", l["tried"][0]["children"])
+
+    def test_match_as_text(self):
+        """0.39.0: 探し方「文字列で探す」。{作業NO} だけで 0-1-1_ハンマーの取り扱い.xlsx が当たる。番号の続きは当たらない。"""
+        (self.dir / "0-1-10_別の作業.xlsx").write_bytes(b"x")                          # 0-1-1 の続きの番号
+        (self.dir / "10-1-1_別の作業.xlsx").write_bytes(b"x")                          # 頭に別の数字
+        sub = self.dir / "0共通"
+        sub.mkdir()
+        (sub / "0-1-4_台車.xls").write_bytes(b"x")
+        simple_table.forget_index()
+        place = str(self.dir) + "/{作業NO}"
+        # 同じ名前のままでは見つからない → 文字列で探す案を出す
+        j = self.ok("/api/easy/try-place", table="作業", column="作業NO", place=place)
+        self.assertEqual(j["hit"], 0)
+        self.assertEqual(j.get("suggest_match"), "text")
+        self.assertIn("文字列で探す", j["message"])
+        j = self.ok("/api/easy/try-place", table="作業", column="作業NO", place=place, match="text")
+        self.assertEqual(j["hit"], 3)                                                 # 0-1-1・0-1-2・0-1-4
+        names = sorted(f["name"] for f in j["example"]["found"])
+        self.assertNotIn("0-1-10_別の作業.xlsx", names)
+        self.assertNotIn("10-1-1_別の作業.xlsx", names)
+        # 保存すれば、押したときも同じ探し方
+        st = self.ok("/api/easy/state", table="作業")
+        self.assertIn(["text", "文字列で探す(名前の中にこの文字があれば)"], st["matches"])
+        rows = [dict(c, **({"作業NO": {"click": "preview", "place": place, "match": "text"}}.get(c["name"], {})))
+                for c in st["columns"]]
+        self.ok("/api/easy/columns", table="作業", rows=rows)
+        self.assertEqual({c["name"]: c for c in self.ok("/api/easy/state", table="作業")["columns"]}["作業NO"]["match"], "text")
+        r = self.post("/api/file/check", table="作業", column="作業NO", value="0-1-4", rowid=self.rowid["0-1-4"])
+        self.assertEqual((r.status_code, r.get_json()["kind"], r.get_json()["name"]), (200, "file", "0-1-4_台車.xls"))
+        r = self.post("/api/file/check", table="作業", column="作業NO", value="0-1-1", rowid=self.rowid["0-1-1"])
+        self.assertEqual(r.get_json()["kind"], "choose")                               # 0-1-1_ハンマー… が 2 つ
+        self.assertNotIn("0-1-10", json.dumps(r.get_json(), ensure_ascii=False))
 
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")

@@ -49,6 +49,23 @@ export function makeField(spec, value, { className = "input", onPreview = null }
   inp.className = className;
   const v = value ?? "";
   const kind = (spec && spec.input) || "text";
+  if (kind === "combo" && spec.fixed) {
+    // 選択肢を決めたコンボボックス(0.39.0): 決めた中から選ぶだけ
+    const sel = document.createElement("select");
+    sel.className = className;
+    const opts = ["", ...(spec.choices || [])];
+    if (v !== "" && !opts.includes(String(v))) opts.push(String(v));     // 前から入っている値(選択肢に無い)も見せる
+    for (const c of opts) {
+      const o = document.createElement("option");
+      o.value = c;
+      o.textContent = c === "" ? "(空)" : (spec.choices || []).includes(c) ? c : `${c}(選択肢に無い)`;
+      sel.appendChild(o);
+    }
+    sel.value = String(v);
+    sel.title = "かんたん設定で決めた選択肢から選びます";
+    wrap.appendChild(sel);
+    return wrap;
+  }
   if (kind === "check") {
     // チェックボックス。値は "1"(はい)/ "0"(いいえ)で渡す。書く形(-1/0・TRUE/FALSE…)はサーバが列に合わせる
     inp.type = "checkbox";
@@ -106,7 +123,7 @@ export function makeField(spec, value, { className = "input", onPreview = null }
 }
 
 export function inputOf(field) {
-  return field.querySelector("input");
+  return field.querySelector("input, select");
 }
 
 /** 入力の種類の呼び名(列の設定と同じ)。 */

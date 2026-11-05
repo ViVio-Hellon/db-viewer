@@ -90,7 +90,11 @@ def _where(table: str, column: str, value: str, need: str, rowid=None, pick: str
     target, note = local_paths.reroute(target)             # PC 名の書き間違い・名前の全角半角・この PC の同じフォルダ
     if note:
         log.info("%s", note)
-    found = simple_table.find_files(target)
+    try:
+        match = simple_table.by_name(conn, table).get(column).match       # 探し方(0.39.0)
+    except Exception:                                                  # noqa: BLE001 - 分からなければ同じ名前
+        match = ""
+    found = simple_table.find_files(target, match)
     if pick:
         # 選べるのは、サーバが探し直した候補(同じ名前)か、似た名前の候補だけ
         pool = found or simple_table.near_files(target)

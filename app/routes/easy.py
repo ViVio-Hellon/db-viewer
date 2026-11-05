@@ -228,8 +228,23 @@ def try_place():
     from .record import ref_base
     body = request.get_json(silent=True) or {}
     out = easy_setup.try_place(conn, str(body.get("table") or ""), str(body.get("column") or ""),
-                               str(body.get("place") or "").strip(), ref_base())
+                               str(body.get("place") or "").strip(), ref_base(), str(body.get("match") or ""))
     return jsonify(out)
+
+
+@bp.post("/api/easy/values")
+def column_values():
+    """その列にいま入っている値(重ならない・並べて・500 まで)。コンボボックスの選択肢を作るとき(0.39.0)。"""
+    from dbviewer import simple_table
+    from dbviewer.settings_tables import column_names, table_exists
+    conn, _setup, err = _open()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    table, column = str(body.get("table") or ""), str(body.get("column") or "")
+    if not table_exists(conn, table) or column not in column_names(conn, table):
+        return _refuse("bad_input", "その表・列がありません。")
+    return jsonify({"values": simple_table.choices(conn, table, column)})
 
 
 @bp.post("/api/easy/retire")

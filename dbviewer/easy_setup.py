@@ -74,6 +74,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
     types = _decl_types(conn, table)
     columns = [{"name": c.name, "type": types.get(c.name, ""), "show": c.show, "input": c.input,
                 "step": c.step, "print": c.print, "click": c.click, "place": c.place,
+                "options": c.options, "match": c.match,
                 **_values_of(conn, table, c.name)}
                for c in simple_table.load(conn, table)]
     vba = vba_setting_tables(conn)
@@ -86,6 +87,7 @@ def state(conn: sqlite3.Connection, setup: SystemSetup, level: int, table: str =
         "tables": tables, "table": table, "columns": columns,
         "inputs": [[k, label] for k, label in simple_table.INPUTS],
         "clicks": [[k, label] for k, label in simple_table.CLICKS],
+        "matches": [[k, label] for k, label in simple_table.MATCHES],
         "level": level, "can_write": level >= WRITE_LEVEL, "has_id": setup.has_id,
         # VBA 版の設定の表(<表>_設定)。画面では使わない。取り込んで消せる
         "vba_tables": vba,
@@ -183,7 +185,7 @@ def sample_row(conn: sqlite3.Connection, table: str) -> dict[str, str]:
     return best
 
 
-def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, base) -> dict[str, Any]:
+def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, base, match: str = "") -> dict[str, Any]:
     """その場所の決まりで、表の行を使って本当に探してみる(保存はしない)。
 
     行は「押す列」に値がある先頭の行(最大 20 行まで試して、見つかった最初の行を出す)。"""
@@ -217,7 +219,7 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
             path, note = local_paths.reroute(path)            # PC 名の書き間違い・名前の全角半角・この PC の同じフォルダ
             if note and not moved:
                 moved, moved_note = str(local_paths.split(path)[0]), note
-        found = simple_table.find_files(path) if path is not None else []
+        found = simple_table.find_files(path, match) if path is not None else []
         item = {"value": value, "target": str(path),
                 "found": [{"name": f.name, "folder": _rel(f.parent, path.parent)} for f in found]}
         (hits if found else misses).append((item, path))
@@ -233,6 +235,13 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
             sep = "\\" if "\\" in moved else "/"
             out["suggest"] = moved.rstrip("\\/") + sep + segs[-1]
             out["message"] += "場所をそちらに直してください。"
+    if misses and match != simple_table.MATCH_TEXT:
+        # 同じ名前では見つからないが、文字列で探せば見つかる → 探し方を変える案を出す(0.39.0)
+        could = sum(1 for _item, p in misses if p is not None and simple_table.find_files(p, simple_table.MATCH_TEXT))
+        if could:
+            out["suggest_match"] = simple_table.MATCH_TEXT
+            out["message"] += (f" 探し方を「文字列で探す」にすると、見つからなかった {len(misses)} 行のうち {could} 行で見つかります"
+                               "(例: 0-1-1 で 0-1-1_ハンマーの取り扱い.xls)。")
     if hits:
         out["example"] = hits[0][0]
     if misses:
@@ -243,7 +252,7 @@ def try_place(conn: sqlite3.Connection, table: str, column: str, place: str, bas
     # 本当に探したか: 集めたファイル名の数と、探す名前に近い順(見つからない例があればその名前で。0.28.0)
     pivot = (misses or hits)[0][1]
     if pivot is not None:
-        out["listing"] = simple_table.closest_names(pivot)
+        out["listing"] = simple_table.closest_names(pivot, match=match)
         out["listing"]["for"] = local_paths.split(pivot)[1]
         if not out["listing"]["reached"]:
             # 届かない: どこまで辿れて、そこに何があるか(書いた場所と、読み替えの候補それぞれ。0.29.0)

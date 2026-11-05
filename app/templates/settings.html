@@ -863,6 +863,11 @@
   .easytable tr.is-open td:first-child { border-left:2px solid var(--accent); }
   .easytable tr.is-open td:last-child { border-right:2px solid var(--accent); }
   .easytable tr:focus-within td.name b { text-decoration:underline; text-decoration-thickness:2px; text-underline-offset:3px; }
+  .easytable .optbox { display:flex; flex-direction:column; gap:4px; margin-top:6px; }
+  .easytable .optbox textarea { min-width:16em; font-size:var(--fs-xs); }
+  .easytable .optbox .btn { align-self:flex-start; }
+  .easytable .matchline { margin-top:4px; }
+  .easytable .matchline select { width:auto; }
   .easytable .inputhow { display:block; margin-top:4px; max-width:28em; color:var(--muted); font-size:var(--fs-xs); line-height:1.5; }
   .easytable tr.is-off td.name b { color:var(--faint); }
   .accedit { margin-top:14px; padding-top:12px; border-top:1px solid var(--hairline); display:grid; gap:8px; }

@@ -137,11 +137,34 @@ function columnRow(c) {
   stepLab.hidden = c.input !== "spin";
   // 入力の種類ごとの使い方(0.38.0。コンボボックスの使い方が分からなかった)
   const howto = document.createElement("small"); howto.className = "inputhow";
-  const sayHow = () => { howto.textContent = inputHow(sel.value, c); howto.hidden = !howto.textContent; };
+  // コンボボックスの選択肢(0.39.0)。1 行に 1 つ。空なら列に入っている値から選ぶ(打ってもよい)
+  const optBox = document.createElement("div"); optBox.className = "optbox";
+  const opts = document.createElement("textarea"); opts.className = "input"; opts.dataset.f = "options";
+  opts.rows = Math.min(8, Math.max(3, (c.options || []).length + 1));
+  opts.value = (c.options || []).join("\n");
+  opts.placeholder = "選択肢を 1 行に 1 つ(例: 共通 / HVC / L-1作業場)。空なら、この列にいま入っている値から選びます";
+  opts.setAttribute("aria-label", `${c.name} の選択肢`);
+  const fill = document.createElement("button"); fill.type = "button"; fill.className = "btn btn--find";
+  fill.textContent = "いま入っている値を入れる";
+  fill.title = "この列にいま入っている値(重ならない・500 まで)を選択肢に入れます。あとで直せます";
+  fill.addEventListener("click", async () => {
+    try {
+      const r = await api.post("/api/easy/values", { table: st.table, column: c.name });
+      opts.value = r.values.join("\n");
+      opts.rows = Math.min(8, Math.max(3, r.values.length + 1));
+      opts.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (err) { toastError(err); }
+  });
+  optBox.append(opts, fill);
+  const sayHow = () => {
+    howto.textContent = inputHow(sel.value, c);
+    howto.hidden = !howto.textContent;
+    optBox.hidden = sel.value !== "combo";
+  };
   sayHow();
   sel.addEventListener("change", () => { stepLab.hidden = sel.value !== "spin"; sayHow(); });
-  sel.disabled = step.disabled = !st.can_write;
-  pick.append(sel, stepLab, howto);
+  sel.disabled = step.disabled = opts.disabled = fill.disabled = !st.can_write;
+  pick.append(sel, stepLab, optBox, howto);
   kind.appendChild(pick);
   // クリック(0.12.0・0.13.0): 値を押したときにすること。開くときは「場所」({値} にマスの値が入る。空なら値そのもの)
   const clickTd = document.createElement("td");
@@ -163,15 +186,22 @@ function columnRow(c) {
     + "Excel → Word → PDF の順に探します。* は「何文字でもよい」(0.26.0)";
   place.setAttribute("aria-label", `${c.name} の開く場所`);
   const opens = () => ["open", "preview"].includes(click.value);
-  const help = placeHelp(c, place);
+  // 探し方(0.39.0): 同じ名前 / 文字列で探す(0-1-1 で 0-1-1_ハンマーの取り扱い.xls が当たる)
+  const matchLab = document.createElement("label"); matchLab.className = "checkline matchline";
+  const match = document.createElement("select"); match.className = "input"; match.dataset.f = "match";
+  for (const [v, label] of st.matches || []) match.appendChild(option(v, label, v === (c.match || "")));
+  match.setAttribute("aria-label", `${c.name} の探し方`);
+  match.disabled = !st.can_write;
+  matchLab.append(document.createTextNode("探し方 "), match);
+  const help = placeHelp(c, place, match);
   const showPlace = () => {
-    place.hidden = help.hidden = !opens();
+    place.hidden = help.hidden = matchLab.hidden = !opens();
     tr.classList.toggle("is-open", opens());          // 場所の欄が開いている行は、ひとまとまりに囲む
   };
   showPlace();
   click.addEventListener("change", showPlace);
   click.disabled = place.disabled = !st.can_write;
-  clickPick.append(click, place, help);
+  clickPick.append(click, place, matchLab, help);
   clickTd.appendChild(clickPick);
   tr.append(name, box("show", c.show, "表示"), kind, box("print", c.print, "印刷"), clickTd);
   tr.addEventListener("change", () => {
@@ -188,9 +218,9 @@ function inputHow(kind, c) {
   const more = c.kinds > ex.length ? ` ほか(全部で ${c.kinds > 500 ? "500 以上" : c.kinds} 種類)` : "";
   switch (kind) {
     case "combo":
-      return "一覧でマスをダブルクリック → 欄の ▾(または↓キー)で、この列にいま入っている値から選べます。"
-        + "新しい値は、そのまま打てば入ります。"
-        + (ex.length ? ` いま入っている値: ${ex.join(" / ")}${more}` : " (まだ値が入っていないので、選ぶものはありません)");
+      return "上の欄に選択肢を 1 行に 1 つ書くと、一覧・行の窓ではその中から選ぶだけになります(ほかの値は入りません)。"
+        + "空のままなら、この列にいま入っている値から選べて、新しい値を打つこともできます。"
+        + (ex.length ? ` いま入っている値: ${ex.join(" / ")}${more}` : "");
     case "check":
       return "一覧でマスをダブルクリックすると はい ⇔ いいえ が切り替わり、すぐ保存されます(はい は ✓)。"
         + "書く形は列に入っている値に合わせます(-1/0・1/0・TRUE/FALSE・はい/いいえ…)。"
@@ -283,7 +313,7 @@ function listingBox(l) {
   return box;
 }
 
-function placeHelp(c, place) {
+function placeHelp(c, place, match) {
   const box = document.createElement("div");
   box.className = "placehelp";
   const chips = document.createElement("div");
@@ -325,7 +355,8 @@ function placeHelp(c, place) {
   tryBtn.addEventListener("click", async () => {
     result.textContent = "探しています…"; result.className = "placehelp__result";
     try {
-      const r = await api.post("/api/easy/try-place", { table: st.table, column: c.name, place: place.value.trim() });
+      const r = await api.post("/api/easy/try-place", { table: st.table, column: c.name, place: place.value.trim(),
+                                                         match: match ? match.value : "" });
       const lines = [r.message];
       if (r.example && r.example.found.length) {
         const f = r.example.found[0];
@@ -370,7 +401,9 @@ function collect() {
     return { name: tr.dataset.name, show: f("show").checked, input: f("input").value,
              step: f("step").value, print: f("print").checked,
              click: f("click").value,
-             place: ["open", "preview"].includes(f("click").value) ? f("place").value.trim() : "" };
+             place: ["open", "preview"].includes(f("click").value) ? f("place").value.trim() : "",
+             options: f("input").value === "combo" ? f("options").value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) : [],
+             match: ["open", "preview"].includes(f("click").value) ? f("match").value : "" };
   });
 }
 

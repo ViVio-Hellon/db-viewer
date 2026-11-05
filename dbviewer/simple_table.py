@@ -32,7 +32,7 @@ import sqlite3
 import threading
 import time
 import unicodedata
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from contextlib import closing
 from pathlib import Path
@@ -45,7 +45,7 @@ SETTINGS_TABLE = config.TOOL_SETTINGS_TABLE
 
 INPUTS: tuple[tuple[str, str], ...] = (
     ("text", "文字"),
-    ("combo", "コンボボックス(入っている値から選ぶ・打つ)"),
+    ("combo", "コンボボックス(選択肢から選ぶ)"),
     ("check", "チェック(はい / いいえ)"),
     ("spin", "スピンボタン(数)"),
     ("calendar", "カレンダー(日付)"),
@@ -62,6 +62,12 @@ PREVIEW_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/
                  ".gif": "image/gif", ".bmp": "image/bmp", ".webp": "image/webp",
                  ".txt": "text/plain", ".csv": "text/plain", ".log": "text/plain"}
 INPUT_KEYS = tuple(k for k, _ in INPUTS)
+# コンボボックスの選択肢(0.39.0)
+OPTIONS_MAX = 200
+OPTION_MAX = 200
+# ファイルの探し方(0.39.0)。文字列で探す = 名前の中にその文字があるもの(番号の続き・頭に別の数字が付くものは除く)
+MATCH_TEXT = "text"
+MATCHES: tuple[tuple[str, str], ...] = (("", "同じ名前"), (MATCH_TEXT, "文字列で探す(名前の中にこの文字があれば)"))
 
 # マスを押したときにすること(0.12.0・0.13.0)。一覧で
 CLICK_COPY, CLICK_OPEN, CLICK_PREVIEW = "copy", "open", "preview"
@@ -107,6 +113,8 @@ class ColumnSetting:
     print: bool = True
     click: str = ""
     place: str = ""
+    options: list = field(default_factory=list)   # コンボボックスの選択肢(0.39.0)。空なら列に入っている値
+    match: str = ""                                 # ファイルの探し方(0.39.0): "" 同じ名前 / "text" 文字列で探す
 
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
@@ -237,6 +245,9 @@ def load(conn: sqlite3.Connection, table: str) -> list[ColumnSetting]:
             click = "open" if s.get("click") == "url" else s.get("click")       # 0.12.0 の「URL を開く」
             c.click = click if click in CLICK_KEYS else ""
             c.place = str(s.get("place") or s.get("url") or "") if c.click in OPENS else ""
+            opts = s.get("options")
+            c.options = [str(o) for o in opts if str(o).strip()] if isinstance(opts, list) and c.input == "combo" else []
+            c.match = MATCH_TEXT if s.get("match") == MATCH_TEXT and c.click in OPENS else ""
         out.append(c)
     return out
 
@@ -275,8 +286,25 @@ def validate(conn: sqlite3.Connection, table: str, rows: list[dict[str, Any]]) -
         if unknown:
             return [], (f"「{name}」の場所に書いた {{{unknown[0]}}} という列は [{table}] にありません"
                         f"(同じ行のほかの列は {{列名}}、押したマスの値は {PLACE_MARK})。")
+        options: list[str] = []
+        if inp == "combo":
+            raw = r.get("options") or []
+            if isinstance(raw, str):
+                raw = raw.splitlines()
+            if not isinstance(raw, list):
+                return [], f"「{name}」の選択肢の形が違います。"
+            for o in raw:
+                o = str(o).strip()
+                if not o or o in options:
+                    continue
+                if len(o) > OPTION_MAX or any(ord(ch) < 32 for ch in o):
+                    return [], f"「{name}」の選択肢が長すぎるか、使えない文字があります: {o[:30]}"
+                options.append(o)
+            if len(options) > OPTIONS_MAX:
+                return [], f"「{name}」の選択肢は {OPTIONS_MAX} 個までにしてください。"
+        match = MATCH_TEXT if r.get("match") == MATCH_TEXT and click in OPENS else ""
         got[name] = ColumnSetting(name, bool(r.get("show", True)), inp, step or "1", bool(r.get("print", True)),
-                                  click, place)
+                                  click, place, options, match)
     if got and not any(c.show for c in got.values()):
         return [], "表示する列を 1 つ以上選んでください。"
     return [got.get(n) or ColumnSetting(n) for n in known], ""
@@ -335,6 +363,8 @@ def convert(value: Any, setting: ColumnSetting, decl: str, sep: str = "/",
         return check[0] if yes else check[1], ""
     if text.strip() == "":
         return None, ""
+    if setting.input == "combo" and setting.options and text not in setting.options:
+        return None, f"「{setting.name}」は決めた選択肢から選んでください({text})。"
     if setting.input == "spin":
         n = _number(text)
         if n is None:
@@ -562,12 +592,21 @@ WILD = "*"
 MAX_FOUND = 30                # 「*」で多く当たりすぎたときに選ばせる上限
 
 
-def name_matcher(name: str):
+# 文字列で探すとき、前後がこれなら「続き」とみなす(0-1-1 が 0-1-10・10-1-1・0-1-1-2 に当たらないように)
+_TOKEN = "0-9a-z\\-."
+
+
+def name_matcher(name: str, match: str = ""):
     """ファイル名(場所の決まりを埋めたもの)→ (比べ方, 拡張子まで比べるか)。
 
     「*」(0.26.0)は「何文字でもよい」。`0-1-1*` は 0-1-1 で始まる名前、`*A-100*` は A-100 を含む名前。
     比べるときはどちらも `name_key` の形(全角・半角・大文字小文字・空白・ハイフンの種類を問わない)。"""
     has_ext = Path(name.replace(WILD, "x")).suffix.lower() in OPEN_KINDS
+    if match == MATCH_TEXT and WILD not in name:
+        # 文字列で探す(0.39.0): 名前の中にこの文字があれば当たり。前後が番号の続きなら当たりにしない
+        want = name_key(name if has_ext else _P_stem(name))
+        rx = re.compile(rf"(?<![{_TOKEN}]){re.escape(want)}(?![{_TOKEN}])")
+        return (lambda full, stem: bool(rx.search(full if has_ext else stem))), has_ext
     if WILD not in name:
         want = name_key(name)
         return (lambda full, stem: (full if has_ext else stem) == want), has_ext
@@ -576,7 +615,7 @@ def name_matcher(name: str):
     return (lambda full, stem: bool(rx.match(full if has_ext else stem))), has_ext
 
 
-def find_files(path: "Path") -> list["Path"]:
+def find_files(path: "Path", match: str = "") -> list["Path"]:
     """そのファイル。無ければ**そのフォルダとサブフォルダ**から、名前が同じとみなせるものを探す(0.23.0 / 0.24.0)。
 
     - 比べ方は `name_key`(0-1-1_ﾊﾝﾏｰの取り扱い と ０－１－１＿ハンマーの取り扱い.xlsx は同じ)
@@ -593,14 +632,14 @@ def find_files(path: "Path") -> list["Path"]:
             return []
     except OSError:
         return []
-    test, _has_ext = name_matcher(path.name)
+    test, _has_ext = name_matcher(path.name, match)
 
-    def match(items):
+    def pick(items):
         return [p for p, full, stem in items if test(full, stem)]
     items, age = _entries(folder)
-    hits = match(items)
+    hits = pick(items)
     if not hits and age > INDEX_RETRY_SEC:                              # 目録を作ったあとに置かれたかもしれない
-        hits = match(_entries(folder, fresh=True)[0])
+        hits = pick(_entries(folder, fresh=True)[0])
     if not hits:
         return []
     order = {ext: i for i, ext in enumerate(FIND_ORDER)}
@@ -658,7 +697,7 @@ def near_files(path: "Path") -> list["Path"]:
     return sorted(hits.values(), key=lambda f: -mtime(f))[:MAX_NEAR]
 
 
-def closest_names(path: "Path", limit: int = 15) -> dict[str, Any]:
+def closest_names(path: "Path", limit: int = 15, match: str = "") -> dict[str, Any]:
     """集めたファイル名を、探す名前に近い順に(0.28.0。「試す」で、本当に探したかを見せる)。
 
     答え: reached(フォルダに入れたか)・folder・collected(集めた数)・dirs(見たフォルダ数)・
@@ -671,7 +710,7 @@ def closest_names(path: "Path", limit: int = 15) -> dict[str, Any]:
         return out
     items, stats, _age = _entries_stats(folder)
     out.update(reached=True, collected=len(items), dirs=stats["dirs"])
-    test, has_ext = name_matcher(name)
+    test, has_ext = name_matcher(name, match)
     want = name_key(name.replace(WILD, "") if has_ext else _P_stem(name).replace(WILD, ""))
     scored = []
     for p, full, stem in items:
@@ -734,7 +773,10 @@ def edit_spec(conn: sqlite3.Connection, table: str, s: ColumnSetting) -> dict[st
         return {"inline": "file", "input": "file", "step": s.step}
     d: dict[str, Any] = {"inline": "simple", "input": s.input, "step": s.step}
     if s.input == "combo":
-        d["choices"] = choices(conn, table, s.name)
+        if s.options:
+            d["choices"], d["fixed"] = list(s.options), True      # 決めた選択肢から選ぶだけ(0.39.0)
+        else:
+            d["choices"] = choices(conn, table, s.name)          # 決めていなければ、列に入っている値(打ってもよい)
     return d
 
 
