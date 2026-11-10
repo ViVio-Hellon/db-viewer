@@ -293,6 +293,59 @@ class OperationTest(unittest.TestCase):
         self.assertFalse(r.get_json()["can_add"])
         self.assertFalse(shared_db.is_set())
 
+    def test_db_register_folder_and_ref(self):
+        """0.45.0: パスはフォルダだけでよい(名前がファイル名)。接続先ごとに参照フォルダを決められる。"""
+        import shutil
+        from dbviewer import ref_base, settings_file
+        self.use_own_settings_file()
+        self.addCleanup(user_settings.save, config.KEY_DB_PATH, str(self.path))
+        self.addCleanup(user_settings.save, config.KEY_REF_DIR, "")
+        folder = Path(self.tmp.name) / "参照用ファイル"
+        folder.mkdir()
+        shutil.copy(self.path, folder / "伝送用ファイル.sqlite3")
+
+        def save(**row):
+            return self.c.post("/api/settings/dbs/save", json={"row": row, "seen": row.pop("seen", None)},
+                               headers=self.h)
+        r = save(名前="伝送用ファイル.sqlite3", パス=str(folder))
+        self.assertEqual(r.status_code, 200, r.get_json())
+        row = r.get_json()["rows"][1]
+        self.assertEqual(row["パス"], str(folder) + "\\" + "伝送用ファイル.sqlite3"
+                         if "\\" in str(folder) else str(folder / "伝送用ファイル.sqlite3"))
+        self.assertEqual(row["フォルダ"], str(folder))
+        self.assertEqual(save(名前="", パス=str(folder / "別")).status_code, 422)   # フォルダだけで名前が空
+        # 接続先ごとの参照フォルダ: 入っていればそれ、無ければ この PC の起点、それも無ければ DB のフォルダ
+        self.assertEqual(ref_base.current().source, ref_base.FROM_DB)
+        user_settings.save(config.KEY_REF_DIR, str(Path(self.tmp.name)))
+        self.assertEqual(ref_base.current().source, ref_base.FROM_PC)
+        cur = self.c.get("/api/settings/dbs", headers=self.h).get_json()["rows"][0]
+        seen = {k: cur[k] for k in settings_file.DB_COLUMNS}
+        r = save(管理番号=cur["管理番号"], 名前=cur["名前"], パス=cur["パス"], 備考=cur["備考"],
+                 参照フォルダ=str(folder), seen=seen)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        now = ref_base.current()
+        self.assertEqual((now.source, now.path), (ref_base.FROM_CONNECTION, folder))
+        page = self.c.get("/settings?tab=paths").get_data(as_text=True)
+        self.assertIn("接続先 1 番の「参照フォルダ」", page)
+        # ほかの接続先に切り替えたら、その接続先の起点(無ければ この PC の起点)
+        user_settings.save(config.KEY_DB_PATH, str(folder / "伝送用ファイル.sqlite3"))
+        self.assertEqual(ref_base.current().source, ref_base.FROM_PC)
+
+    def test_old_settings_file_gets_ref_column(self):
+        """前の版が作った設定ファイル(参照フォルダの列なし)にも列を足す。前の版はこの列を読まないのでそのまま動く。"""
+        from dbviewer import settings_file
+        sf = self.use_own_settings_file()
+        sf.parent.mkdir(parents=True)
+        with closing(__import__("sqlite3").connect(sf)) as c:
+            c.execute('CREATE TABLE "接続先" ("管理番号" INTEGER PRIMARY KEY AUTOINCREMENT, "名前" TEXT, '
+                      '"パス" TEXT NOT NULL, "備考" TEXT)')
+            c.execute('INSERT INTO "接続先" ("名前", "パス") VALUES (?, ?)', (self.path.name, str(self.path)))
+            c.commit()
+        settings_file._ready.discard(str(sf))
+        rows = settings_file.db_rows()
+        self.assertEqual(rows[0]["参照フォルダ"], None)
+        self.assertEqual(settings_file.ref_dir_of(str(self.path))[0], "")
+
     def test_db_register_table(self):
         """0.32.0: 設定ファイルの「接続先」表をそのまま見て、足す・直す・消す(編集可 か 管理者パスワードの鍵)。"""
         import shutil

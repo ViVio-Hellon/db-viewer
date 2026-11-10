@@ -37,10 +37,12 @@ TIMEOUT_SEC = 10
 T_DBS = "接続先"
 T_EASY = "かんたん設定"
 T_RIGHTS = "アクセス権限"
+C_REF = "参照フォルダ"          # 接続先ごとの 参照ファイル(PDF・画像)の相対パスの起点(0.45.0)
+DB_SUFFIXES = (".sqlite3", ".sqlite", ".db", ".accdb", ".mdb")
 
 _DDL = (
     f'CREATE TABLE IF NOT EXISTS "{T_DBS}" ("管理番号" INTEGER PRIMARY KEY AUTOINCREMENT, '
-    '"名前" TEXT, "パス" TEXT NOT NULL, "備考" TEXT)',
+    '"名前" TEXT, "パス" TEXT NOT NULL, "備考" TEXT, "参照フォルダ" TEXT)',
     f'CREATE TABLE IF NOT EXISTS "{T_EASY}" ("DB" TEXT NOT NULL, "表" TEXT NOT NULL, "設定" TEXT, '
     '"更新者" TEXT, "更新日時" TEXT, PRIMARY KEY ("DB", "表"))',
     f'CREATE TABLE IF NOT EXISTS "{T_RIGHTS}" ("管理番号" INTEGER PRIMARY KEY AUTOINCREMENT, '
@@ -125,6 +127,7 @@ def ensure(p: Optional[Path] = None) -> Path:
         with closing(sqlite3.connect(str(p), timeout=TIMEOUT_SEC)) as conn:
             for sql in _DDL:
                 conn.execute(sql)
+            _add_ref_column(conn)
             conn.commit()
             if fresh:
                 _seed_dbs(conn)
@@ -133,6 +136,14 @@ def ensure(p: Optional[Path] = None) -> Path:
             log.info("設定ファイルを作りました: %s", p)
         _ready.add(key)
     return p
+
+
+def _add_ref_column(conn: sqlite3.Connection) -> None:
+    """接続先に「参照フォルダ」の列が無ければ足す(0.45.0)。古い版はこの列を読まないので、そのまま動く。"""
+    have = {r[1] for r in conn.execute(f'PRAGMA table_info("{T_DBS}")')}
+    if C_REF not in have:
+        conn.execute(f'ALTER TABLE "{T_DBS}" ADD COLUMN "{C_REF}" TEXT')
+        log.info("接続先の表に「%s」の列を足しました", C_REF)
 
 
 def _seed_dbs(conn: sqlite3.Connection) -> None:
@@ -233,7 +244,8 @@ def db_key(p: Path) -> str:
 def dbs() -> list[dict[str, Any]]:
     """接続先(管理番号の順)。"""
     with closing(connect()) as conn:
-        rows = conn.execute(f'SELECT "管理番号", "名前", "パス", "備考" FROM "{T_DBS}" ORDER BY "管理番号"').fetchall()
+        rows = conn.execute(f'SELECT "管理番号", "名前", "パス", "備考", "{C_REF}" FROM "{T_DBS}" '
+                            'ORDER BY "管理番号"').fetchall()
     return [dict(r) for r in rows if str(r["パス"] or "").strip()]
 
 
@@ -271,29 +283,83 @@ def remove_db(text: str) -> bool:
 # ------------------------------------------------------------------
 # 接続先の表を直接直す(0.32.0。設定 → 接続先 の「接続先の登録」)
 # ------------------------------------------------------------------
-DB_COLUMNS = ("管理番号", "名前", "パス", "備考")
+DB_COLUMNS = ("管理番号", "名前", "パス", "備考", C_REF)
 MSG_DB_CHANGED = "ほかの PC がこの行を直しました。読み直してからもう一度してください。"
 
 
 def db_rows() -> list[dict[str, Any]]:
     """接続先の表の全部の行(パスが空の行も。直す画面に出す)。"""
     with closing(connect()) as conn:
-        rows = conn.execute(f'SELECT "管理番号", "名前", "パス", "備考" FROM "{T_DBS}" ORDER BY "管理番号"').fetchall()
-    return [{k: r[k] for k in DB_COLUMNS} for r in rows]
+        rows = conn.execute(f'SELECT {", ".join(chr(34) + k + chr(34) for k in DB_COLUMNS)} FROM "{T_DBS}" '
+                            'ORDER BY "管理番号"').fetchall()
+    out = []
+    for r in rows:
+        row = {k: r[k] for k in DB_COLUMNS}
+        row["フォルダ"] = folder_of(row["名前"], row["パス"])
+        out.append(row)
+    return out
+
+
+# ------------------------------------------------------------------
+# パスは「フォルダ」だけ入れてもよい(0.45.0)。名前がファイル名になる。設定ファイルにはフルパスで書く
+# (古い版の PC も同じ設定ファイルを読むので、書き方は変えない)
+# ------------------------------------------------------------------
+def _sep(folder: str) -> str:
+    return "/" if "/" in folder and "\\" not in folder else "\\"
+
+
+def _split(full: str) -> tuple[str, str]:
+    """フルパス → (フォルダ, ファイル名)。区切りは \\ と / の両方。"""
+    i = max(full.rfind("\\"), full.rfind("/"))
+    return (full[:i], full[i + 1:]) if i >= 0 else ("", full)
+
+
+def is_file_path(text: str) -> bool:
+    """DB ファイルまで入っているか(拡張子で見る)。"""
+    return _split(text.rstrip("\\/"))[1].lower().endswith(DB_SUFFIXES)
+
+
+def file_name_of(name: str) -> str:
+    """名前 → ファイル名(拡張子が無ければ .sqlite3)。"""
+    name = name.strip()
+    return name if name.lower().endswith(DB_SUFFIXES) else name + ".sqlite3"
+
+
+def join_path(folder: str, name: str) -> str:
+    folder = folder.rstrip("\\/")
+    return f"{folder}{_sep(folder)}{file_name_of(name)}"
+
+
+def folder_of(name: Any, full: Any) -> str:
+    """画面の「パス」欄に出すもの: ファイル名が名前と同じならフォルダだけ、違えばフルパス。"""
+    full = str(full or "")
+    folder, file = _split(full)
+    if folder and name and file_name_of(str(name)).casefold() == file.casefold():
+        return folder
+    return full
 
 
 def _db_clean(row: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """画面の行 → 設定ファイルに書く値。パスがフォルダだけなら、名前をファイル名にしてつなぐ。"""
     name = str(row.get("名前") or "").strip()
     text = str(row.get("パス") or "").strip().strip('"')
     note = str(row.get("備考") or "").strip()
+    ref = str(row.get(C_REF) or "").strip().strip('"')
     if not text:
-        return {}, "パスを入れてください(DB ファイルのフルパス)。"
-    for label, v, limit in (("名前", name, 200), ("パス", text, 1000), ("備考", note, 500)):
+        return {}, "パスを入れてください(DB ファイルのあるフォルダ)。"
+    for label, v, limit in (("名前", name, 200), ("パス", text, 1000), ("備考", note, 500), (C_REF, ref, 1000)):
         if len(v) > limit or any(ord(ch) < 32 for ch in v):
             return {}, f"「{label}」が長すぎるか、使えない文字があります。"
+    if not is_file_path(text):
+        if not name:
+            return {}, "パスがフォルダだけのときは、「名前」に DB のファイル名を入れてください(例: 伝送用ファイル.sqlite3)。"
+        if any(ch in name for ch in '\\/:*?"<>|'):
+            return {}, "「名前」にはファイル名だけを入れてください(\\ / : * ? \" < > | は使えません)。"
+        name = file_name_of(name)
+        text = join_path(text, name)
     if not name:
-        name = Path(text.replace("\\", "/")).name
-    return {"名前": name, "パス": text, "備考": note}, ""
+        name = _split(text)[1]
+    return {"名前": name, "パス": text, "備考": note, C_REF: ref}, ""
 
 
 def _same_seen(now: dict[str, Any], seen: Optional[dict[str, Any]]) -> bool:
@@ -325,12 +391,13 @@ def save_db_row(row: dict[str, Any], seen: Optional[dict[str, Any]] = None) -> t
                 if not _same_seen(dict(now), seen):
                     conn.execute("ROLLBACK")
                     return False, MSG_DB_CHANGED, no
-                conn.execute(f'UPDATE "{T_DBS}" SET "名前" = ?, "パス" = ?, "備考" = ? WHERE "管理番号" = ?',
-                             (values["名前"], values["パス"], values["備考"], no))
+                conn.execute(f'UPDATE "{T_DBS}" SET "名前" = ?, "パス" = ?, "備考" = ?, "{C_REF}" = ? '
+                             'WHERE "管理番号" = ?',
+                             (values["名前"], values["パス"], values["備考"], values[C_REF], no))
                 msg = f"{no} 番を直しました。"
             else:
-                cur = conn.execute(f'INSERT INTO "{T_DBS}" ("名前", "パス", "備考") VALUES (?, ?, ?)',
-                                   (values["名前"], values["パス"], values["備考"]))
+                cur = conn.execute(f'INSERT INTO "{T_DBS}" ("名前", "パス", "備考", "{C_REF}") VALUES (?, ?, ?, ?)',
+                                   (values["名前"], values["パス"], values["備考"], values[C_REF]))
                 no = int(cur.lastrowid or 0)
                 msg = f"{no} 番に足しました。"
             conn.execute("COMMIT")
@@ -384,3 +451,16 @@ def easy_write(db: Path, table: str, text: str, user: str = "") -> None:
 def legacy_easy_file(db: Path) -> Path:
     """0.21.0 の保存先(フォルダの <DB 名>_かんたん設定.sqlite3)。設定ファイルと同じフォルダを見る。"""
     return path().parent / f"{db.stem}_かんたん設定.sqlite3"
+
+
+# ------------------------------------------------------------------
+# 接続先ごとの参照フォルダ(0.45.0)
+# ------------------------------------------------------------------
+def ref_dir_of(db_text: str) -> tuple[str, Optional[int]]:
+    """その DB の接続先に書いた「参照フォルダ」と管理番号。無ければ ("", 番号 or None)。"""
+    if not str(db_text or "").strip():
+        return "", None
+    row = find_db(db_text)
+    if row is None:
+        return "", None
+    return str(row.get(C_REF) or "").strip(), row.get("管理番号")

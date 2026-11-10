@@ -84,7 +84,11 @@ function render(state) {
   showReal(el.dbPath, state.db_path || "");
   el.refDir.value = state.ref_dir;
   el.exportDir.value = state.export_dir;
-  showReal(el.refDirReal, state.ref_dir_real);
+  // いま使っている起点(接続先の参照フォルダ → この PC の起点 → DB のフォルダ。0.45.0)
+  const refSource = document.getElementById("refSource");
+  const refNowPath = document.getElementById("refNowPath");
+  if (refSource) refSource.textContent = state.ref_source || "";
+  if (refNowPath) refNowPath.textContent = state.ref_dir_real || "";
   showReal(el.exportDirReal, state.export_dir_real);
   for (const [node, st] of [[el.exportDirState, state.export_dir_state], [el.refDirState, state.ref_dir_state]]) {
     if (node && st) { node.className = `lv lv--${st.level}`; node.textContent = st.text; }

@@ -100,6 +100,8 @@ class SettingsViewModel:
     ref_dir: str
     ref_dir_real: str
     ref_dir_state: dict[str, str]
+    ref_source: str                      # いま使っている起点はどこで決めたか(0.45.0)
+    ref_conn: str                        # 接続先の「参照フォルダ」(入っていれば)
     ref_uses: list[dict[str, str]]
     report: dict[str, Any]
     access_log: bool
@@ -137,8 +139,10 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
         export_encoding=_choice(config.KEY_EXPORT_ENCODING, table_browse.ENCODINGS, table_browse.DEFAULT_ENCODING),
         can_open=os.name == "nt",
         ref_dir=ref_dir,
-        ref_dir_real=str(_ref_base(ref_dir)),
-        ref_dir_state=_folder_state(_ref_base(ref_dir)),
+        ref_dir_real=str(_ref_now().path),
+        ref_dir_state=_folder_state(_ref_now().path),
+        ref_source=_ref_now().label,
+        ref_conn=_ref_now().text if _ref_now().source == "connection" else "",
         ref_uses=_ref_uses(db_path),
         report=_report_info(db_path),
         access_log=bool(user_settings.get(config.KEY_ACCESS_LOG, True)),
@@ -153,6 +157,11 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
 def _choice(key: str, allowed, default: str) -> str:
     v = str(user_settings.get(key, "") or "")
     return v if v in allowed else default
+
+
+def _ref_now():
+    from .. import ref_base
+    return ref_base.current()
 
 
 def _ref_base(ref_dir: str) -> Path:
@@ -422,6 +431,8 @@ def to_dict(view: SettingsViewModel) -> dict[str, Any]:
         "ref_dir": view.ref_dir,
         "ref_dir_real": view.ref_dir_real,
         "ref_dir_state": view.ref_dir_state,
+        "ref_source": view.ref_source,
+        "ref_conn": view.ref_conn,
         "ref_uses": view.ref_uses,
         "report": view.report,
         "access_log": view.access_log,

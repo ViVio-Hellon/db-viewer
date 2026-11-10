@@ -48,10 +48,10 @@ def _open():
 
 
 def ref_base() -> Path:
-    """参照形式の**相対パスの起点**。設定「参照ファイルの起点」、空なら VBA と同じ SrvPath。"""
-    ref = str(user_settings.get(config.KEY_REF_DIR, "") or "").strip()
-    server = shared_db.server_dir()
-    return config.resolve_dir(ref, server) if ref else server
+    """参照形式の**相対パスの起点**。接続先の「参照フォルダ」→ この PC の「参照ファイルの起点」→ SrvPath
+    (dbviewer/ref_base.py。0.45.0 で接続先ごとに)。"""
+    from dbviewer import ref_base as _rb
+    return _rb.current().path
 
 
 def _dirs() -> dict:

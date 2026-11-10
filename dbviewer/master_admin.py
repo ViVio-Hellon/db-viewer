@@ -216,3 +216,65 @@ def add_column(conn: sqlite3.Connection, setup: SystemSetup, table: str, name: s
     return ColumnResult(True, msg, column=name, setting_table=conv or "", setting_key=key, backup=backup)
 
 
+
+
+# ------------------------------------------------------------------
+# 表ごと削除(0.45.0。一覧の「表を削除」)
+# ------------------------------------------------------------------
+"""
+表を丸ごと消す(DROP TABLE)。**取り返しがつかない**ので:
+- 編集可 の人だけ。消す表の名前を**そのまま打ってもらい**、サーバでも合っているか確かめる
+- 書く前に本体の控えを取る(取れなければ消さない)
+- 消せるのは業務の表だけ(全般設定・_設定・H_ 履歴などシステムの表は消さない)。
+  全般設定の「メインテーブル名」の表も消さない(VBA 版・帳票が読む)
+"""
+
+REFUSE_CONFIRM = "confirm"
+REFUSE_MAIN = "main_table"
+MSG_DROP_LEVEL = "表を削除するには 編集可 の権限が要ります。"
+
+
+@dataclass
+class DropResult:
+    ok: bool
+    message: str
+    reason: str = ""
+    rows: int = 0
+    backup: str = ""
+
+
+def drop_table(conn: sqlite3.Connection, setup: SystemSetup, table: str, *, confirm: str,
+               level: int = 0) -> DropResult:
+    from .settings_tables import user_tables
+    table = str(table or "")
+    if level < COLUMN_LEVEL:
+        return DropResult(False, MSG_DROP_LEVEL, REFUSE_LEVEL)
+    if not table or not table_exists(conn, table):
+        return DropResult(False, f"表 [{table}] が見つかりません。", REFUSE_NO_TABLE)
+    if table not in user_tables(conn):
+        return DropResult(False, f"[{table}] はシステムが使う表なので消せません。", REFUSE_FIXED)
+    if setup.general.configured_main and table == setup.general.configured_main:
+        return DropResult(False, f"[{table}] は全般設定の「メインテーブル名」の表なので消せません。", REFUSE_MAIN)
+    if str(confirm or "") != table:
+        return DropResult(False, "確かめの名前が表の名前と違うので、消しませんでした。", REFUSE_CONFIRM)
+    rows = conn.execute(f"SELECT COUNT(*) FROM {q(table)}").fetchone()[0]
+    try:
+        backup = _backup(conn, "表を削除する前")
+    except OSError as exc:
+        return DropResult(False, f"書く前の控えを取れなかったので、消していません: {exc}", REFUSE_FAILED)
+    if not backup:
+        return DropResult(False, "書く前の控えを取れなかったので、消していません。", REFUSE_FAILED)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(f"DROP TABLE {q(table)}")
+        conn.execute("COMMIT")
+    except sqlite3.Error as exc:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        log.exception("表を削除できません: %s", table)
+        return DropResult(False, f"消せませんでした(何も変えていません): {exc}", REFUSE_FAILED, rows, backup)
+    log.warning("表を削除しました: %s(%s 行)控え: %s", table, rows, backup)
+    return DropResult(True, f"表 [{table}]({rows:,} 行)を削除しました。消す前の控え: {backup}",
+                      rows=rows, backup=backup)

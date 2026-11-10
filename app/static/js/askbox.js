@@ -77,7 +77,9 @@ function open(message, { ok = "OK", cancel = "やめる", danger = false, input 
     };
     const onYes = () => finish(true);
     const onNo = () => finish(false);
-    const onClose = () => finish(false);                 // Esc
+    // Esc。前の窓を閉じた知らせは**あとから**届くので、続けて訊いた窓がそれで閉じないよう、
+    // まだ開いているあいだの知らせは見ない(0.45.0。「表を削除」の 2 回目の確かめがすぐ閉じた)
+    const onClose = () => { if (!b.dialog.open) finish(false); };
     const onBackdrop = (event) => { if (event.target === b.dialog) finish(false); };
     const onEnter = (event) => {
       if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finish(true); }

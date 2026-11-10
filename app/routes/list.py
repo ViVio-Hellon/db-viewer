@@ -190,6 +190,21 @@ def api_add_column():
                     "backup": r.backup}), status
 
 
+@bp.post("/api/list/drop-table")
+def api_drop_table():
+    """いま一覧に出している表を丸ごと消す(編集可。表の名前を打って確かめる。master_admin.drop_table)。"""
+    conn, setup, err = _open()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    table = setup.general.main_table
+    r = master_admin.drop_table(conn, setup, table, confirm=str(body.get("confirm") or ""), level=auth.level())
+    trace.event("list.drop_table", r.message, level="WARN",
+                data={"table": table, "rows": r.rows, "reason": r.reason, "backup": r.backup})
+    status = 200 if r.ok else 403 if r.reason == master_admin.REFUSE_LEVEL else 422
+    return jsonify({"ok": r.ok, "message": r.message, "reason": r.reason, "backup": r.backup}), status
+
+
 # ------------------------------------------------------------------
 # VBA 版でない表(simple_table の道): 行は rowid で決める
 # ------------------------------------------------------------------
@@ -313,6 +328,10 @@ def _setup_dict(setup) -> dict:
         "notices": setup.notices,
         "auto_main": setup.auto_main,
         "can_add_column": auth.level() >= master_admin.COLUMN_LEVEL,
+        # 表を削除できるか(編集可・業務の表・全般設定のメインテーブルでない)
+        "can_drop_table": (auth.level() >= master_admin.COLUMN_LEVEL
+                           and setup.general.main_table in settings_tables.user_tables(conn)
+                           and setup.general.main_table != setup.general.configured_main),
         "kinds": [[k, label] for k, (_t, label) in master_admin.COLUMN_KINDS.items()],
         "setting_table": "",
         # 帳票は全般設定「帳票」があって、その「メインテーブル名」の表を見ているときだけ

@@ -16,7 +16,7 @@ import { openAddColumn } from "../addcolumn.js";
 import { makeField, inputOf, previewFile, isChecked } from "../fieldinput.js";
 import { actionButton } from "../cellaction.js";
 import { openRowForm, showProblem } from "../rowform.js";
-import { confirmBox } from "../askbox.js";
+import { confirmBox, promptBox } from "../askbox.js";
 
 const el = {};
 const DETAIL_KEY = "dbviewer.list.detail";
@@ -47,6 +47,7 @@ async function load(table = "") {
     const keyOk = simple() || data.setup.key_ok !== false;
     el.actNew.hidden = !keyOk || !data.can.add; el.actEdit.hidden = !keyOk; el.actDelete.hidden = !keyOk || !data.can.delete;
     el.actAddCol.hidden = !data.setup.can_add_column;
+    el.actDropTable.hidden = !data.setup.can_drop_table;
     showNotices(data.setup.notices || []);
     grid.setData({ columns: data.columns, rows: data.rows, keyIndex: data.key_index, view: data.view, actions: data.actions,
                    checks: Object.entries((data.edit && data.edit.columns) || {})
@@ -90,6 +91,29 @@ function addColumn() {
       grid.scrollToEnd();
     },
   });
+}
+
+/** 表を丸ごと消す(0.45.0)。強く知らせてから、表の名前を打ってもらう。 */
+async function dropTable() {
+  if (!data) return;
+  const table = data.table || data.setup.main_table;
+  const rows = (data.tables || []).find((t) => t.name === table)?.rows ?? data.count ?? 0;
+  const warn =
+    `⚠ 表「${table}」を丸ごと削除します。\n\n` +
+    `・中の ${Number(rows).toLocaleString()} 行と、列の作りがすべて消えます。\n` +
+    "・元に戻せません(消す前に DB の控えを取りますが、戻すには控えのファイルから入れ直す作業が要ります)。\n" +
+    "・同じ DB を使っている ほかの PC からも、この表は見えなくなります。\n\n" +
+    "行を消したいだけなら「削除」(1 行ずつ)を使ってください。本当に表ごと消しますか？";
+  if (!(await confirmBox(warn, { ok: "表を削除する…", cancel: "やめる", danger: true }))) return;
+  const typed = await promptBox(`確かめのため、消す表の名前をそのまま入れてください:\n\n${table}`,
+    { ok: "表を削除", danger: true });
+  if (typed === null) return;
+  if (typed !== table) { toast("名前が違うので、消しませんでした。", "warn"); return; }
+  try {
+    const res = await api.post("/api/list/drop-table", { confirm: typed });
+    toast(res.message, "ok");
+    await load();
+  } catch (err) { toastError(err); }
 }
 
 // 他の端末が本体を書いた(心拍の db_mtime が、読んだときより新しい)
@@ -384,7 +408,7 @@ async function saveCell(key, name, value, seen, row) {
 export function start() {
   for (const id of ["listTitle", "listProblem", "listUpdated", "listReload", "lvBody", "grid", "detail",
                     "actNew", "actEdit", "actView", "actDelete", "actReport", "actPrint", "actOut",
-                    "outMenu", "outCopy", "outSave", "actDetail", "saveState", "listHint", "actAddCol",
+                    "outMenu", "outCopy", "outSave", "actDetail", "saveState", "listHint", "actAddCol", "actDropTable",
                     "listNotice", "listNoticeText", "listTable"]) {
     el[id] = document.getElementById(id);
   }
@@ -412,6 +436,7 @@ export function start() {
   el.actView.addEventListener("click", () => command("参照"));
   el.actDelete.addEventListener("click", () => command("削除"));
   el.actAddCol.addEventListener("click", addColumn);
+  el.actDropTable.addEventListener("click", dropTable);
   el.actReport.addEventListener("click", runReport);
   el.actPrint.addEventListener("click", () => {
     const t = visibleTable();

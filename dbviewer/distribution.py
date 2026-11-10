@@ -95,7 +95,7 @@ CONTENTS_LABEL = "設定ファイルの中身(接続先・かんたん設定・�
 
 # 設定ファイルの表と列(中身を書くときは、この列だけ受け取る)
 TABLES: dict[str, tuple[str, ...]] = {
-    settings_file.T_DBS: ("管理番号", "名前", "パス", "備考"),
+    settings_file.T_DBS: ("管理番号", "名前", "パス", "備考", settings_file.C_REF),
     settings_file.T_EASY: ("DB", "表", "設定", "更新者", "更新日時"),
     settings_file.T_RIGHTS: ("管理番号", "ログインID", "PC名", "権限", "有効", "備考"),
 }

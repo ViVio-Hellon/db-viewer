@@ -343,7 +343,9 @@
           </header>
           <div class="pad">
             <p class="why" style="margin-top:0">設定ファイルの「接続先」表そのものです。ここで直した一覧が、上の「見る DB」と帯の DB のメニューに出ます。
-              <b>消す</b>は一覧から消すだけで、DB ファイルは消しません。いま開いている DB を消すと、見る DB の選択も外れます。</p>
+              <b>消す</b>は一覧から消すだけで、DB ファイルは消しません。いま開いている DB を消すと、見る DB の選択も外れます。<br>
+              <b>パス</b>は DB ファイルのある<b>フォルダだけ</b>で入れられます(ファイル名は「名前」)。フルパスで入れても構いません。
+              <b>参照フォルダ</b>は、その DB の PDF・画像など参照ファイルの起点です(空なら 設定 → 参照・出力 の「この PC の起点」)。</p>
             <div class="dbreg__lock" id="dbregLock" hidden>
               <span class="why" id="dbregLockWhy"></span>
               <span class="pathrow">
@@ -353,7 +355,7 @@
             </div>
             <div class="tablewrap">
               <table class="table dbreg">
-                <thead><tr><th class="t">番</th><th class="t">名前</th><th class="t">パス</th><th class="t">備考</th><th class="t">状態</th><th class="t"></th></tr></thead>
+                <thead><tr><th class="t">番</th><th class="t">名前(ファイル名)</th><th class="t">パス(フォルダ)</th><th class="t">参照フォルダ</th><th class="t">備考</th><th class="t">状態</th><th class="t"></th></tr></thead>
                 <tbody id="dbregRows"></tbody>
                 <tfoot id="dbregNew"></tfoot>
               </table>
@@ -423,10 +425,13 @@
             <span class="lv lv--{{ view.ref_dir_state.level }}" id="refDirState">{{ view.ref_dir_state.text }}</span>
           </header>
           <div class="pad">
-            <p class="why">レコード画面で開く PDF・画像の置き場所。<code>_設定</code> の「参照形式」に相対パスで書いた列は、このフォルダから探します。
-              空なら DB ファイルのあるフォルダから探します。</p>
+            <p class="why">レコード画面・一覧で開く PDF・画像の置き場所。相対パスで書いた値は、このフォルダから探します。
+              <b>接続先ごとに決められます</b>(設定 → 接続先 → 接続先の登録 の「参照フォルダ」)。
+              接続先に参照フォルダがあればそれを、無ければ下の「この PC の起点」を、それも空なら DB ファイルのあるフォルダを使います。</p>
+            <p class="why" id="refNow"><b>いま使っている起点:</b> <span id="refSource">{{ view.ref_source }}</span>
+              → <code id="refNowPath">{{ view.ref_dir_real }}</code></p>
             <div class="paths">
-              {{ pathrow("refDir", "相対パスの起点", view.ref_dir, view.ref_dir_real) }}
+              {{ pathrow("refDir", "この PC の起点(接続先に無いとき)", view.ref_dir, "") }}
             </div>
             <dl class="checks" id="refUses">
               {% for u in view.ref_uses %}

@@ -45,21 +45,26 @@ function render() {
   el.dbListWhere.textContent = `${state.rows.length} 件 ・ ${state.file}`;
   el.dbregRows.replaceChildren(...state.rows.map((r) => {
     const tr = node("tr");
-    const name = input(r["名前"], "名前");
-    const path = input(r["パス"], "DB ファイルのフルパス");
+    const name = input(r["名前"], "ファイル名");
+    // パスは フォルダだけ(名前がファイル名と同じとき)。違えばフルパスのまま出す(0.45.0)
+    const path = input(r["フォルダ"] ?? r["パス"], "DB ファイルのあるフォルダ");
+    path.title = r["パス"] || "";
     const note = input(r["備考"], "");
+    const ref = input(r["参照フォルダ"], "空なら この PC の起点");
     const save = node("button", "btn btn--sm", "直す");
     save.type = "button"; save.hidden = true; save.disabled = !can;
     const del = node("button", "btn btn--sm btn--danger", "消す");
     del.type = "button"; del.disabled = !can;
     const dirty = () => {
-      const changed = name.value !== (r["名前"] ?? "") || path.value !== (r["パス"] ?? "") || note.value !== (r["備考"] ?? "");
+      const changed = name.value !== (r["名前"] ?? "") || path.value !== (r["フォルダ"] ?? r["パス"] ?? "")
+        || note.value !== (r["備考"] ?? "") || ref.value !== (r["参照フォルダ"] ?? "");
       tr.classList.toggle("is-dirty", changed);
       save.hidden = !changed;
     };
-    for (const i of [name, path, note]) i.addEventListener("input", dirty);
+    for (const i of [name, path, note, ref]) i.addEventListener("input", dirty);
     save.addEventListener("click", () => send("/api/settings/dbs/save", {
-      row: { 管理番号: r["管理番号"], 名前: name.value, パス: path.value, 備考: note.value }, seen: seen(r) }));
+      row: { 管理番号: r["管理番号"], 名前: name.value, パス: path.value, 備考: note.value, 参照フォルダ: ref.value },
+      seen: seen(r) }));
     del.addEventListener("click", async () => {
       const ask = r.current
         ? `${r["管理番号"]} 番(いま開いている DB)を接続先から消します。見る DB の選択も外れます(ファイルは消しません)。よろしいですか？`
@@ -71,36 +76,39 @@ function render() {
     const tdName = node("td", "t"); tdName.appendChild(name);
     const tdPath = node("td", "t path"); tdPath.appendChild(path);
     const tdNote = node("td", "t"); tdNote.appendChild(note);
+    const tdRef = node("td", "t path"); tdRef.appendChild(ref);
     const act = node("td", "t act"); act.append(save, " ", del);
-    tr.append(no, tdName, tdPath, tdNote, stateCell(r), act);
+    tr.append(no, tdName, tdPath, tdRef, tdNote, stateCell(r), act);
     return tr;
   }));
   if (!state.rows.length) {
     const tr = node("tr"); const td = node("td", "t", "接続先がまだありません。下の行で足してください。");
-    td.colSpan = 6; tr.appendChild(td); el.dbregRows.appendChild(tr);
+    td.colSpan = 7; tr.appendChild(td); el.dbregRows.appendChild(tr);
   }
   // 足す行
   const tr = node("tr");
-  const name = input("", "名前(空ならファイル名)");
-  const path = input("", "例: \\\\server\\共有\\作業標準.sqlite3", "dbregNewPath");
+  const name = input("", "ファイル名(例: 伝送用ファイル.sqlite3)");
+  const path = input("", "フォルダ(例: \\\\server\\共有\\参照用ファイル)", "dbregNewPath");
   const note = input("", "備考");
+  const ref = input("", "参照フォルダ(空でよい)");
   const browse = node("button", "btn btn--find btn--sm", "▸ 参照…");
   browse.type = "button"; browse.disabled = !can;
   browse.dataset.browse = "dbregNewPath"; browse.dataset.browseFile = "1";
   const add = node("button", "btn btn--commit btn--sm", "足す");
   add.type = "button"; add.disabled = !can;
   add.addEventListener("click", () => send("/api/settings/dbs/save",
-    { row: { 名前: name.value, パス: path.value, 備考: note.value } }));
+    { row: { 名前: name.value, パス: path.value, 備考: note.value, 参照フォルダ: ref.value } }));
   const tdName = node("td", "t"); tdName.appendChild(name);
   const tdPath = node("td", "t path"); tdPath.append(path);
   const tdNote = node("td", "t"); tdNote.appendChild(note);
+  const tdRef = node("td", "t path"); tdRef.appendChild(ref);
   const act = node("td", "t act"); act.append(browse, " ", add);
-  tr.append(node("td", "t", "新"), tdName, tdPath, tdNote, node("td", "t state", ""), act);
+  tr.append(node("td", "t", "新"), tdName, tdPath, tdRef, tdNote, node("td", "t state", ""), act);
   el.dbregNew.replaceChildren(tr);
 }
 
 function seen(r) {
-  return { 管理番号: r["管理番号"], 名前: r["名前"], パス: r["パス"], 備考: r["備考"] };
+  return { 管理番号: r["管理番号"], 名前: r["名前"], パス: r["パス"], 備考: r["備考"], 参照フォルダ: r["参照フォルダ"] };
 }
 
 async function send(path, body) {
