@@ -78,7 +78,7 @@ class UiFlowTest(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("DBVIEWER_", "FAKE_OFFICE"))}
         env.update(DBVIEWER_CONFIG_PATH=str(cfg), DBVIEWER_LOG_DIR=str(root / "logs"),
                    DBVIEWER_LOCAL_DIR=str(root / "local"), DBVIEWER_DISTRIBUTION_DIR=str(root / "配布設定"),
-                   PYTHONIOENCODING="utf-8")
+                   PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
         cls.settings_file = root / "DBビューア設定.sqlite3"
         cls.proc = subprocess.Popen([sys.executable, "-c", CHILD.format(root=str(ROOT), port=_free_port())],
                                     env=env, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -104,9 +104,12 @@ class UiFlowTest(unittest.TestCase):
             for line in cls.proc.stdout:                 # 残りも読む(出力で詰まらないように)
                 cls.output.append(line.rstrip())
                 del cls.output[:-200]
-                if "起動しました:" in line and not found:
-                    found.append(line.split("起動しました:")[1].strip())
-                    ready.set()
+                # 「起動しました: URL」(print)か、ログの「待ち受け開始: URL」。Windows ではパイプ越しの print が
+                # ためられて届かないことがあった(CI)ので、どちらでもよい
+                for mark in ("起動しました:", "待ち受け開始:"):
+                    if mark in line and not found:
+                        found.append(line.split(mark)[1].split()[0].strip())
+                        ready.set()
             ready.set()                                  # 子が終わった
         threading.Thread(target=read, daemon=True).start()
         if ready.wait(timeout=90) and found:
