@@ -49,6 +49,26 @@ _DDL = (
     '"ログインID" TEXT, "PC名" TEXT, "権限" TEXT, "有効" INTEGER DEFAULT 1, "備考" TEXT)',
 )
 
+# 表ごとの列(0.46.0 で 1 か所に)。列を足すときは、ここと上の _DDL と _add_columns を直す。
+# 配布設定(distribution)・接続先の読み書きはこれを使う。試験で _DDL と食い違わないことを確かめる
+COLUMNS: dict[str, tuple[str, ...]] = {
+    T_DBS: ("管理番号", "名前", "パス", "備考", C_REF),
+    T_EASY: ("DB", "表", "設定", "更新者", "更新日時"),
+    T_RIGHTS: ("管理番号", "ログインID", "PC名", "権限", "有効", "備考"),
+}
+
+
+def _cols(names) -> str:
+    return ", ".join(f'"{n}"' for n in names)
+
+
+def create_tables(conn: sqlite3.Connection) -> None:
+    """3 つの表をそろえる(無ければ作る・前の版のファイルには足りない列を足す)。"""
+    for sql in _DDL:
+        conn.execute(sql)
+    _add_ref_column(conn)
+
+
 _lock = threading.Lock()
 _ready: set[str] = set()                 # このプロセスで表をそろえたファイル
 
@@ -125,9 +145,7 @@ def ensure(p: Optional[Path] = None) -> Path:
         if fresh:
             p.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(str(p), timeout=TIMEOUT_SEC)) as conn:
-            for sql in _DDL:
-                conn.execute(sql)
-            _add_ref_column(conn)
+            create_tables(conn)
             conn.commit()
             if fresh:
                 _seed_dbs(conn)
@@ -244,8 +262,7 @@ def db_key(p: Path) -> str:
 def dbs() -> list[dict[str, Any]]:
     """接続先(管理番号の順)。"""
     with closing(connect()) as conn:
-        rows = conn.execute(f'SELECT "管理番号", "名前", "パス", "備考", "{C_REF}" FROM "{T_DBS}" '
-                            'ORDER BY "管理番号"').fetchall()
+        rows = conn.execute(f'SELECT {_cols(DB_COLUMNS)} FROM "{T_DBS}" ORDER BY "管理番号"').fetchall()
     return [dict(r) for r in rows if str(r["パス"] or "").strip()]
 
 
@@ -283,15 +300,14 @@ def remove_db(text: str) -> bool:
 # ------------------------------------------------------------------
 # 接続先の表を直接直す(0.32.0。設定 → 接続先 の「接続先の登録」)
 # ------------------------------------------------------------------
-DB_COLUMNS = ("管理番号", "名前", "パス", "備考", C_REF)
+DB_COLUMNS = COLUMNS[T_DBS]
 MSG_DB_CHANGED = "ほかの PC がこの行を直しました。読み直してからもう一度してください。"
 
 
 def db_rows() -> list[dict[str, Any]]:
     """接続先の表の全部の行(パスが空の行も。直す画面に出す)。"""
     with closing(connect()) as conn:
-        rows = conn.execute(f'SELECT {", ".join(chr(34) + k + chr(34) for k in DB_COLUMNS)} FROM "{T_DBS}" '
-                            'ORDER BY "管理番号"').fetchall()
+        rows = conn.execute(f'SELECT {_cols(DB_COLUMNS)} FROM "{T_DBS}" ORDER BY "管理番号"').fetchall()
     out = []
     for r in rows:
         row = {k: r[k] for k in DB_COLUMNS}

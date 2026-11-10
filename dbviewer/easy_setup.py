@@ -19,12 +19,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import config, shared_db, simple_table
+from .auth import EDIT_LEVEL
 from .logging_utils import get_logger
 from .settings_tables import SystemSetup, q, table_names, user_tables
 
 log = get_logger("easy_setup")
 
-WRITE_LEVEL = 5                 # 編集可(auth.EDIT_LEVEL)
+WRITE_LEVEL = EDIT_LEVEL        # 編集可(数字は auth に 1 か所)
 
 REFUSE_LEVEL = "level"
 REFUSE_INPUT = "bad_input"

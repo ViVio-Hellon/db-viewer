@@ -127,6 +127,7 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
     ref_dir = str(user_settings.get(config.KEY_REF_DIR, "") or "")
 
     db_path = shared_db.db_path()
+    ref = _ref_now()                       # 参照ファイルの起点(設定ファイルを 1 回だけ読む)
     sections = [_db_section(db_path if db_text else None), _setup_section(db_path), _terminal_section()]
     return SettingsViewModel(
         sections=sections,
@@ -139,10 +140,10 @@ def build(conn: Optional[sqlite3.Connection] = None) -> SettingsViewModel:
         export_encoding=_choice(config.KEY_EXPORT_ENCODING, table_browse.ENCODINGS, table_browse.DEFAULT_ENCODING),
         can_open=os.name == "nt",
         ref_dir=ref_dir,
-        ref_dir_real=str(_ref_now().path),
-        ref_dir_state=_folder_state(_ref_now().path),
-        ref_source=_ref_now().label,
-        ref_conn=_ref_now().text if _ref_now().source == "connection" else "",
+        ref_dir_real=str(ref.path),
+        ref_dir_state=_folder_state(ref.path),
+        ref_source=ref.label,
+        ref_conn=ref.text if ref.source == "connection" else "",
         ref_uses=_ref_uses(db_path),
         report=_report_info(db_path),
         access_log=bool(user_settings.get(config.KEY_ACCESS_LOG, True)),
@@ -162,12 +163,6 @@ def _choice(key: str, allowed, default: str) -> str:
 def _ref_now():
     from .. import ref_base
     return ref_base.current()
-
-
-def _ref_base(ref_dir: str) -> Path:
-    """参照形式の相対パスの起点(空なら DB ファイルのあるフォルダ)。"""
-    server = shared_db.server_dir()
-    return config.resolve_dir(ref_dir, server) if ref_dir.strip() else server
 
 
 def _folder_state(path: Path, *, create_later: bool = False) -> dict[str, str]:

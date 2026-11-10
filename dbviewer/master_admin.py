@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import config
+from .auth import EDIT_LEVEL
 from .logging_utils import get_logger
 from .settings_tables import SystemSetup, column_names, q, table_exists
 from .vba_compat import val_int
@@ -37,7 +38,7 @@ def is_history(table: str) -> bool:
 - 書けるのは 編集可(表を持ってくると同じ。表の形を変えるため)。書く前に本体の控えを取る
 """
 
-COLUMN_LEVEL = 5
+COLUMN_LEVEL = EDIT_LEVEL              # 編集可(数字は auth に 1 か所)
 # 種類 → (SQLite の型, 画面の呼び名)
 COLUMN_KINDS = {"text": ("TEXT", "文字"), "integer": ("INTEGER", "整数"), "number": ("REAL", "数値(小数も)")}
 MAX_COLUMN_NAME = 64

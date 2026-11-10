@@ -94,11 +94,7 @@ CONTENTS = "settings_contents"
 CONTENTS_LABEL = "設定ファイルの中身(接続先・かんたん設定・アクセス権限)"
 
 # 設定ファイルの表と列(中身を書くときは、この列だけ受け取る)
-TABLES: dict[str, tuple[str, ...]] = {
-    settings_file.T_DBS: ("管理番号", "名前", "パス", "備考", settings_file.C_REF),
-    settings_file.T_EASY: ("DB", "表", "設定", "更新者", "更新日時"),
-    settings_file.T_RIGHTS: ("管理番号", "ログインID", "PC名", "権限", "有効", "備考"),
-}
+TABLES: dict[str, tuple[str, ...]] = settings_file.COLUMNS     # 列の決まりは settings_file に 1 か所
 
 REFUSE_NEED_PASSWORD = "need_password"
 REFUSE_BAD_INPUT = "bad_input"
@@ -173,8 +169,7 @@ def write_contents(target: Path, contents: dict[str, list[dict]]) -> None:
     if tmp.exists():
         tmp.unlink()
     with closing(sqlite3.connect(str(tmp))) as conn:
-        for sql in settings_file._DDL:
-            conn.execute(sql)
+        settings_file.create_tables(conn)
         for table, rows in contents.items():
             for row in rows:
                 cols = [c for c in TABLES[table] if c in row]

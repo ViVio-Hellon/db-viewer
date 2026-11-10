@@ -255,5 +255,20 @@ class WebAndDistTest(_Case):
         self.assertIn("配布設定は入れていません(--no-settings)。", lines2)
 
 
+
+class ColumnsAgreeTest(unittest.TestCase):
+    """設定ファイルの列の決まり(settings_file.COLUMNS)と、実際に作る表が食い違わない(0.46.0)。
+    0.45.0 では列を足したとき配布の写し側だけ漏れた。"""
+    def test_columns_match_created_tables(self) -> None:
+        import sqlite3
+        from contextlib import closing
+        from dbviewer import settings_file
+        with closing(sqlite3.connect(":memory:")) as conn:
+            settings_file.create_tables(conn)
+            for table, cols in settings_file.COLUMNS.items():
+                have = tuple(r[1] for r in conn.execute(f'PRAGMA table_info("{table}")'))
+                self.assertEqual(have, cols, table)
+        self.assertIs(distribution.TABLES, settings_file.COLUMNS)
+
 if __name__ == "__main__":
     unittest.main()

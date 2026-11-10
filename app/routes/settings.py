@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, render_template, request
 
+from dbviewer.auth import EDIT_LEVEL
 from dbviewer.logging_utils import get_logger
 from dbviewer import trace
 from dbviewer.presenters import fs_browse
@@ -149,7 +150,7 @@ def open_db():
 # 本体の表を足す・入れ替えるので、VBA のいちばん上のレベル(マスタ管理で
 # 全部の表を直せる Level 5)でログインしているときだけ通す。
 # python-web-tools の「管理者パスワード」の関門にあたる
-BRING_LEVEL = 5
+BRING_LEVEL = EDIT_LEVEL               # 編集可(数字は auth に 1 か所)
 
 
 def _bring_refused():

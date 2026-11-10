@@ -216,8 +216,10 @@ def _walk_dir(folder: Path) -> tuple[Optional[Path], Optional[Path], str]:
     return cur, cur, ""
 
 
-def resolve_dir(folder: Path) -> Optional[Path]:
+def find_real_dir(folder: Path) -> Optional[Path]:
     """フォルダの本当の場所(名前の全角・半角などの違いを許す)。無ければ None。
+
+    `config.resolve_dir`(設定の文字をフォルダにするだけ)とは別もの。0.46.0 で名前を分けた(元は同じ名前)。
 
     先に いちばん上(PC・共有・ドライブ)に届くかを 1 回だけ確かめる(届かない PC で何度も待たない)。"""
     folder = Path(folder)
@@ -264,13 +266,13 @@ def reroute(path: Path) -> tuple[Path, str]:
     あれば、そちらに読み替える。"""
     path = Path(path)
     folder, name = split(path)
-    got = resolve_dir(folder)
+    got = find_real_dir(folder)
     if got is not None:
         if str(got) == str(folder):
             return path, ""
         return got / name, f"「{folder}」は「{got}」として探しました(名前の全角・半角などの違い)"
     for alt in alternatives(folder):
-        got = resolve_dir(alt)
+        got = find_real_dir(alt)
         if got is None:
             continue
         old, new = host_of(folder), host_of(alt)

@@ -772,8 +772,8 @@ class WorkFileTest(_Case):
         there = self.tmp / "NLM-NGY-232010"
         there.mkdir()
         (there / "0-1-1_ハンマーの取り扱い.pdf").write_bytes(b"%PDF-1.4 nlm")
-        real = local_paths.resolve_dir
-        q = mock.patch.object(local_paths, "resolve_dir",
+        real = local_paths.find_real_dir
+        q = mock.patch.object(local_paths, "find_real_dir",
                               side_effect=lambda f: there if str(f).startswith("\\\\NLM-NGY-232010\\") else real(f))
         q.start()
         self.addCleanup(q.stop)
