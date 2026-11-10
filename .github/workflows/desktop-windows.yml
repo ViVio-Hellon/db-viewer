@@ -30,6 +30,14 @@ jobs:
       - name: Python の部品を入れる
         run: python -m pip install -r requirements.txt
 
+      # 画面を動かす試験(tests/test_ui_flow.py)のためだけ。ライン PC には入れない。
+      # 入れられなくても試験は飛ばすだけなので、ここで止めない
+      - name: 画面の試験の部品を入れる(CI だけ)
+        continue-on-error: true
+        run: |
+          python -m pip install playwright
+          python -m playwright install chromium
+
       - name: Python の試験
         env:
           PYTHONIOENCODING: utf-8
