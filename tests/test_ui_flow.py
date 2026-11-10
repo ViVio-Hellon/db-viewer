@@ -112,7 +112,7 @@ class UiFlowTest(unittest.TestCase):
         if ready.wait(timeout=90) and found:
             return found[0]
         cls._stop()
-        raise RuntimeError("DBビューアが起動しませんでした")
+        raise RuntimeError("DBビューアが起動しませんでした:\n" + "\n".join(cls.output[-40:]))
 
     @classmethod
     def _stop(cls):

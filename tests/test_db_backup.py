@@ -1,6 +1,7 @@
 """DB の控え(0.46.0 で SQLite の backup に揃えた)"""
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -15,7 +16,8 @@ class CopyDbTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.dir = Path(tmp.name)
-        self.src = self.dir / "本体 #1 ?50%.sqlite3"           # URI で逃がす文字も入れる
+        # URI で逃がす文字も入れる(? は Windows のファイル名に使えないので、ほかの OS だけ)
+        self.src = self.dir / ("本体 #1 50%.sqlite3" if os.name == "nt" else "本体 #1 ?50%.sqlite3")
         with closing(sqlite3.connect(self.src)) as c:
             c.execute("CREATE TABLE 作業 (作業NO TEXT)")
             c.executemany("INSERT INTO 作業 VALUES (?)", [("0-1-1",), ("10-12-2",)])
