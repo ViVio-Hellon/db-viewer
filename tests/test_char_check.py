@@ -73,5 +73,15 @@ class CharCheckTest(unittest.TestCase):
             cc.check_table(self.conn, "無い表")
 
 
+
+class SameListTest(unittest.TestCase):
+    """点検で見つかる見えない文字と、開くときの照合で取る文字が同じ(0.46.0)。"""
+    def test_check_and_match_agree(self):
+        from dbviewer import simple_table
+        for ch, name in cc.INVISIBLE.items():
+            self.assertTrue(cc.inspect_value("10-12-2" + ch), name)
+            self.assertEqual(simple_table.clean_value(ch + "10-12-2" + ch), "10-12-2", name)
+        self.assertEqual(simple_table.clean_value("10\u00ad12"), "10\u00ad12")      # 中は変えない(今までどおり)
+
 if __name__ == "__main__":
     unittest.main()

@@ -915,8 +915,12 @@ def file_target(value: str, base) -> Optional["Path"]:
     return p
 
 
-# 値の前後から取るもの: 空白類(半角・全角・NBSP・タブ・改行…)と見えない文字(BOM・ゼロ幅)
-_INVISIBLE = "\u200b\u200c\u200d\u2060\ufeff"
+# 値の前後から取るもの: 空白類(半角・全角・NBSP・タブ・改行…)と見えない文字(BOM・ゼロ幅など)。
+# 見えない文字は「見えない文字の点検」と同じ一覧を使う(0.46.0。以前は別々に持っていて、
+# 点検で見つかるソフトハイフンを照合では取らなかった)
+from .char_check import INVISIBLE as _INVISIBLE_NAMES  # noqa: E402
+
+_INVISIBLE = "".join(_INVISIBLE_NAMES)
 
 
 def clean_value(text: Any) -> str:

@@ -266,15 +266,8 @@ def _backup(path: Path) -> str:
     folder = app_config.local_dir("backup")
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / f"{path.stem}_アクセス権限の前_{time.strftime('%Y%m%d_%H%M%S')}{path.suffix}"
-    src = sqlite3.connect("file:" + str(path).replace("?", "%3F").replace("#", "%23") + "?mode=ro", uri=True, timeout=5)
-    try:
-        dst = sqlite3.connect(dest)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
+    from .db_backup import copy_db
+    copy_db(path, dest)                   # 控えの取り方は db_backup に 1 つ(0.46.0)
     _backed_up.add(key)
     return str(dest)
 

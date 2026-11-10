@@ -32,7 +32,10 @@ CHILD = """
 import sys; sys.path.insert(0, {root!r})
 from dbviewer import app_config
 app_config.port_candidates = lambda mode="main": [{port}]
-import start_app; sys.exit(start_app.main(["--no-browser"]))
+import start_app
+# 試験のあいだは「画面が居なくなったら終わる」見張りを止める(タブの移動が遅いと、閉じたと見て終わるため)
+start_app._watch_for_idle = lambda srv: None
+sys.exit(start_app.main(["--no-browser"]))
 """
 
 
@@ -91,9 +94,12 @@ class UiFlowTest(unittest.TestCase):
     def _wait_url(cls) -> str:
         found: list[str] = []
         ready = threading.Event()
+        cls.output = []                                  # 落ちたときに見る(サーバの出力)
 
         def read():
-            for line in cls.proc.stdout:                 # 残りも読み捨てる(出力で詰まらないように)
+            for line in cls.proc.stdout:                 # 残りも読む(出力で詰まらないように)
+                cls.output.append(line.rstrip())
+                del cls.output[:-200]
                 if "起動しました:" in line and not found:
                     found.append(line.split("起動しました:")[1].strip())
                     ready.set()
@@ -119,6 +125,8 @@ class UiFlowTest(unittest.TestCase):
             cls._tmp.cleanup()
 
     def tearDown(self):
+        if self.proc.poll() is not None:
+            self.fail("DBビューアが途中で終わりました:\n" + "\n".join(self.output[-40:]))
         self.assertEqual(self.errors, [], "画面でエラーが出ました")
 
     # ------------------------------------------------------------------

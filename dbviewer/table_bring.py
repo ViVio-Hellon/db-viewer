@@ -30,7 +30,6 @@ H_ 履歴、マスタ管理で直した設定)のうち Access に無いもの�
 from __future__ import annotations
 
 import re
-import shutil
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -352,7 +351,8 @@ def backup_copy(dest: Path, why: str = "表を持ってくる前") -> Path:
     folder = app_config.local_dir("backup")
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{dest.stem}_{why}_{datetime.now():%Y%m%d_%H%M%S}{dest.suffix}"
-    shutil.copyfile(dest, target)
+    from .db_backup import copy_db
+    copy_db(dest, target)                 # 書きかけを写さない(0.46.0。以前は丸写し)
     return target
 
 

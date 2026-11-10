@@ -866,6 +866,19 @@ class WorkFileTest(_Case):
         self.assertEqual(r.status_code, 403)                                          # 表に無い値は今までどおり断る
         self.assertIn("U+0030", "\n".join(logs.output))                               # 断ったら DB の値の中身を残す
 
+    def test_soft_hyphen_in_db(self):
+        """0.46.0: 見えない文字の点検で見つかる文字(ソフトハイフンも)は、開くときの照合でも問わない。"""
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE 作業 SET 作業NO = ? WHERE 作業NO = '0-1-2'", ("0-1-2\u00ad",))
+            c.commit()
+        place = str(self.dir) + "/{作業NO}"
+        st = self.ok("/api/easy/state", table="作業")
+        rows = [dict(c, **({"作業NO": {"click": "preview", "place": place, "match": "text"}}.get(c["name"], {})))
+                for c in st["columns"]]
+        self.ok("/api/easy/columns", table="作業", rows=rows)
+        r = self.post("/api/file/check", table="作業", column="作業NO", value="0-1-2", rowid=self.rowid["0-1-2"])
+        self.assertNotEqual(r.status_code, 403, r.get_json())
+
     def test_unknown_column_in_place_refused(self):
         st = self.ok("/api/easy/state", table="作業")
         rows = [dict(c, **({"作業名": {"click": "preview", "place": "x/{作業番号}_{値}"}}.get(c["name"], {})))
