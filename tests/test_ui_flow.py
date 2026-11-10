@@ -73,8 +73,12 @@ class UiFlowTest(unittest.TestCase):
             c.executemany("INSERT INTO 古い表 VALUES (?)", [("x",), ("y",)])
         cfg = root / "c.json"
         cfg.write_text(json.dumps({"db_path": str(cls.db), "access_log": False}), encoding="utf-8")
-        env = dict(os.environ, DBVIEWER_CONFIG_PATH=str(cfg), DBVIEWER_LOG_DIR=str(root / "logs"),
-                   DBVIEWER_LOCAL_DIR=str(root / "local"), PYTHONIOENCODING="utf-8")
+        # 置き場所はぜんぶこの試験だけのものにする。ほかの試験が作った配布設定(DBVIEWER_DISTRIBUTION_DIR)を
+        # 引き継ぐと、起動したときにそれを読み込んで接続先が替わってしまう(全部の試験を流したときだけ落ちた)
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("DBVIEWER_", "FAKE_OFFICE"))}
+        env.update(DBVIEWER_CONFIG_PATH=str(cfg), DBVIEWER_LOG_DIR=str(root / "logs"),
+                   DBVIEWER_LOCAL_DIR=str(root / "local"), DBVIEWER_DISTRIBUTION_DIR=str(root / "配布設定"),
+                   PYTHONIOENCODING="utf-8")
         cls.settings_file = root / "DBビューア設定.sqlite3"
         cls.proc = subprocess.Popen([sys.executable, "-c", CHILD.format(root=str(ROOT), port=_free_port())],
                                     env=env, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
