@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "manual",
+        "hooks": [{ "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_state.py\" precompact", "timeout": 30 }]
+      },
+      {
+        "matcher": "auto",
+        "hooks": [{ "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_state.py\" precompact", "timeout": 30 }]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact|clear",
+        "hooks": [{ "type": "command", "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_state.py\" start", "timeout": 30 }]
+      }
+    ]
+  }
+}
