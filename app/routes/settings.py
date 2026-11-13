@@ -366,10 +366,14 @@ def dbs_save():
                 data={"no": no, "row": {k: row.get(k) for k in settings_file.DB_COLUMNS}})
     if not ok:
         return jsonify({"error": {"code": "refused", "message": message}}), 422
-    if was_current and not settings_file.same_file(str(row.get("パス") or ""), shared_db.configured()):
+    # 画面が送るパスはフォルダだけのことがある(0.45.0)。保存した**フルパス**を使う
+    # (以前は送られた文字をそのまま見る DB にして、フォルダを開こうとして開けなくなった)
+    saved = next((r for r in settings_file.db_rows() if r["管理番号"] == no), None)
+    full = str((saved or {}).get("パス") or "").strip()
+    if was_current and full and not settings_file.same_file(full, shared_db.configured()):
         # いま開いている DB のパスを直した → この PC の選択も新しいパスに(古いパスを見たまま、にしない)
         from dbviewer import config, user_settings
-        user_settings.save(config.KEY_DB_PATH, str(row.get("パス") or "").strip().strip('"'))
+        user_settings.save(config.KEY_DB_PATH, full)
         message += " いま開いている DB だったので、この PC の選択も新しいパスにしました。"
     out = _db_table()
     out["message"] = message

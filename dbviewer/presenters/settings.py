@@ -533,7 +533,12 @@ def _save_db_path(text: str) -> SaveResult:
         user_settings.save(config.KEY_DB_PATH, "")
         return SaveResult(True, "DB ファイルを空にしました(一覧には何も出ません)。")
     path = config.resolve_dir(text)
-    if path.is_dir():
+    try:
+        is_dir, is_file = path.is_dir(), path.is_file()
+    except OSError as exc:                       # 共有に届かない(WinError 59 など)。500 にしない
+        return SaveResult(False, f"その場所に届きません({exc})。ネットワークや PC 名を確かめてください: {path}",
+                          REFUSE_BAD_INPUT, "db_path")
+    if is_dir:
         return SaveResult(False, f"フォルダではなく、DB ファイルを選んでください: {path}", REFUSE_BAD_INPUT, "db_path")
     if path.suffix.lower() in (".accdb", ".mdb"):
         return SaveResult(False, "Access のファイルは直接は開けません。「Access 取り込み」で .sqlite3 にしてから選んでください。",
@@ -541,7 +546,7 @@ def _save_db_path(text: str) -> SaveResult:
     if path.suffix.lower() not in source_db.SUFFIXES:
         return SaveResult(False, f"開けるのは {' / '.join(source_db.SUFFIXES)} のファイルです: {path.name}",
                           REFUSE_BAD_INPUT, "db_path")
-    if not path.is_file():
+    if not is_file:
         return SaveResult(False, f"アクセス許可がないか、ファイルが存在しないため参照できません。\n{path}",
                           REFUSE_BAD_INPUT, "db_path")
     info = db_files.inspect_sqlite(path)

@@ -325,6 +325,13 @@ class OperationTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.get_json())
         now = ref_base.current()
         self.assertEqual((now.source, now.path), (ref_base.FROM_CONNECTION, folder))
+        # 0.46.1: いま開いている DB の行をフォルダだけのパスで直しても、見る DB はフルパスのまま
+        cur = self.c.get("/api/settings/dbs", headers=self.h).get_json()["rows"][0]
+        seen = {k: cur[k] for k in settings_file.DB_COLUMNS}
+        r = save(管理番号=cur["管理番号"], 名前=cur["名前"], パス=cur["フォルダ"], 備考="直した",
+                 参照フォルダ=str(folder), seen=seen)
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertTrue(Path(user_settings.get(config.KEY_DB_PATH)).is_file())
         page = self.c.get("/settings?tab=paths").get_data(as_text=True)
         self.assertIn("接続先 1 番の「参照フォルダ」", page)
         # ほかの接続先に切り替えたら、その接続先の起点(無ければ この PC の起点)

@@ -29,6 +29,8 @@ MAX_FILES = 200
 
 def inspect_sqlite(path: Path) -> dict[str, Any]:
     """DBビューアで開けるか。(kind, note, main_table, rows)"""
+    if Path(path).name.lower() == "thumbs.db":   # Windows の縮小画像のファイル(.db だが DB ではない)
+        return {"kind": KIND_OTHER, "note": "Windows の縮小画像のファイルです"}
     try:
         tables = set(source_db.list_tables(path))
     except (source_db.SourceError, sqlite3.Error, OSError) as exc:
