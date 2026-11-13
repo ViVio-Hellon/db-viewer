@@ -154,6 +154,8 @@ class UiFlowTest(unittest.TestCase):
     def test_1_easy_settings_rows(self):
         """かんたん設定: 触った行が開いて見え、保存していない印が出る。チェックの入力を保存できる。"""
         pg = self.page
+        pg.goto(self.url)                                # 先に起動時の URL(合言葉つき)を開く。ほかの試験と同じ入り方
+        pg.wait_for_selector("#listTable option", state="attached")
         pg.goto(self.base + "/settings?tab=easy")
         pg.wait_for_selector("#easyTable option", state="attached")
         pg.select_option("#easyTable", "作業")
