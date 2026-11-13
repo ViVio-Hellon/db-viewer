@@ -240,7 +240,7 @@ def _db_section(db_path: Optional[Path]) -> Section:
     if db_path is None:
         section.checks.append(Check("DB ファイル", "(決めていません)", NG, shared_db.MSG_NOT_SET))
         return section
-    if not db_path.is_file():
+    if not shared_db.file_ok(db_path):
         section.checks.append(Check(
             "DB ファイル", str(db_path), NG,
             "アクセス許可がないか、ファイルが存在しないため参照できません。"
@@ -279,7 +279,7 @@ def _setup_section(db_path: Path) -> Section:
     from .. import settings_tables
 
     section = Section(title="一覧の表と列の設定", mark="設", action=FIX_EASY)
-    if not db_path.is_file():
+    if not shared_db.file_ok(db_path):
         section.checks.append(Check("検査", "DB ファイルが無いので確かめられません", INFO))
         return section
     try:

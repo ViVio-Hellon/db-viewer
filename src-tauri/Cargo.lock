@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "dbviewer-desktop"
-version = "0.46.1"
+version = "0.46.2"
 dependencies = [
  "serde",
  "serde_json",

@@ -85,10 +85,19 @@ def server_dir() -> Path:
     return db_path().parent if is_set() else config.BASE_DIR
 
 
+def file_ok(path: Path) -> bool:
+    """ファイルがあるか。**共有に届かない(WinError 59 など)ときは「無い」**(0.46.2)。
+    以前は例外のまま上がり、起動も設定画面も開けなくなって選び直せなかった。"""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def connect(path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     if str(path) in ("", "."):
         raise DbNotFound(MSG_NOT_SET)
-    if not path.is_file():
+    if not file_ok(path):
         raise DbNotFound(f"アクセス許可がないか、ファイルが存在しないため参照できません。\n{path}")
     conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
@@ -121,9 +130,12 @@ def open_current() -> sqlite3.Connection:
 def probe() -> dict:
     """設定タブ「いまの状態」に出す情報。"""
     path = db_path()
-    info = {"path": str(path) if is_set() else "", "exists": is_set() and path.is_file(), "size": 0, "mtime": None}
+    info = {"path": str(path) if is_set() else "", "exists": is_set() and file_ok(path), "size": 0, "mtime": None}
     if info["exists"]:
-        st = path.stat()
-        info["size"] = st.st_size
-        info["mtime"] = st.st_mtime
+        try:
+            st = path.stat()
+            info["size"] = st.st_size
+            info["mtime"] = st.st_mtime
+        except OSError:
+            info["exists"] = False
     return info

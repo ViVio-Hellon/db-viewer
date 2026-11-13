@@ -118,5 +118,28 @@ class RestApiTest(unittest.TestCase):
         self.assertEqual(r.get_json()["error"]["field"], "accdb_source")
 
 
+
+class UnreachableDbTest(RestApiTest):
+    """見る DB の共有に届かない(WinError 59)ときも、起動の確かめ・設定画面・一覧が落ちない(0.46.2)。
+    以前は例外のまま上がり、設定画面も開けず選び直せなかった。"""
+    def test_unreachable_db_does_not_break(self):
+        from unittest import mock
+        from dbviewer import shared_db
+        real = Path.is_file
+
+        def is_file(path):
+            if str(path) == str(self.path):
+                raise OSError(59, "予期しないネットワーク エラーが発生しました。")
+            return real(path)
+        with mock.patch.object(Path, "is_file", is_file):
+            self.assertFalse(shared_db.probe()["exists"])
+            r = self.c.get("/settings", headers=self.h)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("参照できません", r.get_data(as_text=True))
+            r = self.post("/api/list/data")
+            self.assertNotEqual(r.status_code, 500, r.get_json())
+            r = self.post("/api/settings/open-db", path=str(self.path))
+            self.assertEqual(r.status_code, 400)
+
 if __name__ == "__main__":
     unittest.main()
