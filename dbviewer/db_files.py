@@ -59,6 +59,77 @@ def inspect_sqlite(path: Path) -> dict[str, Any]:
     return {"kind": KIND_OPEN, "note": note, "main_table": main}
 
 
+# ------------------------------------------------------------------
+# 軽く調べる(0.46.3)。以前は 1 つのファイルにつき 3 回以上、丸ごと手元に写して読んでいたので、
+# 共有フォルダに DB が多いと「足して開く」「状態を再確認」がいつまでも終わらないように見えた
+# ------------------------------------------------------------------
+_cache: dict[tuple[str, int, float], dict[str, Any]] = {}
+SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def _looks_sqlite(path: Path) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return f.read(16) == SQLITE_HEADER
+    except OSError:
+        return False
+
+
+def _quick(path: Path) -> Optional[dict[str, Any]]:
+    """写さずに、読むだけで 1 回開いて調べる。だめなら None(今までの調べ方に任せる)。"""
+    from .db_backup import ro_uri
+    from .settings_tables import is_system_table
+    try:
+        conn = sqlite3.connect(ro_uri(path), uri=True, timeout=2)
+    except sqlite3.Error:
+        return None
+    try:
+        q = source_db.quote_identifier
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+        main = ""
+        if config.SET_TABLE in tables:
+            got = conn.execute(f"SELECT {q(config.PRESET)} FROM {q(config.SET_TABLE)} WHERE {q(config.ITEM_NAME)} = ?",
+                               (config.GS_MAIN_TABLE,)).fetchone()
+            main = str(got[0] or "") if got else ""
+        if not main or main not in tables:
+            user = [t for t in tables if not is_system_table(t) and t != config.BROUGHT_REGISTRY]
+            if not user:
+                return {"kind": KIND_OTHER, "note": "表がありません"}
+            missing = [t for t in (config.SET_TABLE, config.ID_TABLE) if t not in tables]
+            why = f"{'・'.join(missing)} が無い" if missing else "メインテーブル名の決まりが無い"
+            return {"kind": KIND_OPEN, "note": f"表 {len(user)} 個({why}。一覧で表を選んで見て直せます)",
+                    "main_table": "", "simple": True}
+        rows = conn.execute(f"SELECT COUNT(*) FROM {q(main)}").fetchone()[0]
+        note = f"{main}({rows:,} 件)" + ("" if config.ID_TABLE in tables else "・ID が無いので誰でも直せる")
+        return {"kind": KIND_OPEN, "note": note, "main_table": main}
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def inspect_cached(path: Path, st=None) -> dict[str, Any]:
+    """同じファイル(大きさ・更新時刻が同じ)は 2 回目から調べない。"""
+    try:
+        st = st or path.stat()
+    except OSError:
+        return {"kind": KIND_OTHER, "note": "読めません"}
+    key = (str(path), st.st_size, st.st_mtime)
+    if key in _cache:
+        return _cache[key]
+    if st.st_size == 0:                          # 作っただけの空の .sqlite3
+        got = {"kind": KIND_OTHER, "note": "表がありません"}
+    elif path.name.lower() == "thumbs.db" or not _looks_sqlite(path):
+        got = {"kind": KIND_OTHER, "note": "SQLite のファイルではありません"}
+    else:
+        got = _quick(path) or inspect_sqlite(path)
+    if len(_cache) > 500:
+        _cache.clear()
+    _cache[key] = got
+    return got
+
+
 def scan(folder: Path, *, current: Optional[Path] = None) -> dict[str, Any]:
     """フォルダの中の .sqlite3 / .db / .accdb / .mdb を並べる。開けるもの → 変換できるもの → その他の順。"""
     out: dict[str, Any] = {"folder": str(folder), "exists": folder.is_dir(), "files": [], "message": ""}
@@ -90,7 +161,7 @@ def scan(folder: Path, *, current: Optional[Path] = None) -> dict[str, Any]:
                               if done else "「Access 取り込み」で .sqlite3 にすると開けます"),
                         target=str(p.with_suffix(".sqlite3")))
         else:
-            info.update(inspect_sqlite(p))
+            info.update(inspect_cached(p, st))
         files.append(info)
         if len(files) >= MAX_FILES:
             break
