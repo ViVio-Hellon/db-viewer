@@ -591,10 +591,10 @@ def _write_error_page(message: str, hint: str, log_dir: str) -> Path:
 
     try:
         from dbviewer import app_config
-        target = app_config.local_dir("work") / "起動エラー.html"
+        target = app_config.local_dir("work") / "dbviewer_startup_error.html"   # 英数字だけ(ブラウザに確実に渡す。0.46.5)
         target.parent.mkdir(parents=True, exist_ok=True)
     except Exception:                             # noqa: BLE001
-        target = Path(tempfile.gettempdir()) / "dbviewer_起動エラー.html"
+        target = Path(tempfile.gettempdir()) / "dbviewer_startup_error.html"
 
     target.write_text(f"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
