@@ -18,3 +18,4 @@ src-tauri/gen/
 # Claude Code の作業状態の控え(フックが作る。共有しない)
 .claude/state/
 .claude/settings.local.json
+dbviewer_startup_error.html

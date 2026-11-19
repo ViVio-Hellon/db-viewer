@@ -577,11 +577,28 @@ def report_failure(error: StartupError, *, open_browser: bool) -> None:
 
     if not open_browser:
         return
+    # 0.46.6: Windows では**窓(メッセージ)で必ず出す**。HTML だけだと、Microsoft Store 版の Python が
+    # %LOCALAPPDATA% への書き込みを別の場所へ振り替えるため、ブラウザから見えず「ファイルが見つかりません」になった
+    if _message_box(str(error), error.hint):
+        return
     try:
         path = _write_error_page(str(error), error.hint, log_dir)
         webbrowser.open(path.as_uri())
     except Exception as exc:                      # noqa: BLE001
         print(f"(エラー画面を出せませんでした: {exc})", file=sys.stderr)
+
+
+def _message_box(message: str, hint: str) -> bool:
+    """Windows のメッセージの窓で知らせる(標準の ctypes)。出せたら True。"""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        text = message + ("\n\n" + hint if hint else "")
+        ctypes.windll.user32.MessageBoxW(None, text, "DBビューア - 起動できませんでした", 0x10 | 0x40000)
+        return True
+    except Exception:                             # noqa: BLE001 - 出せなければ HTML に任せる
+        return False
 
 
 def _write_error_page(message: str, hint: str, log_dir: str) -> Path:
@@ -591,7 +608,7 @@ def _write_error_page(message: str, hint: str, log_dir: str) -> Path:
 
     try:
         from dbviewer import app_config
-        target = app_config.local_dir("work") / "dbviewer_startup_error.html"   # 英数字だけ(ブラウザに確実に渡す。0.46.5)
+        target = APP_ROOT / "dbviewer_startup_error.html"   # アプリのフォルダ(振り替えられない。0.46.6)
         target.parent.mkdir(parents=True, exist_ok=True)
     except Exception:                             # noqa: BLE001
         target = Path(tempfile.gettempdir()) / "dbviewer_startup_error.html"

@@ -31,6 +31,8 @@ DBビューア(VBA の汎用システムを Python Web に移植したもの)の
 - 0.46.1: 接続先の行を直すと見る DB がフォルダになる → 直した
 - 0.46.2: 見る DB の共有に届かない(WinError 59)と起動できない → 直した
 - 0.46.3: user_config.json を書く途中に読むと空 → 全設定が消えた → 隣に書いて差し替え+.bak。同じフォルダの DB 調べが重い → 軽くした
+- Start.vbs で開かない → 11:19 のデスクトップ版が残っていた。理由の HTML が Store 版 Python の振り替えで見えない → 0.46.6 で窓で出す
+- Store 版 Python: %LOCALAPPDATA% は %LOCALAPPDATA%\\Packages\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\LocalCache\\Local へ振り替わる(ログ・控えの既定の場所が見えない)。未対応: 既定の場所を見える所にする
 - CI run 56 の画面の試験(かんたん設定)が Windows で落ちた → 起動 URL から入るようにして run 57 は通った(原因は確定していない)
 
 ## 完了(短く)
