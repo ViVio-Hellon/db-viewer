@@ -22,9 +22,10 @@ TIMEOUT_SEC = 10
 
 
 def ro_uri(path: Path) -> str:
-    """読むだけで開く URI(ファイル名の % ? # を逃がす)。"""
-    text = str(path).replace("%", "%25").replace("?", "%3F").replace("#", "%23")
-    return f"file:{text}?mode=ro"
+    """読むだけで開く URI。共有フォルダ(\\\\サーバ\\…)も壊さない書き方(source_db.to_uri)に揃える(0.46.4)。
+    以前は \\\\サーバ… をそのまま書いていて、共有では開けずに遅い道へ回っていた。"""
+    from .source_db import to_uri
+    return to_uri(Path(path)) + "?mode=ro"
 
 
 def copy_db(src: Path, target: Path) -> str:

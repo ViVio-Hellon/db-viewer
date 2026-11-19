@@ -1,7 +1,7 @@
 {
   "app_id": "nlm.db-viewer",
   "display_name": "DBビューア",
-  "version": "0.46.3",
+  "version": "0.46.4",
   "monitor_level": 2,
 
   "local_dir_name": "DBViewer",

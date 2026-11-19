@@ -59,5 +59,13 @@ class CopyDbTest(unittest.TestCase):
             db_backup.copy_db(self.dir / "無い.sqlite3", self.dir / "d.sqlite3")
 
 
+
+class RoUriTest(unittest.TestCase):
+    def test_unc_path_keeps_server(self):
+        """共有フォルダ(\\\\サーバ\\…)は file://// で書く(file:\\\\… や file://サーバ だと開けない)。"""
+        uri = db_backup.ro_uri(Path("\\\\nlmfangyshrd\\各課共有\\a.sqlite3"))
+        self.assertTrue(uri.startswith("file:////nlmfangyshrd/"), uri)
+        self.assertTrue(uri.endswith("?mode=ro"), uri)
+
 if __name__ == "__main__":
     unittest.main()
