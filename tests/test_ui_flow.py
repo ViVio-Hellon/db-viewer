@@ -242,5 +242,31 @@ class UiFlowTest(unittest.TestCase):
         self.assertTrue(paths[-1].startswith(folder))
 
 
+
+    def test_6_add_filters_from_the_bar(self):
+        """0.47.0: 一覧の上の「＋ 絞り込みを足す」で列を選び、値を選ぶ。2 つ重ねられる。"""
+        self.open_list("作業")
+        pg = self.page
+        rows = lambda: pg.eval_on_selector_all(".grid__table tbody tr", "t => t.length")
+        self.assertEqual(rows(), 3)
+
+        def keep(col, values):
+            pg.select_option(".gchip__add", col)
+            pg.wait_for_selector(".gpop__list .gpop__item")
+            for item in pg.locator(".gpop__list .gpop__item").all():
+                box = item.locator("input")
+                if (item.locator(".gpop__v").inner_text() in values) != box.is_checked():
+                    box.click()
+            pg.click(".gpop__x")
+            pg.wait_for_timeout(200)
+        keep("作業NO", {"0-1-1", "0-3-1"})
+        self.assertEqual(rows(), 2)
+        keep("作業名", {"台車"})                          # 1 つ目に重ねる
+        self.assertEqual(rows(), 1)
+        self.assertEqual(len(pg.locator(".gchip").all()), 2)
+        pg.click("text=絞り込みを解除")
+        pg.wait_for_timeout(200)
+        self.assertEqual(rows(), 3)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1000,6 +1000,9 @@ dialog::backdrop { background: var(--scrim); }
                white-space: nowrap; font-variant-numeric: tabular-nums; }
 .grid__chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .grid__chips[hidden] { display: none; }
+.gchip__add { width: auto; min-width: 12em; height: 30px; padding: 2px 8px; font-weight: 700;
+  border-color: var(--accent-line); color: var(--accent); }
+.gchip__tip { align-self: center; margin: 0; }
 .gchip { display: inline-flex; align-items: stretch; border: 1px solid var(--accent-line);
          background: var(--accent-soft); border-radius: var(--pill); overflow: hidden;
          font-size: var(--fs-xs); color: var(--ink); max-width: 100%; }

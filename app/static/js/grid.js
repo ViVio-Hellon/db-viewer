@@ -320,8 +320,16 @@ export function createGrid(root, opts = {}) {
         el("button", { class: "gchip__x", type: "button", "aria-label": `${name} の絞り込みを解除`, text: "×",
           onclick: () => { delete st.filters[name]; refresh(); } })));
     }
-    chips.replaceChildren(...items);
-    chips.hidden = items.length === 0;
+    // 0.47.0: 絞り込みの入口をはっきり出す(見出しの ▾ だけでは気づきにくかった)。列を選ぶと、その列の値の窓が開く
+    const add = el("select", { class: "input gchip__add", "aria-label": "絞り込みを足す列" });
+    add.append(el("option", { value: "", text: items.length ? "＋ 絞り込みを重ねる…" : "＋ 絞り込みを足す…" }),
+      ...visible().map((n) => el("option", { value: n, text: n })));
+    add.addEventListener("change", () => { if (add.value) openPop(add.value, add); });
+    const tip = el("span", { class: "why gchip__tip",
+      text: items.length ? "いくつでも重ねられます(全部に合う行だけ残ります)"
+        : "列を選ぶと、その列の値で絞り込めます(見出しの ▾ でも同じ)。いくつでも重ねられます" });
+    chips.replaceChildren(add, ...items, tip);
+    chips.hidden = false;
     clearBtn.hidden = items.length === 0 && !st.search;
   }
 
