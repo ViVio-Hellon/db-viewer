@@ -47,10 +47,12 @@ class SafeSettingsTest(unittest.TestCase):
     def test_other_process_never_sees_empty_file(self):
         """別のプロセス(デスクトップ版の外枠など)が書いている最中に読んでも、空や半端は見えない。"""
         user_settings.save("db_path", "x.sqlite3")
+        # 数えるのは「空・半端な中身が見えた」ことだけ。Windows では差し替えの瞬間に読みが一瞬断られる
+        # (PermissionError)ことがあり、アプリの読み込み(user_settings._read)はそのとき読み直す
         code = ("import json,sys,time\nfrom pathlib import Path\np=Path(sys.argv[1]);bad=0\n"
                 "end=time.time()+3\nwhile time.time()<end:\n"
-                "  try:\n    d=json.loads(p.read_text(encoding='utf-8'))\n    bad+= 'db_path' not in d\n"
-                "  except Exception: bad+=1\nprint(bad)")
+                "  try:\n    t=p.read_text(encoding='utf-8')\n  except OSError:\n    continue\n"
+                "  try:\n    bad+= 'db_path' not in json.loads(t)\n  except ValueError: bad+=1\nprint(bad)")
         reader = subprocess.Popen([sys.executable, "-c", code, str(self.path)], stdout=subprocess.PIPE, text=True)
         for i in range(300):
             user_settings.save("n", i)
